@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import datetime as dt
 
-import pandas as pd
 import typer
 
-from propbt.config import load_contracts, load_sessions
+from propbt.config import load_contracts, load_execution, load_prop_rules, load_sessions
 from propbt.data.loader import compute_integrity_report, estimate_roll_days, load_ohlcv
-from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, trading_day
+from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, tag_sessions
+from propbt.engine.backtester import run_backtest
+from propbt.reporting.metrics import pair_trades, summarize
+from propbt.strategy.session_open import SessionOpenContinuation, load_continuation_config
 
 app = typer.Typer(add_completion=False)
 
@@ -84,6 +86,82 @@ def inspect(
         typer.echo(f"  within 5 days of an estimated roll date: {[r.date().isoformat() for r in nearby]}")
     else:
         typer.echo("  no estimated roll date within 5 days")
+
+
+@app.command()
+def backtest(
+    config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/continuation.yaml"),
+) -> None:
+    """Run the open-spike continuation leg over its configured date range
+    and print trade count, win rate, expectancy ($ and R), a per-session
+    breakdown, and the Topstep Combine result."""
+    run_cfg = load_continuation_config(config)
+    symbol = run_cfg.symbol
+
+    contracts = load_contracts()
+    if symbol not in contracts:
+        typer.echo(f"Unknown symbol {symbol!r}. Known: {sorted(contracts)}")
+        raise typer.Exit(code=1)
+
+    prop_cfg = load_prop_rules()
+    sessions_cfg = load_sessions()
+    exec_cfg = load_execution()
+
+    df = load_ohlcv(symbol)
+    sliced = df.loc[run_cfg.start: run_cfg.end]
+    if len(sliced) == 0:
+        typer.echo(f"No data in range {run_cfg.start} -> {run_cfg.end}")
+        raise typer.Exit(code=1)
+
+    session_by_ts = tag_sessions(sliced, sessions_cfg)["session"]
+
+    strategy = SessionOpenContinuation(run_cfg.strategy, sessions_cfg)
+    result = run_backtest(
+        sliced, symbol=symbol, strategy=strategy, contracts=contracts,
+        prop_rules_config=prop_cfg, sessions_config=sessions_cfg, slippage_ticks=exec_cfg.slippage_ticks,
+    )
+
+    trades = pair_trades(result.fills, session_by_ts)
+    spec = contracts[symbol]
+    strat_cfg = run_cfg.strategy
+    risk_dollars = strat_cfg.sl_points * spec.point_value * strat_cfg.contracts
+    summary = summarize(trades, risk_dollars, result.combine)
+
+    typer.echo(f"=== Continuation leg backtest: {symbol}  {run_cfg.start} -> {run_cfg.end} ===")
+    typer.echo(f"config: {config}")
+    typer.echo(
+        f"sessions={list(strat_cfg.sessions)} method={strat_cfg.direction_method} "
+        f"window={strat_cfg.observation_window_minutes}min sl={strat_cfg.sl_points}pt "
+        f"rr={strat_cfg.rr} (tp={strat_cfg.tp_points}pt) contracts={strat_cfg.contracts} "
+        f"slippage={exec_cfg.slippage_ticks}ticks"
+    )
+
+    o = summary.overall
+    typer.echo("\n--- Overall ---")
+    typer.echo(f"  trades: {o.n_trades}")
+    if o.n_trades:
+        typer.echo(f"  win rate: {o.win_rate:.1%}")
+        typer.echo(f"  expectancy: ${o.expectancy_dollars:,.2f}  ({o.expectancy_r:.3f}R)")
+    else:
+        typer.echo("  win rate / expectancy: n/a (no trades)")
+
+    typer.echo("\n--- Per-session ---")
+    if summary.by_session:
+        for name, s in summary.by_session.items():
+            typer.echo(
+                f"  {name:8s} trades={s.n_trades:4d}  win_rate={s.win_rate:.1%}  "
+                f"expectancy=${s.expectancy_dollars:,.2f} ({s.expectancy_r:.3f}R)"
+            )
+    else:
+        typer.echo("  (no trades)")
+
+    c = result.combine
+    typer.echo("\n--- Topstep Combine result ---")
+    typer.echo(f"  status: {c.status.upper()}" + (f"  reason={c.fail_reason}" if c.fail_reason else ""))
+    typer.echo(f"  target_hit={c.target_hit}  consistency_passed={c.consistency_passed}")
+    typer.echo(f"  final_balance=${c.final_balance:,.2f}")
+    typer.echo(f"  trading days simulated: {len(c.day_logs)}")
+    typer.echo(f"  order rejections: {len(result.rejections)}")
 
 
 if __name__ == "__main__":

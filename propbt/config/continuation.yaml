@@ -1,0 +1,32 @@
+# strategy/session_open.py -- open-spike continuation leg only (CLAUDE.md
+# section 4, leg 2). Nothing here is hardcoded in strategy code.
+
+symbol: MES
+
+# CLAUDE.md section 7 (hard requirement): reserve the most recent ~30-40%
+# of data as an out-of-sample holdout, never used for tuning. MES data runs
+# 2021-07-16 -> 2026-07-15; this end date is the ~65% mark, leaving
+# 2024-10-14 -> 2026-07-15 (~35%) untouched as OOS. Do not extend `end`
+# past this while iterating on parameters -- that's Phase 5's job
+# (walk_forward.py), reported side by side with in-sample, not something to
+# eyeball here.
+backtest:
+  start: "2021-07-16"
+  end: "2024-10-13"
+
+sessions: [asia, london, ny]
+
+direction:
+  # close_vs_fair_value: sign of (close of the bar at the end of the
+  #   observation window - fair value). With observation_window_minutes=1
+  #   this is exactly "sign of first-bar close vs fair value".
+  # window_displacement: sign of (close at window end - open at window
+  #   start), i.e. net displacement over the window, independent of fair
+  #   value.
+  method: close_vs_fair_value
+  observation_window_minutes: 3   # CLAUDE.md section 4: default 1-5 min
+
+risk:
+  contracts: 1
+  sl_points: 10.0
+  rr: 1.5              # must be one of 1.0, 1.5, 2.0 -> tp_points = sl_points * rr

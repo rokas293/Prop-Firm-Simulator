@@ -1,6 +1,7 @@
-"""Strategy interface. Deliberately minimal for now (Phase 1: engine
-machinery only, no real strategy legs yet) -- Phase 2+ builds actual
-session-open/mean-reversion/news strategies against this same interface.
+"""Strategy interface. Built in Phase 1 (ahead of any real strategy logic)
+because the backtester needs *some* interface to call -- session_open.py
+and later legs (mean-reversion, news) are all built against this same
+BarState/Strategy contract.
 """
 from __future__ import annotations
 
