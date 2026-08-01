@@ -1,0 +1,4 @@
+# Fill/execution frictions. Not a Topstep rule -- our own backtest realism
+# assumption (CLAUDE.md section 7: "realistic frictions on by default").
+# Applied adversely to market and stop fills; limit fills get no slippage.
+slippage_ticks: 1

@@ -110,6 +110,16 @@ def load_prop_rules(path: str = "prop_rules.yaml") -> PropRulesConfig:
     )
 
 
+@dataclass(frozen=True)
+class ExecutionConfig:
+    slippage_ticks: int
+
+
+def load_execution(path: str = "execution.yaml") -> ExecutionConfig:
+    raw = _load_yaml(path)
+    return ExecutionConfig(slippage_ticks=int(raw["slippage_ticks"]))
+
+
 def load_data_paths(path: str = "data.yaml") -> Dict[str, Path]:
     raw = _load_yaml(path)
     paths = {}
