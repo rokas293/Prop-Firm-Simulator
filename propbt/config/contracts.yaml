@@ -1,0 +1,18 @@
+# Contract specs per CLAUDE.md section 2. All values overridable.
+# ZN is a full-size (non-micro) contract -- see prop_rules.yaml for how that
+# affects the position-limit accounting.
+MES:
+  point_value: 5.0        # $ per point
+  tick_size: 0.25          # points
+  tick_value: 1.25         # $ per tick
+  is_micro: true
+MNQ:
+  point_value: 2.0
+  tick_size: 0.25
+  tick_value: 0.50
+  is_micro: true
+ZN:
+  point_value: 1000.0
+  tick_size: 0.015625      # 1/64 pt
+  tick_value: 15.625
+  is_micro: false

@@ -1,0 +1,90 @@
+"""CLI entry point. `python run.py --help` for commands."""
+from __future__ import annotations
+
+import datetime as dt
+
+import pandas as pd
+import typer
+
+from propbt.config import load_contracts, load_sessions
+from propbt.data.loader import compute_integrity_report, estimate_roll_days, load_ohlcv
+from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, trading_day
+
+app = typer.Typer(add_completion=False)
+
+
+@app.callback()
+def _main() -> None:
+    """propbt CLI. Run a subcommand, e.g. `inspect`."""
+
+
+@app.command()
+def inspect(
+    symbol: str = typer.Option(..., "--symbol", help="MES, MNQ, or ZN"),
+    date: str = typer.Option(..., "--date", help="Trading day, YYYY-MM-DD (America/New_York)"),
+) -> None:
+    """Print a trading day's session anchors, fair values, and a scoped
+    data-integrity summary (gaps, duplicate timestamps, roll flags)."""
+    contracts = load_contracts()
+    sessions_cfg = load_sessions()
+    if symbol not in contracts:
+        typer.echo(f"Unknown symbol {symbol!r}. Known: {sorted(contracts)}")
+        raise typer.Exit(code=1)
+
+    target_day = dt.date.fromisoformat(date)
+    df = load_ohlcv(symbol)
+
+    spec = contracts[symbol]
+    typer.echo(f"=== {symbol} -- trading day {target_day} ===")
+    typer.echo(f"Contract spec: point_value=${spec.point_value}, tick_size={spec.tick_size}, "
+               f"tick_value=${spec.tick_value}, micro={spec.is_micro}")
+
+    typer.echo("\n--- Sessions & fair value ---")
+    windows = session_windows(target_day, sessions_cfg)
+    for name in sorted(sessions_cfg.anchors, key=lambda n: session_anchor_utc(target_day, n, sessions_cfg)):
+        anchor_utc = session_anchor_utc(target_day, name, sessions_cfg)
+        anchor_ny = anchor_utc.tz_convert(sessions_cfg.timezone)
+        win_start, win_end = windows[name]
+        fv = fair_value(df, anchor_utc)
+        if fv is None:
+            typer.echo(f"  {name:14s} anchor {anchor_ny} (UTC {anchor_utc})  -- no prior data")
+            continue
+        fv_ts, fv_close = fv
+        typer.echo(
+            f"  {name:14s} anchor {anchor_ny} (UTC {anchor_utc})\n"
+            f"  {'':14s} fair value = {fv_close} (bar @ {fv_ts}, NY {fv_ts.tz_convert(sessions_cfg.timezone)})\n"
+            f"  {'':14s} window     = {win_start} -> {win_end}"
+        )
+
+    typer.echo("\n--- Data integrity (this trading day only) ---")
+    day_start = min(w[0] for w in windows.values())
+    day_end = max(w[1] for w in windows.values())
+    day_df = df.loc[(df.index >= day_start) & (df.index < day_end)]
+    report = compute_integrity_report(day_df, symbol=symbol)
+    typer.echo(f"  bars: {report.n_rows}")
+    typer.echo(f"  duplicate timestamps: {report.n_duplicate_timestamps}")
+    typer.echo(f"  monotonic: {report.is_monotonic}")
+    typer.echo(
+        f"  gaps: total={report.gaps.total} maintenance_halt={report.gaps.maintenance_halt} "
+        f"weekend_holiday={report.gaps.weekend_holiday} other={report.gaps.other}"
+    )
+    if report.gaps.other > 0:
+        typer.echo(f"    other gaps:\n{report.gaps.other_gaps.to_string()}")
+    nulls = {k: v for k, v in report.n_nulls.items() if v > 0}
+    typer.echo(f"  nulls: {nulls if nulls else 'none'}")
+    typer.echo(
+        f"  ohlc anomalies: high<low={report.n_bad_high_low} "
+        f"high<max(o,c)={report.n_bad_high_open_close} low>min(o,c)={report.n_bad_low_open_close}"
+    )
+
+    typer.echo("\n--- Roll flags (ESTIMATED -- calendar heuristic, not ground truth) ---")
+    roll_days = estimate_roll_days(df)
+    nearby = [r for r in roll_days if abs((r.date() - target_day).days) <= 5]
+    if nearby:
+        typer.echo(f"  within 5 days of an estimated roll date: {[r.date().isoformat() for r in nearby]}")
+    else:
+        typer.echo("  no estimated roll date within 5 days")
+
+
+if __name__ == "__main__":
+    app()

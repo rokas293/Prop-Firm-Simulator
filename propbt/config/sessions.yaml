@@ -1,0 +1,28 @@
+# Session anchors, in America/New_York wall-clock time. Confirm before
+# relying on defaults -- see CLAUDE.md section 4.
+timezone: America/New_York
+
+anchors:
+  asia:
+    hour: 20
+    minute: 0
+  london:
+    hour: 3
+    minute: 0
+  ny:
+    hour: 9
+    minute: 30
+  globex_reopen:
+    hour: 18
+    minute: 0
+
+# CME/Topstep trading day boundary (also governs the daily-loss reset and
+# the EOD balance that trails the MLL -- CLAUDE.md section 3). NOT midnight,
+# NOT the NY equity close. The 17:00-18:00 ET window is the daily
+# maintenance halt (no bars); a trading day runs [18:00 ET, 17:00 ET next
+# calendar day).
+trading_day_boundary:
+  close_hour: 17
+  close_minute: 0
+  reopen_hour: 18
+  reopen_minute: 0

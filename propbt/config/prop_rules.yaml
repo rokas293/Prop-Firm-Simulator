@@ -1,0 +1,34 @@
+# Topstep $50k Combine rules -- verified 2026, see CLAUDE.md section 3.
+# Re-verify against Topstep's official Combine Parameters page before
+# trusting these for real money; rules change periodically.
+
+account:
+  start_balance: 50000
+  profit_target: 3000          # pass when balance reaches start_balance + this
+
+max_loss_limit:                # trailing drawdown ("MLL")
+  initial_offset: 2000          # floor starts at start_balance - this
+  trail_on: eod_balance          # trails on end-of-day balance, not intraday
+  freeze_trigger_balance: 52000  # once EOD balance reaches this...
+  freeze_floor: 50000             # ...the floor freezes here and stops trailing
+  breach_check: intraday_equity   # breached against live (realized+open) equity, every bar
+
+daily_loss_limit:
+  amount: 1000                  # day locked (not a Combine fail) if breached
+  resets_at: trading_day_boundary  # see sessions.yaml
+
+consistency_rule:
+  max_single_day_pct_of_profit: 0.50   # best day must be <=50% of total profit when target is hit
+
+# Flat count across ALL instruments -- Topstep does NOT give micros a 10:1
+# discount (unlike Apex). 5 MES, 5 MNQ, or 5 ZN (or any mix) all max this out.
+position_limit:
+  max_open_contracts: 5
+
+# Round-turn commissions, per instrument. ZN is full-size and must NOT reuse
+# the micro number. Placeholder values -- confirm real broker/Topstep
+# commission schedule before trusting results.
+commissions:
+  MES: 1.30
+  MNQ: 1.30
+  ZN: 4.50

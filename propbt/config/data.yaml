@@ -1,0 +1,14 @@
+# Data source paths, relative to project root.
+# Format (confirmed): tz-aware UTC `ts_event` DatetimeIndex, columns
+# open/high/low/close (float64) + volume (uint64). No embedded symbol/
+# expiration/roll metadata in the files themselves.
+symbols:
+  MES:
+    path: MES_1m.parquet
+    active: true
+  MNQ:
+    path: MNQ_1m.parquet
+    active: true
+  ZN:
+    path: ZN_1m.parquet
+    active: true  # loader supports it; strategy/engine testing on ZN is deferred
