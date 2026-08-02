@@ -1,0 +1,37 @@
+# run.py evaluate -- Monte Carlo + walk-forward evaluation (CLAUDE.md
+# sections 6-7). References the SAME strategy config used by `backtest`
+# (legs, sizing, in-sample date range) rather than duplicating it.
+#
+# These attempt counts are demonstration-scale, deliberately small so a
+# full evaluate run finishes in a reasonable time. Bigger numbers give a
+# statistically sturdier pass-rate estimate -- raise them once you trust
+# the machinery; that's a config change, not a code change.
+
+strategy_config: propbt/config/strategy.yaml
+
+monte_carlo:
+  method: rolling       # rolling | random
+  stride_days: 15         # for rolling: every Nth trading day is a new attempt's start date
+  seed: 0
+  warmup_days: 5           # calendar days of pre-start context handed to each attempt (see sim/combine.py)
+  max_calendar_days: 90    # bounds worst-case runtime per attempt; an attempt that never resolves by
+                            # then is "incomplete", not run out to the end of all remaining data
+
+walk_forward:
+  # CLAUDE.md section 7: OOS holdout. Must line up with strategy_config's
+  # backtest.end (the in-sample range) -- this starts the day after it.
+  out_of_sample_start: "2024-10-14"
+  out_of_sample_end: "2026-07-15"
+
+  # Small, explicit, ascending-order grid (list order matters -- see
+  # sim/walk_forward.py's neighbor-robustness scoring). Only continuation.rr
+  # for now; extend with more "<leg>_<field>" keys once this is trusted.
+  param_grid:
+    - {continuation_rr: 1.0}
+    - {continuation_rr: 1.5}
+    - {continuation_rr: 2.0}
+  n_attempts_per_grid_point: 3
+  n_attempts_out_of_sample: 5
+
+output:
+  plots_dir: reports

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import List
 
 import typer
 
@@ -10,9 +11,12 @@ from propbt.data.loader import compute_integrity_report, estimate_roll_days, loa
 from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, tag_sessions
 from propbt.engine.backtester import run_backtest
 from propbt.reporting.metrics import pair_trades, summarize
-from propbt.strategy.base import MultiLegStrategy
-from propbt.strategy.news_spike import build_news_legs, load_news_spike_config
-from propbt.strategy.session_open import build_strategy, load_session_open_config
+from propbt.reporting.plots import save_evaluation_plots
+from propbt.sim.config import load_evaluate_config
+from propbt.sim.walk_forward import run_walk_forward
+from propbt.strategy.combined import build_combined_strategy_factory
+from propbt.strategy.news_spike import load_news_spike_config
+from propbt.strategy.session_open import load_session_open_config
 
 app = typer.Typer(add_completion=False)
 
@@ -123,15 +127,9 @@ def backtest(
 
     session_by_ts = tag_sessions(sliced, sessions_cfg)["session"]
 
-    session_open_strategy = build_strategy(run_cfg, sessions_cfg)
-    legs = []
-    if session_open_strategy.continuation is not None:
-        legs.append(session_open_strategy.continuation)
-    if session_open_strategy.mean_reversion is not None:
-        legs.append(session_open_strategy.mean_reversion)
-    if news_cfg is not None:
-        legs.extend(build_news_legs(news_cfg, start=run_cfg.start, end=run_cfg.end))
-    strategy = MultiLegStrategy(legs)
+    strategy = build_combined_strategy_factory(
+        run_cfg, sessions_cfg, news_cfg, news_start=run_cfg.start, news_end=run_cfg.end,
+    )()
 
     result = run_backtest(
         sliced, symbol=symbol, strategy=strategy, contracts=contracts,
@@ -232,6 +230,111 @@ def backtest(
     typer.echo(f"  final_balance=${c.final_balance:,.2f}")
     typer.echo(f"  trading days simulated: {len(c.day_logs)}")
     typer.echo(f"  order rejections: {len(result.rejections)}")
+
+
+def _format_mc(mc, label: str) -> List[str]:
+    lines = [f"--- {label} ---"]
+    lines.append(f"  attempts: {mc.n_attempts}   passed: {mc.n_passed}   failed: {mc.n_failed}   incomplete: {mc.n_incomplete}")
+    lines.append(f"  PASS RATE: {mc.pass_rate:.1%}   (of resolved attempts only: {mc.resolved_pass_rate:.1%})")
+    if mc.days_to_pass:
+        d = sorted(mc.days_to_pass)
+        median = d[len(d) // 2]
+        lines.append(f"  days-to-pass: min={min(d)} median={median} max={max(d)}  (n={len(d)})")
+    else:
+        lines.append("  days-to-pass: n/a (no passed attempts)")
+    if mc.fail_reasons:
+        reasons = ", ".join(f"{k}={v}" for k, v in mc.fail_reasons.items())
+        lines.append(f"  fail reasons: {reasons}")
+    return lines
+
+
+@app.command()
+def evaluate(
+    config: str = typer.Option(..., "--config", help="Path to an evaluate config, e.g. propbt/config/evaluate.yaml"),
+) -> None:
+    """Monte Carlo + walk-forward evaluation (CLAUDE.md sections 6-7): a
+    small in-sample parameter grid, robust-neighbor selection (not just
+    best-single-point), then ONE evaluation of the selected config on the
+    out-of-sample holdout -- which is always the headline number, printed
+    clearly separated from (and after) the in-sample result it was chosen
+    from. Commissions, slippage, and no-look-ahead are structurally always
+    on (see engine/broker.py, engine/backtester.py) -- there is no "clean"
+    mode to accidentally report instead."""
+    eval_cfg = load_evaluate_config(config)
+    run_cfg = load_session_open_config(eval_cfg.strategy_config_path)
+    news_cfg = load_news_spike_config(eval_cfg.strategy_config_path)
+    symbol = run_cfg.symbol
+
+    contracts = load_contracts()
+    if symbol not in contracts:
+        typer.echo(f"Unknown symbol {symbol!r}. Known: {sorted(contracts)}")
+        raise typer.Exit(code=1)
+
+    prop_cfg = load_prop_rules()
+    sessions_cfg = load_sessions()
+    exec_cfg = load_execution()
+    wf_cfg = eval_cfg.walk_forward
+    mc_cfg = eval_cfg.monte_carlo
+
+    df = load_ohlcv(symbol)
+
+    typer.echo(f"=== Evaluate: {symbol} ===")
+    typer.echo(f"strategy config: {eval_cfg.strategy_config_path}")
+    typer.echo(f"in-sample:     {run_cfg.start} -> {run_cfg.end}")
+    typer.echo(f"out-of-sample: {wf_cfg.out_of_sample_start} -> {wf_cfg.out_of_sample_end}  (never used for tuning)")
+    typer.echo(
+        f"frictions: commissions={dict(prop_cfg.commissions)}  slippage={exec_cfg.slippage_ticks} ticks  "
+        f"no-look-ahead=structural (always on) -- CLAUDE.md section 7"
+    )
+    typer.echo(
+        f"monte carlo: method={mc_cfg.method} stride_days={mc_cfg.stride_days} warmup_days={mc_cfg.warmup_days} "
+        f"max_calendar_days={mc_cfg.max_calendar_days}"
+    )
+    typer.echo(
+        f"grid: {wf_cfg.param_grid}  ({wf_cfg.n_attempts_per_grid_point} attempts/point in-sample, "
+        f"{wf_cfg.n_attempts_out_of_sample} attempts out-of-sample)"
+    )
+
+    result = run_walk_forward(
+        base_run_config=run_cfg, param_grid=wf_cfg.param_grid, df=df, symbol=symbol,
+        contracts=contracts, prop_rules_config=prop_cfg, sessions_config=sessions_cfg,
+        out_of_sample_start=wf_cfg.out_of_sample_start, out_of_sample_end=wf_cfg.out_of_sample_end,
+        news_config=news_cfg, n_attempts_per_grid_point=wf_cfg.n_attempts_per_grid_point,
+        n_attempts_out_of_sample=wf_cfg.n_attempts_out_of_sample, sample_method=mc_cfg.method,
+        stride_days=mc_cfg.stride_days, seed=mc_cfg.seed, slippage_ticks=exec_cfg.slippage_ticks,
+        warmup_days=mc_cfg.warmup_days, max_calendar_days=mc_cfg.max_calendar_days,
+    )
+
+    typer.echo("\n--- In-sample parameter grid (robust-neighbor scoring, CLAUDE.md section 7) ---")
+    for point in result.grid:
+        marker = " <== selected" if point.overrides == result.selected_overrides else ""
+        typer.echo(
+            f"  {point.overrides}  pass_rate={point.monte_carlo.pass_rate:.1%}  "
+            f"robustness_score={point.robustness_score:.1%}{marker}"
+        )
+
+    typer.echo(f"\nselected config: {result.selected_overrides}")
+    typer.echo(f"free parameters: {result.n_free_parameters}   in-sample trades backing it: {result.n_in_sample_trades}")
+    if result.parameter_budget_warning:
+        typer.echo(f"WARNING: {result.parameter_budget_warning}")
+
+    typer.echo("")
+    for line in _format_mc(result.in_sample, "IN-SAMPLE (selection basis -- not the headline number)"):
+        typer.echo(line)
+    typer.echo("")
+    for line in _format_mc(result.out_of_sample, "OUT-OF-SAMPLE (HEADLINE NUMBER)"):
+        typer.echo(line)
+
+    representative_curve = None
+    if result.out_of_sample.attempts:
+        representative_curve = max(result.out_of_sample.attempts, key=lambda a: len(a.equity_curve)).equity_curve
+    saved = save_evaluation_plots(
+        result.in_sample, result.out_of_sample, eval_cfg.plots_dir,
+        representative_equity_curve=representative_curve, start_balance=prop_cfg.start_balance,
+    )
+    typer.echo(f"\nplots saved to: {eval_cfg.plots_dir}")
+    for p in saved:
+        typer.echo(f"  {p.name}")
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ structural, not just convention -- see tests/test_backtester.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -48,7 +48,15 @@ def run_backtest(
     prop_rules_config: PropRulesConfig,
     sessions_config: SessionsConfig,
     slippage_ticks: int = 1,
+    trading_start_ts: Optional[pd.Timestamp] = None,
 ) -> BacktestResult:
+    """`trading_start_ts`, if given, lets `df` include bars BEFORE trading
+    actually starts (e.g. a Combine attempt wants swing/consolidation/fair-
+    value context from before its own start date). Bars before it are
+    skipped entirely -- no fills, no prop-rule tracking, no strategy calls
+    -- but they still count as `history` once trading does start, since
+    that's legitimate already-happened market data, not a look-ahead.
+    """
     tagged = tag_sessions(df, sessions_config)
 
     broker = Broker(
@@ -61,7 +69,8 @@ def run_backtest(
     prop_rules = PropRulesTracker(prop_rules_config)
 
     n = len(tagged)
-    for i in range(n):
+    start_i = 0 if trading_start_ts is None else tagged.index.searchsorted(trading_start_ts, side="left")
+    for i in range(start_i, n):
         row = tagged.iloc[i]
         trading_day = row["trading_day"]
         if trading_day is None:
