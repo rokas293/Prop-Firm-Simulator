@@ -2,21 +2,23 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import List
+from dataclasses import dataclass
+from typing import List, Optional
 
 import typer
 
-from propbt.config import load_contracts, load_execution, load_prop_rules, load_sessions
+from propbt.config import ContractSpec, load_contracts, load_execution, load_prop_rules, load_sessions
 from propbt.data.loader import compute_integrity_report, estimate_roll_days, load_ohlcv
 from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, tag_sessions
-from propbt.engine.backtester import run_backtest
-from propbt.reporting.metrics import pair_trades, summarize
+from propbt.engine.backtester import BacktestResult, run_backtest
+from propbt.reporting.chart_export import export_trade_review
+from propbt.reporting.metrics import BacktestSummary, Trade, pair_trades, summarize
 from propbt.reporting.plots import save_evaluation_plots
 from propbt.sim.config import load_evaluate_config
 from propbt.sim.walk_forward import run_walk_forward
 from propbt.strategy.combined import build_combined_strategy_factory
-from propbt.strategy.news_spike import load_news_spike_config
-from propbt.strategy.session_open import load_session_open_config
+from propbt.strategy.news_spike import NewsSpikeConfig, load_news_spike_config
+from propbt.strategy.session_open import SessionOpenRunConfig, load_session_open_config
 
 app = typer.Typer(add_completion=False)
 
@@ -94,15 +96,25 @@ def inspect(
         typer.echo("  no estimated roll date within 5 days")
 
 
-@app.command()
-def backtest(
-    config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/strategy.yaml"),
-) -> None:
-    """Run whichever legs are enabled in the config -- session-open
-    (continuation and/or mean-reversion) and/or news-spike (continuation
-    and/or mean-reversion around high-impact events) -- over the configured
-    date range and print trade count, win rate, expectancy ($ and R),
-    per-session and per-leg breakdowns, and the Topstep Combine result."""
+@dataclass
+class ConfiguredBacktest:
+    config_path: str
+    symbol: str
+    run_cfg: SessionOpenRunConfig
+    news_cfg: Optional[NewsSpikeConfig]
+    contracts: dict
+    spec: ContractSpec
+    sessions_cfg: object
+    exec_cfg: object
+    sliced_df: object
+    result: BacktestResult
+    trades: List[Trade]
+    summary: BacktestSummary
+
+
+def _run_configured_backtest(config: str) -> ConfiguredBacktest:
+    """Shared by `backtest` and `review`: load config, run the backtest,
+    pair trades, and summarize. Raises typer.Exit on bad config/data."""
     run_cfg = load_session_open_config(config)
     news_cfg = load_news_spike_config(config)
     symbol = run_cfg.symbol
@@ -153,6 +165,26 @@ def backtest(
 
     trades = pair_trades(result.fills, session_by_ts, risk_dollars_by_leg)
     summary = summarize(trades, result.combine)
+
+    return ConfiguredBacktest(
+        config_path=config, symbol=symbol, run_cfg=run_cfg, news_cfg=news_cfg, contracts=contracts,
+        spec=spec, sessions_cfg=sessions_cfg, exec_cfg=exec_cfg, sliced_df=sliced,
+        result=result, trades=trades, summary=summary,
+    )
+
+
+@app.command()
+def backtest(
+    config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/strategy.yaml"),
+) -> None:
+    """Run whichever legs are enabled in the config -- session-open
+    (continuation and/or mean-reversion) and/or news-spike (continuation
+    and/or mean-reversion around high-impact events) -- over the configured
+    date range and print trade count, win rate, expectancy ($ and R),
+    per-session and per-leg breakdowns, and the Topstep Combine result."""
+    cb = _run_configured_backtest(config)
+    run_cfg, news_cfg, result, trades, summary = cb.run_cfg, cb.news_cfg, cb.result, cb.trades, cb.summary
+    symbol, exec_cfg = cb.symbol, cb.exec_cfg
 
     typer.echo(f"=== Session-open + news-spike backtest: {symbol}  {run_cfg.start} -> {run_cfg.end} ===")
     typer.echo(f"config: {config}")
@@ -230,6 +262,27 @@ def backtest(
     typer.echo(f"  final_balance=${c.final_balance:,.2f}")
     typer.echo(f"  trading days simulated: {len(c.day_logs)}")
     typer.echo(f"  order rejections: {len(result.rejections)}")
+
+
+@app.command()
+def review(
+    config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/strategy.yaml"),
+    output: str = typer.Option("reports/trade_review.html", "--output", help="Where to write the HTML report"),
+) -> None:
+    """Run the same backtest as `backtest`, then export a self-contained
+    HTML trade-review report: a candlestick chart with every trade's
+    entry/exit/SL/TP overlaid, a sortable trade list, and pan/zoom within
+    each trading day that had a trade. Open the file directly in a
+    browser -- no server needed."""
+    cb = _run_configured_backtest(config)
+    typer.echo(f"backtest: {cb.symbol}  {cb.run_cfg.start} -> {cb.run_cfg.end}  ({len(cb.trades)} trades)")
+
+    path = export_trade_review(
+        cb.sliced_df, cb.trades, cb.symbol, cb.sessions_cfg, output,
+        start=cb.run_cfg.start, end=cb.run_cfg.end, summary=cb.summary,
+    )
+    typer.echo(f"trade review written to: {path}")
+    typer.echo("open it directly in a browser (double-click) -- no server needed")
 
 
 def _format_mc(mc, label: str) -> List[str]:

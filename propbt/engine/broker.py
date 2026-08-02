@@ -151,14 +151,16 @@ class Broker:
         else:
             raise ValueError(f"Unknown order type {order.order_type}")
 
+        sl_price = fill_price - order.side.sign * order.sl_points if order.sl_points is not None else None
+        tp_price = fill_price + order.side.sign * order.tp_points if order.tp_points is not None else None
+
         entry_fill = Fill(
             ts=bar.ts, symbol=bar.symbol, side=order.side, contracts=order.contracts,
             price=fill_price, fill_type=FillType.ENTRY, commission=0.0,
             realized_pnl=None, order_ts=order.ts, reason=order.reason,
+            sl_price=sl_price, tp_price=tp_price,
         )
 
-        sl_price = fill_price - order.side.sign * order.sl_points if order.sl_points is not None else None
-        tp_price = fill_price + order.side.sign * order.tp_points if order.tp_points is not None else None
         position = Position(
             symbol=bar.symbol, side=order.side, contracts=order.contracts,
             entry_price=fill_price, entry_ts=bar.ts, sl_price=sl_price, tp_price=tp_price,

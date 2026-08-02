@@ -92,3 +92,5 @@ class Fill:
     realized_pnl: Optional[float] = None      # None for entries; $ (before commission) for exits
     order_ts: Optional[pd.Timestamp] = None    # originating order's decision ts -- None for forced exits
     reason: str = ""                            # propagated from Order.reason on entry fills; used for leg attribution in reporting
+    sl_price: Optional[float] = None            # entry fills only: the position's absolute SL/TP levels, for charting
+    tp_price: Optional[float] = None

@@ -43,6 +43,8 @@ class Trade:
     session: Optional[str]
     leg: Optional[str]
     risk_dollars: Optional[float]  # this trade's own risk (sl_points * point_value * contracts); None if unknown
+    sl_price: Optional[float]       # absolute SL/TP levels at entry, for charting -- not what happened, what was set
+    tp_price: Optional[float]
 
     @property
     def r_multiple(self) -> Optional[float]:
@@ -82,6 +84,7 @@ def pair_trades(
             entry_ts=entry.ts, entry_price=entry.price, exit_ts=f.ts, exit_price=f.price,
             exit_type=f.fill_type, commission=f.commission, realized_pnl=net_pnl,
             session=session, leg=leg, risk_dollars=risk_dollars,
+            sl_price=entry.sl_price, tp_price=entry.tp_price,
         ))
     return trades
 

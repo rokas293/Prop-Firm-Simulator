@@ -8,15 +8,21 @@
 # `run.py backtest --config propbt/config/strategy.yaml` is the current
 # invocation.
 
-symbol: MES
+symbol: MNQ
 
 # CLAUDE.md section 7 (hard requirement): reserve the most recent ~30-40%
-# of data as an out-of-sample holdout, never used for tuning. MES data runs
-# 2021-07-16 -> 2026-07-15; this end date is the ~65% mark, leaving
-# 2024-10-14 -> 2026-07-15 (~35%) untouched as OOS. Do not extend `end`
-# past this while iterating on parameters -- that's Phase 5's job
-# (walk_forward.py), reported side by side with in-sample, not something to
-# eyeball here.
+# of data as an out-of-sample holdout, never used for tuning. MNQ data runs
+# 2021-07-16 -> 2026-07-15 (same range as MES); this end date is the ~65%
+# mark, leaving 2024-10-14 -> 2026-07-15 (~35%) untouched as OOS. Do not
+# extend `end` past this while iterating on parameters -- that's Phase 5's
+# job (walk_forward.py), reported side by side with in-sample, not
+# something to eyeball here.
+#
+# NOTE: sl_points/tp_points below were never tuned for MNQ's price scale
+# (MNQ trades ~3-4x MES's point value and has moved through a much wider
+# absolute price range historically -- ~14,700 to ~31,000 vs MES's
+# ~3,500-7,600). A 10pt MES stop and a 10pt MNQ stop are NOT equivalent
+# risk. Worth checking with `review` before trusting these numbers.
 backtest:
   start: "2021-07-16"
   end: "2024-10-13"
