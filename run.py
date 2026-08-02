@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional
 
 import typer
@@ -11,9 +12,9 @@ from propbt.config import ContractSpec, load_contracts, load_execution, load_pro
 from propbt.data.loader import compute_integrity_report, estimate_roll_days, load_ohlcv
 from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, tag_sessions
 from propbt.engine.backtester import BacktestResult, run_backtest
-from propbt.reporting.chart_export import export_trade_review
 from propbt.reporting.metrics import BacktestSummary, Trade, pair_trades, summarize
 from propbt.reporting.plots import save_evaluation_plots
+from propbt.reporting.run_bundle import DEFAULT_RUNS_DIR, write_run_bundle
 from propbt.sim.config import load_evaluate_config
 from propbt.sim.walk_forward import run_walk_forward
 from propbt.strategy.combined import build_combined_strategy_factory
@@ -106,6 +107,7 @@ class ConfiguredBacktest:
     spec: ContractSpec
     sessions_cfg: object
     exec_cfg: object
+    prop_cfg: object
     sliced_df: object
     result: BacktestResult
     trades: List[Trade]
@@ -168,7 +170,7 @@ def _run_configured_backtest(config: str) -> ConfiguredBacktest:
 
     return ConfiguredBacktest(
         config_path=config, symbol=symbol, run_cfg=run_cfg, news_cfg=news_cfg, contracts=contracts,
-        spec=spec, sessions_cfg=sessions_cfg, exec_cfg=exec_cfg, sliced_df=sliced,
+        spec=spec, sessions_cfg=sessions_cfg, exec_cfg=exec_cfg, prop_cfg=prop_cfg, sliced_df=sliced,
         result=result, trades=trades, summary=summary,
     )
 
@@ -267,22 +269,34 @@ def backtest(
 @app.command()
 def review(
     config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/strategy.yaml"),
-    output: str = typer.Option("reports/trade_review.html", "--output", help="Where to write the HTML report"),
+    evaluate_config: str = typer.Option(
+        "propbt/config/evaluate.yaml", "--evaluate-config",
+        help="Only used to source is_oos_split_date for meta.json; missing/unreadable is fine",
+    ),
+    runs_dir: str = typer.Option(str(DEFAULT_RUNS_DIR), "--runs-dir", help="Where to write runs/<run_id>/"),
 ) -> None:
-    """Run the same backtest as `backtest`, then export a self-contained
-    HTML trade-review report: a candlestick chart with every trade's
-    entry/exit/SL/TP overlaid, a sortable trade list, and pan/zoom within
-    each trading day that had a trade. Open the file directly in a
-    browser -- no server needed."""
+    """Run the same backtest as `backtest`, then write a run bundle
+    (runs/<run_id>/meta.json, trades.parquet, equity.parquet, stats.json)
+    for the viz app (VIZ_SPEC.md) to read -- no HTML, no recomputation on
+    the read side, the engine's own numbers all the way through."""
     cb = _run_configured_backtest(config)
     typer.echo(f"backtest: {cb.symbol}  {cb.run_cfg.start} -> {cb.run_cfg.end}  ({len(cb.trades)} trades)")
 
-    path = export_trade_review(
-        cb.sliced_df, cb.trades, cb.symbol, cb.sessions_cfg, output,
-        start=cb.run_cfg.start, end=cb.run_cfg.end, summary=cb.summary,
+    is_oos_split_date = None
+    try:
+        is_oos_split_date = load_evaluate_config(evaluate_config).walk_forward.out_of_sample_start
+    except Exception:
+        pass  # best-effort only; a run bundle is still valid without it
+
+    meta = write_run_bundle(
+        cb.result, cb.trades, cb.sliced_df, cb.symbol, cb.sessions_cfg, cb.prop_cfg,
+        config_path=config, run_cfg=cb.run_cfg, news_cfg=cb.news_cfg,
+        is_oos_split_date=is_oos_split_date, runs_dir=runs_dir,
     )
-    typer.echo(f"trade review written to: {path}")
-    typer.echo("open it directly in a browser (double-click) -- no server needed")
+    typer.echo(f"run bundle written to: {Path(runs_dir) / meta.run_id}")
+    typer.echo(f"run_id: {meta.run_id}")
+    typer.echo(f"result: {'PASSED' if meta.result.passed else 'failed (' + str(meta.result.fail_reason) + ')'}")
+    typer.echo("open it in the viz app (see app/README or run `npm run dev`)")
 
 
 def _format_mc(mc, label: str) -> List[str]:

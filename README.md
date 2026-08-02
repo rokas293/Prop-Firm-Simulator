@@ -33,6 +33,12 @@ date (see caveat below).
 pytest
 ```
 
+## Viz app
+
+`python run.py review --config propbt/config/strategy.yaml` writes a run
+bundle (`runs/<run_id>/`) for the local web viewer described in
+`VIZ_SPEC.md` -- see `app/README.md` for how to run it.
+
 ## Status / caveats
 
 - MES and MNQ are the primary targets for now. ZN's contract specs and the

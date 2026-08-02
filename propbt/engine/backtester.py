@@ -1,4 +1,9 @@
-"""The bar loop. This is where the no-look-ahead guarantee lives end to end:
+"""The bar loop. Nothing in here changes fills, PnL, or prop-rule
+decisions -- `equity_log` (added for the run-bundle/viz layer) only
+RECORDS per-bar bookkeeping that already exists in `status`/`prop_rules`
+at the point it's captured; it doesn't feed back into any decision.
+
+This is where the no-look-ahead guarantee lives end to end:
 
 For each bar t (in increasing timestamp order):
   1. broker.process_bar(t) resolves fills for orders/positions decided on
@@ -18,6 +23,7 @@ structural, not just convention -- see tests/test_backtester.py.
 """
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -32,12 +38,29 @@ from propbt.engine.prop_rules import CombineResult, PropRulesTracker
 from propbt.strategy.base import BarState, Strategy
 
 
+@dataclass(frozen=True)
+class EquityLogRow:
+    """Per-bar prop-rule bookkeeping, for the run-bundle/viz layer only --
+    nothing here is read back by the engine. `daily_loss_floor` and
+    `target_level` aren't stored (they're trivial derivations from
+    day_start_balance/PropRulesConfig); the bundle writer computes them."""
+    ts: pd.Timestamp
+    balance: float
+    equity: float
+    mll_floor: float
+    trading_day: dt.date
+    day_start_balance: float
+    breached: bool         # True only on the exact bar a newly_failed MLL breach occurred
+    daily_locked: bool
+
+
 @dataclass
 class BacktestResult:
     combine: CombineResult
     fills: List[Fill]
     equity_curve: List[Tuple[pd.Timestamp, float]]
     rejections: List[Rejection]
+    equity_log: List[EquityLogRow]
 
 
 def run_backtest(
@@ -67,6 +90,7 @@ def run_backtest(
     )
     portfolio = Portfolio(contracts=contracts, start_balance=prop_rules_config.start_balance)
     prop_rules = PropRulesTracker(prop_rules_config)
+    equity_log: List[EquityLogRow] = []
 
     n = len(tagged)
     start_i = 0 if trading_start_ts is None else tagged.index.searchsorted(trading_start_ts, side="left")
@@ -92,6 +116,12 @@ def run_backtest(
 
         # 3. prop rules
         status = prop_rules.on_bar(bar.ts, bar.trading_day, balance, equity)
+
+        equity_log.append(EquityLogRow(
+            ts=bar.ts, balance=balance, equity=equity, mll_floor=status.mll_floor,
+            trading_day=trading_day, day_start_balance=prop_rules.day_start_balance,
+            breached=status.newly_failed, daily_locked=status.is_daily_locked,
+        ))
 
         if status.newly_failed:
             for f in broker.flatten(bar, FillType.MLL_BREACH_FLATTEN):
@@ -123,4 +153,5 @@ def run_backtest(
         fills=portfolio.fills,
         equity_curve=portfolio.equity_curve,
         rejections=broker.rejections,
+        equity_log=equity_log,
     )

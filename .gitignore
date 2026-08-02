@@ -9,3 +9,8 @@ dist/
 .mypy_cache/
 .ruff_cache/
 reports/
+runs/
+node_modules/
+app/frontend/dist/
+*.tsbuildinfo
+*.local
