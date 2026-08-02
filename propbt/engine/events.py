@@ -91,3 +91,4 @@ class Fill:
     commission: float = 0.0
     realized_pnl: Optional[float] = None      # None for entries; $ (before commission) for exits
     order_ts: Optional[pd.Timestamp] = None    # originating order's decision ts -- None for forced exits
+    reason: str = ""                            # propagated from Order.reason on entry fills; used for leg attribution in reporting

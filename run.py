@@ -10,7 +10,7 @@ from propbt.data.loader import compute_integrity_report, estimate_roll_days, loa
 from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, tag_sessions
 from propbt.engine.backtester import run_backtest
 from propbt.reporting.metrics import pair_trades, summarize
-from propbt.strategy.session_open import SessionOpenContinuation, load_continuation_config
+from propbt.strategy.session_open import build_strategy, load_session_open_config
 
 app = typer.Typer(add_completion=False)
 
@@ -92,15 +92,19 @@ def inspect(
 def backtest(
     config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/continuation.yaml"),
 ) -> None:
-    """Run the open-spike continuation leg over its configured date range
-    and print trade count, win rate, expectancy ($ and R), a per-session
-    breakdown, and the Topstep Combine result."""
-    run_cfg = load_continuation_config(config)
+    """Run the session-open legs (continuation and/or mean-reversion, per
+    which are enabled in the config) over the configured date range and
+    print trade count, win rate, expectancy ($ and R), per-session and
+    per-leg breakdowns, and the Topstep Combine result."""
+    run_cfg = load_session_open_config(config)
     symbol = run_cfg.symbol
 
     contracts = load_contracts()
     if symbol not in contracts:
         typer.echo(f"Unknown symbol {symbol!r}. Known: {sorted(contracts)}")
+        raise typer.Exit(code=1)
+    if run_cfg.continuation is None and run_cfg.mean_reversion is None:
+        typer.echo("No legs enabled in config -- nothing to run")
         raise typer.Exit(code=1)
 
     prop_cfg = load_prop_rules()
@@ -115,26 +119,43 @@ def backtest(
 
     session_by_ts = tag_sessions(sliced, sessions_cfg)["session"]
 
-    strategy = SessionOpenContinuation(run_cfg.strategy, sessions_cfg)
+    strategy = build_strategy(run_cfg, sessions_cfg)
     result = run_backtest(
         sliced, symbol=symbol, strategy=strategy, contracts=contracts,
         prop_rules_config=prop_cfg, sessions_config=sessions_cfg, slippage_ticks=exec_cfg.slippage_ticks,
     )
 
-    trades = pair_trades(result.fills, session_by_ts)
     spec = contracts[symbol]
-    strat_cfg = run_cfg.strategy
-    risk_dollars = strat_cfg.sl_points * spec.point_value * strat_cfg.contracts
-    summary = summarize(trades, risk_dollars, result.combine)
+    risk_dollars_by_leg = {}
+    if run_cfg.continuation is not None:
+        cc = run_cfg.continuation
+        risk_dollars_by_leg["continuation"] = cc.sl_points * spec.point_value * cc.contracts
+    if run_cfg.mean_reversion is not None:
+        mc = run_cfg.mean_reversion
+        risk_dollars_by_leg["mean_reversion"] = mc.sl_points * spec.point_value * mc.contracts
 
-    typer.echo(f"=== Continuation leg backtest: {symbol}  {run_cfg.start} -> {run_cfg.end} ===")
+    trades = pair_trades(result.fills, session_by_ts, risk_dollars_by_leg)
+    summary = summarize(trades, result.combine)
+
+    typer.echo(f"=== Session-open backtest: {symbol}  {run_cfg.start} -> {run_cfg.end} ===")
     typer.echo(f"config: {config}")
-    typer.echo(
-        f"sessions={list(strat_cfg.sessions)} method={strat_cfg.direction_method} "
-        f"window={strat_cfg.observation_window_minutes}min sl={strat_cfg.sl_points}pt "
-        f"rr={strat_cfg.rr} (tp={strat_cfg.tp_points}pt) contracts={strat_cfg.contracts} "
-        f"slippage={exec_cfg.slippage_ticks}ticks"
-    )
+    if run_cfg.continuation is not None:
+        cc = run_cfg.continuation
+        typer.echo(
+            f"continuation:    sessions={list(cc.sessions)} method={cc.direction_method} "
+            f"window={cc.observation_window_minutes}min sl={cc.sl_points}pt rr={cc.rr} "
+            f"(tp={cc.tp_points}pt) contracts={cc.contracts}"
+        )
+    if run_cfg.mean_reversion is not None:
+        mc = run_cfg.mean_reversion
+        typer.echo(
+            f"mean_reversion:  sessions={list(mc.sessions)} mode={mc.direction_mode} "
+            f"max_trades={mc.max_trades_per_session} compression={mc.compression_method}"
+            f"({mc.compression_lookback_bars}bars<={mc.compression_threshold_points}pt) "
+            f"swing_w={mc.swing_lookback_bars} sl={mc.sl_points}pt rr={mc.rr} "
+            f"(tp={mc.tp_points}pt) contracts={mc.contracts}"
+        )
+    typer.echo(f"slippage={exec_cfg.slippage_ticks}ticks")
 
     o = summary.overall
     typer.echo("\n--- Overall ---")
@@ -144,6 +165,16 @@ def backtest(
         typer.echo(f"  expectancy: ${o.expectancy_dollars:,.2f}  ({o.expectancy_r:.3f}R)")
     else:
         typer.echo("  win rate / expectancy: n/a (no trades)")
+
+    typer.echo("\n--- Per-leg ---")
+    if summary.by_leg:
+        for name, s in summary.by_leg.items():
+            typer.echo(
+                f"  {name:16s} trades={s.n_trades:4d}  win_rate={s.win_rate:.1%}  "
+                f"expectancy=${s.expectancy_dollars:,.2f} ({s.expectancy_r:.3f}R)"
+            )
+    else:
+        typer.echo("  (no trades)")
 
     typer.echo("\n--- Per-session ---")
     if summary.by_session:

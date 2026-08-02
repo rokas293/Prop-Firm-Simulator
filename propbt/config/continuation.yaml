@@ -1,5 +1,9 @@
-# strategy/session_open.py -- open-spike continuation leg only (CLAUDE.md
-# section 4, leg 2). Nothing here is hardcoded in strategy code.
+# strategy/session_open.py -- session-open legs (CLAUDE.md section 4):
+# leg 2 (continuation) and leg 3 (mean-reversion). Nothing is hardcoded in
+# strategy code; each leg is independently toggled via `enabled` and can be
+# run alone or together. (Kept the "continuation.yaml" filename from Phase
+# 2 rather than renaming -- it's still the one config `run.py backtest`
+# takes, now scoped to the whole session_open module instead of just leg 2.)
 
 symbol: MES
 
@@ -14,19 +18,40 @@ backtest:
   start: "2021-07-16"
   end: "2024-10-13"
 
-sessions: [asia, london, ny]
+legs:
+  continuation:
+    enabled: true
+    sessions: [asia, london, ny]
+    direction:
+      # close_vs_fair_value: sign of (close of the bar at the end of the
+      #   observation window - fair value). With observation_window_minutes=1
+      #   this is exactly "sign of first-bar close vs fair value".
+      # window_displacement: sign of (close at window end - open at window
+      #   start), i.e. net displacement over the window, independent of fair
+      #   value.
+      method: close_vs_fair_value
+      observation_window_minutes: 3   # CLAUDE.md section 4: default 1-5 min
+    risk:
+      contracts: 1
+      sl_points: 10.0
+      rr: 1.5              # must be one of 1.0, 1.5, 2.0 -> tp_points = sl_points * rr
 
-direction:
-  # close_vs_fair_value: sign of (close of the bar at the end of the
-  #   observation window - fair value). With observation_window_minutes=1
-  #   this is exactly "sign of first-bar close vs fair value".
-  # window_displacement: sign of (close at window end - open at window
-  #   start), i.e. net displacement over the window, independent of fair
-  #   value.
-  method: close_vs_fair_value
-  observation_window_minutes: 3   # CLAUDE.md section 4: default 1-5 min
-
-risk:
-  contracts: 1
-  sl_points: 10.0
-  rr: 1.5              # must be one of 1.0, 1.5, 2.0 -> tp_points = sl_points * rr
+  mean_reversion:
+    enabled: true
+    sessions: [asia, london, ny]
+    max_trades_per_session: 3
+    consolidation:
+      compression_method: range        # range | atr
+      lookback_bars: 15                 # K bars for the range/ATR compression check
+      threshold_points: 8.0             # compression must be <= this to count as "quiet"
+      require_volume_confirmation: true
+      volume_lookback_bars: 15          # recent-volume window
+      volume_baseline_bars: 60          # longer baseline window (must be > volume_lookback_bars)
+      volume_ratio_threshold: 0.7        # recent/baseline must be <= this
+    swing:
+      lookback_bars: 5                  # w bars each side for swing-point confirmation
+    direction_mode: fade_break           # fade_break | join_break -- see session_open.py docstring
+    risk:
+      contracts: 1
+      sl_points: 8.0
+      rr: 1.0

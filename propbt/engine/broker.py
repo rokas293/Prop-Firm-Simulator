@@ -154,7 +154,7 @@ class Broker:
         entry_fill = Fill(
             ts=bar.ts, symbol=bar.symbol, side=order.side, contracts=order.contracts,
             price=fill_price, fill_type=FillType.ENTRY, commission=0.0,
-            realized_pnl=None, order_ts=order.ts,
+            realized_pnl=None, order_ts=order.ts, reason=order.reason,
         )
 
         sl_price = fill_price - order.side.sign * order.sl_points if order.sl_points is not None else None
