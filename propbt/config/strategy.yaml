@@ -1,9 +1,12 @@
-# strategy/session_open.py -- session-open legs (CLAUDE.md section 4):
-# leg 2 (continuation) and leg 3 (mean-reversion). Nothing is hardcoded in
-# strategy code; each leg is independently toggled via `enabled` and can be
-# run alone or together. (Kept the "continuation.yaml" filename from Phase
-# 2 rather than renaming -- it's still the one config `run.py backtest`
-# takes, now scoped to the whole session_open module instead of just leg 2.)
+# strategy/session_open.py + strategy/news_spike.py -- all session-open and
+# news-spike legs (CLAUDE.md section 4). Nothing is hardcoded in strategy
+# code; each leg is independently toggled via `enabled` and can be run
+# alone or together.
+#
+# Renamed from continuation.yaml (Phase 2) -> strategy.yaml now that this
+# covers three legs across two strategy modules, not just leg 2 anymore.
+# `run.py backtest --config propbt/config/strategy.yaml` is the current
+# invocation.
 
 symbol: MES
 
@@ -55,3 +58,39 @@ legs:
       contracts: 1
       sl_points: 8.0
       rr: 1.0
+
+  news:
+    enabled: true
+    events_path: news_events.csv   # relative to project root, like data.yaml's symbol paths
+    high_impact_only: true          # CLAUDE.md: "High-impact only by default"
+    impact_values: [high]           # which (lowercased) impact labels count as high
+    event_window_minutes: 90        # how long after the event these legs stay active
+
+    continuation:
+      enabled: true
+      direction:
+        method: close_vs_fair_value
+        observation_window_minutes: 5   # news spikes can be sharper/noisier than session opens
+      risk:
+        contracts: 1
+        sl_points: 12.0
+        rr: 1.5
+
+    mean_reversion:
+      enabled: true
+      max_trades_per_event: 3
+      consolidation:
+        compression_method: range
+        lookback_bars: 10                # shorter than the session leg -- event windows are shorter
+        threshold_points: 6.0
+        require_volume_confirmation: false  # volume around news is noisy/spiky by nature, not a clean "dry up" signal
+        volume_lookback_bars: 10
+        volume_baseline_bars: 30
+        volume_ratio_threshold: 0.7
+      swing:
+        lookback_bars: 3
+      direction_mode: fade_break
+      risk:
+        contracts: 1
+        sl_points: 10.0
+        rr: 1.0

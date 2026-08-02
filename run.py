@@ -10,6 +10,8 @@ from propbt.data.loader import compute_integrity_report, estimate_roll_days, loa
 from propbt.data.sessions import fair_value, session_anchor_utc, session_windows, tag_sessions
 from propbt.engine.backtester import run_backtest
 from propbt.reporting.metrics import pair_trades, summarize
+from propbt.strategy.base import MultiLegStrategy
+from propbt.strategy.news_spike import build_news_legs, load_news_spike_config
 from propbt.strategy.session_open import build_strategy, load_session_open_config
 
 app = typer.Typer(add_completion=False)
@@ -90,20 +92,22 @@ def inspect(
 
 @app.command()
 def backtest(
-    config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/continuation.yaml"),
+    config: str = typer.Option(..., "--config", help="Path to a strategy run config, e.g. propbt/config/strategy.yaml"),
 ) -> None:
-    """Run the session-open legs (continuation and/or mean-reversion, per
-    which are enabled in the config) over the configured date range and
-    print trade count, win rate, expectancy ($ and R), per-session and
-    per-leg breakdowns, and the Topstep Combine result."""
+    """Run whichever legs are enabled in the config -- session-open
+    (continuation and/or mean-reversion) and/or news-spike (continuation
+    and/or mean-reversion around high-impact events) -- over the configured
+    date range and print trade count, win rate, expectancy ($ and R),
+    per-session and per-leg breakdowns, and the Topstep Combine result."""
     run_cfg = load_session_open_config(config)
+    news_cfg = load_news_spike_config(config)
     symbol = run_cfg.symbol
 
     contracts = load_contracts()
     if symbol not in contracts:
         typer.echo(f"Unknown symbol {symbol!r}. Known: {sorted(contracts)}")
         raise typer.Exit(code=1)
-    if run_cfg.continuation is None and run_cfg.mean_reversion is None:
+    if run_cfg.continuation is None and run_cfg.mean_reversion is None and news_cfg is None:
         typer.echo("No legs enabled in config -- nothing to run")
         raise typer.Exit(code=1)
 
@@ -119,7 +123,16 @@ def backtest(
 
     session_by_ts = tag_sessions(sliced, sessions_cfg)["session"]
 
-    strategy = build_strategy(run_cfg, sessions_cfg)
+    session_open_strategy = build_strategy(run_cfg, sessions_cfg)
+    legs = []
+    if session_open_strategy.continuation is not None:
+        legs.append(session_open_strategy.continuation)
+    if session_open_strategy.mean_reversion is not None:
+        legs.append(session_open_strategy.mean_reversion)
+    if news_cfg is not None:
+        legs.extend(build_news_legs(news_cfg, start=run_cfg.start, end=run_cfg.end))
+    strategy = MultiLegStrategy(legs)
+
     result = run_backtest(
         sliced, symbol=symbol, strategy=strategy, contracts=contracts,
         prop_rules_config=prop_cfg, sessions_config=sessions_cfg, slippage_ticks=exec_cfg.slippage_ticks,
@@ -133,28 +146,54 @@ def backtest(
     if run_cfg.mean_reversion is not None:
         mc = run_cfg.mean_reversion
         risk_dollars_by_leg["mean_reversion"] = mc.sl_points * spec.point_value * mc.contracts
+    if news_cfg is not None and news_cfg.continuation is not None:
+        nc = news_cfg.continuation
+        risk_dollars_by_leg["news_continuation"] = nc.sl_points * spec.point_value * nc.contracts
+    if news_cfg is not None and news_cfg.mean_reversion is not None:
+        nm = news_cfg.mean_reversion
+        risk_dollars_by_leg["news_mean_reversion"] = nm.sl_points * spec.point_value * nm.contracts
 
     trades = pair_trades(result.fills, session_by_ts, risk_dollars_by_leg)
     summary = summarize(trades, result.combine)
 
-    typer.echo(f"=== Session-open backtest: {symbol}  {run_cfg.start} -> {run_cfg.end} ===")
+    typer.echo(f"=== Session-open + news-spike backtest: {symbol}  {run_cfg.start} -> {run_cfg.end} ===")
     typer.echo(f"config: {config}")
     if run_cfg.continuation is not None:
         cc = run_cfg.continuation
         typer.echo(
-            f"continuation:    sessions={list(cc.sessions)} method={cc.direction_method} "
+            f"continuation:       sessions={list(cc.sessions)} method={cc.direction_method} "
             f"window={cc.observation_window_minutes}min sl={cc.sl_points}pt rr={cc.rr} "
             f"(tp={cc.tp_points}pt) contracts={cc.contracts}"
         )
     if run_cfg.mean_reversion is not None:
         mc = run_cfg.mean_reversion
         typer.echo(
-            f"mean_reversion:  sessions={list(mc.sessions)} mode={mc.direction_mode} "
+            f"mean_reversion:     sessions={list(mc.sessions)} mode={mc.direction_mode} "
             f"max_trades={mc.max_trades_per_session} compression={mc.compression_method}"
             f"({mc.compression_lookback_bars}bars<={mc.compression_threshold_points}pt) "
             f"swing_w={mc.swing_lookback_bars} sl={mc.sl_points}pt rr={mc.rr} "
             f"(tp={mc.tp_points}pt) contracts={mc.contracts}"
         )
+    if news_cfg is not None:
+        typer.echo(
+            f"news:               events={news_cfg.events_path.name} "
+            f"high_impact_only={news_cfg.high_impact_only} impact_values={list(news_cfg.impact_values)} "
+            f"window={news_cfg.event_window_minutes}min"
+        )
+        if news_cfg.continuation is not None:
+            nc = news_cfg.continuation
+            typer.echo(
+                f"  news_continuation:   method={nc.direction_method} window={nc.observation_window_minutes}min "
+                f"sl={nc.sl_points}pt rr={nc.rr} (tp={nc.tp_points}pt) contracts={nc.contracts}"
+            )
+        if news_cfg.mean_reversion is not None:
+            nm = news_cfg.mean_reversion
+            typer.echo(
+                f"  news_mean_reversion: mode={nm.direction_mode} max_trades={nm.max_trades_per_event} "
+                f"compression={nm.compression_method}({nm.compression_lookback_bars}bars<={nm.compression_threshold_points}pt) "
+                f"swing_w={nm.swing_lookback_bars} sl={nm.sl_points}pt rr={nm.rr} "
+                f"(tp={nm.tp_points}pt) contracts={nm.contracts}"
+            )
     typer.echo(f"slippage={exec_cfg.slippage_ticks}ticks")
 
     o = summary.overall

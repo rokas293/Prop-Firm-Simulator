@@ -38,3 +38,20 @@ class BarState:
 
 class Strategy(Protocol):
     def on_bar(self, state: BarState) -> List[Order]: ...
+
+
+class MultiLegStrategy:
+    """Combines any number of independently toggleable leg strategies into
+    one Strategy -- each leg keeps its own internal state and just gets its
+    orders concatenated together. Used to run session_open.py's legs and
+    news_spike.py's legs side by side in a single backtest.
+    """
+
+    def __init__(self, legs: List[Strategy]):
+        self.legs = legs
+
+    def on_bar(self, state: BarState) -> List[Order]:
+        orders: List[Order] = []
+        for leg in self.legs:
+            orders.extend(leg.on_bar(state))
+        return orders
