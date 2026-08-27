@@ -1,10 +1,11 @@
+import Card from './Card'
 import { fmtPct, fmtR, fmtUsd } from '../format'
 import type { GroupStats } from '../api/types'
 
-// Shared per-group stats table with click-to-filter rows -- extracted from
-// DashboardPanel (POLISH_ROADMAP Phase P5) so CompassPanel's leg/session
-// breakdowns reuse the exact same server-computed GroupStats display and
-// cross-filter behavior instead of re-deriving them from raw trades.
+// Shared per-group stats table with click-to-filter rows -- the one copy
+// the merged Dashboard panel's Breakdowns tab renders (REDESIGN_APPROACH.md
+// Phase B2; previously duplicated verbatim between the old Dashboard and
+// Compass panels).
 export default function BreakdownTable({
   title,
   rows,
@@ -16,8 +17,7 @@ export default function BreakdownTable({
 }) {
   const entries = Object.entries(rows).sort((a, b) => b[1].trades - a[1].trades)
   return (
-    <div className="rounded border border-neutral-800 bg-neutral-900 p-4">
-      <div className="mb-2 text-sm font-medium text-neutral-300">{title}</div>
+    <Card title={title}>
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr className="border-b border-neutral-800 text-left text-neutral-500">
@@ -54,6 +54,6 @@ export default function BreakdownTable({
           )}
         </tbody>
       </table>
-    </div>
+    </Card>
   )
 }

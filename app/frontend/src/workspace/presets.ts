@@ -1,13 +1,5 @@
 import type { AddPanelOptions, DockviewApi } from 'dockview-react'
-import {
-  CHART_PANEL_ID,
-  COMPASS_PANEL_ID,
-  DASHBOARD_PANEL_ID,
-  EQUITY_PANEL_ID,
-  PANEL_DEFS,
-  PROP_RISK_PANEL_ID,
-  TRADE_LIST_PANEL_ID,
-} from './panelIds'
+import { CHART_PANEL_ID, DASHBOARD_PANEL_ID, EQUITY_PANEL_ID, PANEL_DEFS, PROP_RISK_PANEL_ID, TRADE_LIST_PANEL_ID } from './panelIds'
 
 function titleFor(id: string): string {
   return PANEL_DEFS.find((p) => p.id === id)?.title ?? id
@@ -53,12 +45,6 @@ export function applyAnalysisLayout(api: DockviewApi): void {
     title: titleFor(EQUITY_PANEL_ID),
     position: { direction: 'within', referencePanel: DASHBOARD_PANEL_ID },
   })
-  add(api, {
-    id: COMPASS_PANEL_ID,
-    component: COMPASS_PANEL_ID,
-    title: titleFor(COMPASS_PANEL_ID),
-    position: { direction: 'within', referencePanel: DASHBOARD_PANEL_ID },
-  })
   api.getPanel(CHART_PANEL_ID)?.api.setActive()
 }
 
@@ -93,12 +79,6 @@ export function applyStatsLayout(api: DockviewApi): void {
     id: EQUITY_PANEL_ID,
     component: EQUITY_PANEL_ID,
     title: titleFor(EQUITY_PANEL_ID),
-    position: { direction: 'within', referencePanel: PROP_RISK_PANEL_ID },
-  })
-  add(api, {
-    id: COMPASS_PANEL_ID,
-    component: COMPASS_PANEL_ID,
-    title: titleFor(COMPASS_PANEL_ID),
     position: { direction: 'within', referencePanel: PROP_RISK_PANEL_ID },
   })
   add(api, {

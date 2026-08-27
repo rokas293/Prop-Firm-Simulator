@@ -11,7 +11,6 @@ import TradeListPanel from '../panels/TradeListPanel'
 import DashboardPanel from '../panels/DashboardPanel'
 import RiskPanel from '../panels/RiskPanel'
 import EquityPanel from '../panels/EquityPanel'
-import CompassPanel from '../panels/CompassPanel'
 import PerfProfiler from '../components/PerfProfiler'
 import { useLayoutStore } from '../state/layoutStore'
 import { useWorkspaceApiStore } from '../state/workspaceApiStore'
@@ -19,15 +18,7 @@ import { useUiStore } from '../state/uiStore'
 import { useTradeStore } from '../state/tradeStore'
 import { useChartViewStore } from '../state/chartViewStore'
 import { applyAnalysisLayout, PRESETS } from './presets'
-import {
-  CHART_PANEL_ID,
-  COMPASS_PANEL_ID,
-  DASHBOARD_PANEL_ID,
-  EQUITY_PANEL_ID,
-  PANEL_DEFS,
-  PROP_RISK_PANEL_ID,
-  TRADE_LIST_PANEL_ID,
-} from './panelIds'
+import { CHART_PANEL_ID, DASHBOARD_PANEL_ID, EQUITY_PANEL_ID, PANEL_DEFS, PROP_RISK_PANEL_ID, TRADE_LIST_PANEL_ID } from './panelIds'
 
 // Perf-instruments every panel from one place (POLISH_ROADMAP Phase P4)
 // rather than touching all 5 panel files -- each panel is registered with
@@ -49,7 +40,6 @@ const COMPONENTS: Record<string, FunctionComponent<IDockviewPanelProps>> = {
   [DASHBOARD_PANEL_ID]: withPerf('Dashboard', DashboardPanel),
   [PROP_RISK_PANEL_ID]: withPerf('Prop Risk', RiskPanel),
   [EQUITY_PANEL_ID]: withPerf('Equity', EquityPanel),
-  [COMPASS_PANEL_ID]: withPerf('Compass', CompassPanel),
 }
 
 const SAVE_DEBOUNCE_MS = 400
