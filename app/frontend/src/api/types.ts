@@ -65,6 +65,7 @@ export interface EquityPoint {
   day_start_balance: number
   breached: boolean
   daily_locked: boolean
+  drawdown_usd: number
 }
 
 export interface GroupStats {
@@ -104,6 +105,17 @@ export interface Bar {
   volume: number
 }
 
+export interface DailyRiskPoint {
+  trading_day: string
+  min_distance_to_mll_usd: number
+  min_distance_time: number
+  breached: boolean
+  breach_time: number | null
+  daily_locked: boolean
+  daily_lock_time: number | null
+  trades: number
+}
+
 export interface SessionWindow {
   trading_day: string
   session: string
@@ -111,4 +123,21 @@ export interface SessionWindow {
   end: number
   fair_value: number | null
   fair_value_time: number | null
+}
+
+export interface IndicatorPoint {
+  time: number
+  value: number
+}
+
+export type IndicatorName = 'vwap' | 'ema20' | 'ema50' | 'atr14'
+
+export type IndicatorResponse = Partial<Record<IndicatorName, IndicatorPoint[]>>
+
+export interface AiStatusResponse {
+  available: boolean
+}
+
+export interface SummarizeResponse {
+  summary: string
 }

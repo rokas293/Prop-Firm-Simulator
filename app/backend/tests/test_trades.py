@@ -69,6 +69,14 @@ def test_trades_filter_by_result(client, known_trade_run):
     assert r2.json() == []
 
 
+def test_trades_filter_by_exit_type(client, known_trade_run):
+    run_id, _, _ = known_trade_run
+    r = client.get(f"/api/runs/{run_id}/trades", params={"exit_type": "tp"})
+    assert len(r.json()) == 1
+    r2 = client.get(f"/api/runs/{run_id}/trades", params={"exit_type": "sl"})
+    assert r2.json() == []
+
+
 def test_trades_filter_by_time_range_excludes(client, known_trade_run):
     run_id, _, _ = known_trade_run
     far_future = int(pd.Timestamp("2030-01-01", tz="UTC").timestamp())

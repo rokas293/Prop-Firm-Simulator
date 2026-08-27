@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -14,5 +15,13 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  // happy-dom (not the vitest default 'node') so tests exercise a real
+  // localStorage -- several stores (tradeStore, uiStore, indicatorStore)
+  // persist via zustand's `persist` middleware as of Phase V7. (jsdom was
+  // tried first but its current version has an ESM/CJS interop bug with
+  // this Node version; happy-dom is lighter and works.)
+  test: {
+    environment: 'happy-dom',
   },
 })

@@ -73,6 +73,7 @@ class EquityPoint(BaseModel):
     day_start_balance: float
     breached: bool
     daily_locked: bool
+    drawdown_usd: float
 
 
 class GroupStats(BaseModel):
@@ -110,6 +111,30 @@ class Bar(BaseModel):
     low: float
     close: float
     volume: int
+
+
+class DailyRiskPoint(BaseModel):
+    trading_day: str
+    min_distance_to_mll_usd: float
+    min_distance_time: int
+    breached: bool
+    breach_time: Optional[int] = None
+    daily_locked: bool
+    daily_lock_time: Optional[int] = None
+    trades: int
+
+
+class IndicatorPoint(BaseModel):
+    time: int
+    value: float
+
+
+class AiStatusResponse(BaseModel):
+    available: bool
+
+
+class SummarizeResponse(BaseModel):
+    summary: str
 
 
 class SessionWindow(BaseModel):

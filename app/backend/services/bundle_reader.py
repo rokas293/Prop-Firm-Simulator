@@ -90,6 +90,7 @@ def list_trades(
     session: Optional[str] = None,
     side: Optional[str] = None,
     result: Optional[str] = None,
+    exit_type: Optional[str] = None,
     ts_from: Optional[int] = None,
     ts_to: Optional[int] = None,
 ) -> List[models.TradeRecord]:
@@ -104,6 +105,8 @@ def list_trades(
         df = df[df["session"] == session]
     if side:
         df = df[df["side"] == side]
+    if exit_type:
+        df = df[df["exit_type"] == exit_type]
     if result == "win":
         df = df[df["pnl_usd"] > 0]
     elif result == "loss":
@@ -129,21 +132,115 @@ def _equity_row(row: pd.Series) -> models.EquityPoint:
         day_start_balance=float(row["day_start_balance"]),
         breached=bool(row["breached"]),
         daily_locked=bool(row["daily_locked"]),
+        drawdown_usd=float(row["drawdown_usd"]),
     )
 
 
-def list_equity(run_id: str, ts_from: Optional[int] = None, ts_to: Optional[int] = None) -> List[models.EquityPoint]:
+_EQUITY_CHANGE_COLS = ["balance", "equity", "mll_floor", "daily_loss_floor", "breached", "daily_locked"]
+
+
+def _compress_equity(df: pd.DataFrame, max_points: int) -> pd.DataFrame:
+    """Equity is per-bar (potentially 300k+ rows for a multi-year run) but
+    mostly flat between trade/EOD events -- ship every row where something
+    actually changed instead of a fixed-stride sample, so no real step in
+    balance/mll_floor/breach state is ever silently dropped (VIZ_SPEC
+    section 0: never ship all bars, but "resample honestly").
+
+    If that's still above max_points, stride-sample on top, but always keep
+    the breach row(s) -- the single bar the run died on (CLAUDE.md section
+    6) must never be a casualty of decimation.
+    """
+    if df.empty:
+        return df
+
+    changed = (df[_EQUITY_CHANGE_COLS] != df[_EQUITY_CHANGE_COLS].shift(1)).any(axis=1)
+    changed.iloc[0] = True
+    compressed = df[changed]
+
+    if len(compressed) <= max_points:
+        return compressed
+
+    stride = max(1, len(compressed) // max_points)
+    keep = pd.Series(False, index=compressed.index)
+    keep.iloc[::stride] = True
+    keep.iloc[-1] = True
+    keep |= compressed["breached"]
+    return compressed[keep]
+
+
+def list_equity(
+    run_id: str,
+    ts_from: Optional[int] = None,
+    ts_to: Optional[int] = None,
+    max_points: int = 5000,
+) -> List[models.EquityPoint]:
     try:
         df = rb.read_equity(run_id, get_runs_dir())
     except FileNotFoundError:
         raise RunNotFound(run_id)
+
+    # Drawdown-from-peak is computed on the full, unfiltered series first --
+    # "peak equity to date" must reflect the run's real history even if the
+    # caller only asked for a later window, and doing it here (not in the
+    # frontend) keeps VIZ_SPEC's "frontend does zero financial math" rule.
+    df = df.copy()
+    df["drawdown_usd"] = df["equity"].cummax() - df["equity"]
 
     if ts_from is not None:
         df = df[df["time"] >= pd.Timestamp(ts_from, unit="s", tz="UTC")]
     if ts_to is not None:
         df = df[df["time"] <= pd.Timestamp(ts_to, unit="s", tz="UTC")]
 
+    df = _compress_equity(df, max_points)
+
     return [_equity_row(row) for _, row in df.iterrows()]
+
+
+def list_daily_risk(run_id: str) -> List[models.DailyRiskPoint]:
+    """Per trading day, the closest the run ever came to an MLL breach --
+    computed on the FULL uncompressed equity series (not the client-facing
+    downsampled one), since the true intraday minimum could fall on a bar
+    that decimation would otherwise drop. "Distance to MLL" = equity minus
+    the trailing MLL floor (CLAUDE.md section 3: breach is live intraday
+    equity touching the floor), so 0 or below means that day breached.
+    """
+    try:
+        df = rb.read_equity(run_id, get_runs_dir())
+    except FileNotFoundError:
+        raise RunNotFound(run_id)
+
+    try:
+        trades_df = rb.read_trades(run_id, get_runs_dir())
+    except FileNotFoundError:
+        trades_df = None
+
+    df = df.copy()
+    df["distance_to_mll"] = df["equity"] - df["mll_floor"]
+
+    rows: List[models.DailyRiskPoint] = []
+    for trading_day, group in df.groupby("trading_day", sort=True):
+        min_idx = group["distance_to_mll"].idxmin()
+        min_row = group.loc[min_idx]
+        trades_that_day = 0
+        if trades_df is not None and "trading_day" in trades_df.columns:
+            trades_that_day = int((trades_df["trading_day"] == trading_day).sum())
+
+        breached_rows = group[group["breached"]]
+        locked_rows = group[group["daily_locked"]]
+
+        rows.append(
+            models.DailyRiskPoint(
+                trading_day=str(trading_day),
+                min_distance_to_mll_usd=float(min_row["distance_to_mll"]),
+                min_distance_time=_unix(min_row["time"]),
+                breached=not breached_rows.empty,
+                breach_time=_unix(breached_rows.iloc[0]["time"]) if not breached_rows.empty else None,
+                daily_locked=not locked_rows.empty,
+                daily_lock_time=_unix(locked_rows.iloc[0]["time"]) if not locked_rows.empty else None,
+                trades=trades_that_day,
+            )
+        )
+    return rows
 
 
 def _group_stats(d: dict) -> models.GroupStats:

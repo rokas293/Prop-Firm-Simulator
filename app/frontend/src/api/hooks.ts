@@ -1,6 +1,158 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
+import { fetchBarsInWorker } from '../workers/barsWorkerClient'
+import type { StatsScope, TradeQueryParams } from '../state/tradeStore'
+import type { IndicatorName } from './types'
+
+export type { StatsScope }
 
 export function useRuns() {
   return useQuery({ queryKey: ['runs'], queryFn: api.listRuns })
+}
+
+// Prefetches a run's heaviest panel payloads on hover in the runs list
+// (POLISH_ROADMAP Phase P4) so clicking through to the workspace mostly
+// hits warm cache instead of every panel triggering its own fresh round
+// trip. Doesn't chase every filtered/scoped variant a panel might request
+// (e.g. Dashboard's IS-scoped trades depend on the run's own
+// is_oos_split_date, unknown until /runs/{id} itself resolves) -- just the
+// unfiltered trades list, the default ('oos') and 'all' stats scopes, and
+// the run metadata, which cover the first paint of every panel that opens
+// by default.
+export function usePrefetchRun() {
+  const queryClient = useQueryClient()
+  return (runId: string) => {
+    void queryClient.prefetchQuery({ queryKey: ['run', runId], queryFn: () => api.getRun(runId) })
+    void queryClient.prefetchQuery({ queryKey: ['trades', runId, undefined], queryFn: () => api.getTrades(runId) })
+    void queryClient.prefetchQuery({ queryKey: ['trades', runId, {}], queryFn: () => api.getTrades(runId, {}) })
+    void queryClient.prefetchQuery({ queryKey: ['stats', runId, 'oos'], queryFn: () => api.getStats(runId, 'oos') })
+    void queryClient.prefetchQuery({ queryKey: ['stats', runId, 'all'], queryFn: () => api.getStats(runId, 'all') })
+  }
+}
+
+export function useRun(runId: string | null) {
+  return useQuery({
+    queryKey: ['run', runId],
+    queryFn: () => api.getRun(runId as string),
+    enabled: runId !== null,
+  })
+}
+
+export function useTrades(runId: string | null, filters?: TradeQueryParams) {
+  return useQuery({
+    queryKey: ['trades', runId, filters],
+    queryFn: () => api.getTrades(runId as string, filters),
+    enabled: runId !== null,
+  })
+}
+
+// Bar fetch + JSON parse happens in a Web Worker, not on the main thread
+// (POLISH_ROADMAP Phase P4) -- see workers/barsWorkerClient.ts. react-query
+// still owns caching/dedup/loading state exactly as before; only where the
+// bytes get fetched and parsed changes.
+export function useBars(
+  instrument: string | null,
+  tf: string,
+  from: number | null,
+  to: number | null,
+  maxPoints = 2000,
+) {
+  return useQuery({
+    queryKey: ['bars', instrument, tf, from, to, maxPoints],
+    queryFn: () =>
+      fetchBarsInWorker({ instrument: instrument as string, tf, from: from as number, to: to as number, max_points: maxPoints }),
+    enabled: instrument !== null && from !== null && to !== null,
+  })
+}
+
+export function useSessions(instrument: string | null, from: number | null, to: number | null) {
+  return useQuery({
+    queryKey: ['sessions', instrument, from, to],
+    queryFn: () => api.getSessions({ instrument: instrument as string, from: from as number, to: to as number }),
+    enabled: instrument !== null && from !== null && to !== null,
+  })
+}
+
+export function useStats(runId: string | null, scope: StatsScope) {
+  return useQuery({
+    queryKey: ['stats', runId, scope],
+    queryFn: () => api.getStats(runId as string, scope),
+    enabled: runId !== null,
+  })
+}
+
+// Equity/drawdown curve, honestly downsampled server-side
+// (bundle_reader._compress_equity) -- never scoped by IS/OOS, since it's
+// the one continuous trajectory that actually happened (see ChartPage's
+// day-window comment for the same "server computes it" principle).
+// from/to are optional: omitted (Dashboard/Risk pages) means the full run;
+// passed (ChartPage's replay live readout) scopes to just the visible
+// window, so the readout doesn't pull hundreds of thousands of rows for a
+// single trade's replay.
+export function useEquity(runId: string | null, maxPoints = 3000, from?: number | null, to?: number | null) {
+  return useQuery({
+    queryKey: ['equity', runId, maxPoints, from ?? null, to ?? null],
+    queryFn: () =>
+      api.getEquity(runId as string, {
+        max_points: maxPoints,
+        from: from ?? undefined,
+        to: to ?? undefined,
+      }),
+    enabled: runId !== null,
+  })
+}
+
+// Per-day worst distance-to-MLL, computed server-side over the full
+// uncompressed equity series (bundle_reader.list_daily_risk) -- the
+// intraday minimum could fall on a bar the /equity endpoint's own
+// decimation drops, so this is deliberately a separate, exact aggregate.
+export function useDailyRisk(runId: string | null) {
+  return useQuery({
+    queryKey: ['daily_risk', runId],
+    queryFn: () => api.getDailyRisk(runId as string),
+    enabled: runId !== null,
+  })
+}
+
+// Computed server-side by reusing propbt.data.indicators directly (VIZ_SPEC
+// section 6/8) -- never recomputed in the browser.
+export function useIndicators(
+  instrument: string | null,
+  tf: string,
+  from: number | null,
+  to: number | null,
+  which: IndicatorName[],
+) {
+  return useQuery({
+    queryKey: ['indicators', instrument, tf, from, to, which],
+    queryFn: () =>
+      api.getIndicators({
+        instrument: instrument as string,
+        tf,
+        from: from as number,
+        to: to as number,
+        which: which.join(','),
+      }),
+    enabled: instrument !== null && from !== null && to !== null && which.length > 0,
+  })
+}
+
+// Whether the optional "Summarize this run" AI insight is configured on the
+// backend (POLISH_ROADMAP Phase P5) -- lets CompassPanel disable/hide the
+// button up front instead of only finding out on click. A long staleTime
+// is fine: this only flips when the backend's ANTHROPIC_API_KEY changes,
+// which never happens mid-session.
+export function useAiStatus() {
+  return useQuery({ queryKey: ['ai-status'], queryFn: api.getAiStatus, staleTime: 5 * 60 * 1000 })
+}
+
+// A button-triggered POST, not data to keep in sync -- a mutation, not a
+// query (VIZ_SPEC section 6's contract is otherwise all-GET; see
+// client.ts's postRequest comment for why this is the one exception).
+// Sends only already-aggregated stats (the scope's StatsResponse), never
+// raw trades/bars, to the backend, which forwards them to Claude.
+export function useSummarizeRun() {
+  return useMutation({
+    mutationFn: ({ runId, scope }: { runId: string; scope: StatsScope }) => api.summarizeRun(runId, scope),
+  })
 }

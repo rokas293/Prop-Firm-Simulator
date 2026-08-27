@@ -15,8 +15,9 @@ def get_equity(
     run_id: str,
     from_: Optional[int] = Query(None, alias="from", description="unix seconds"),
     to: Optional[int] = Query(None, description="unix seconds"),
+    max_points: int = Query(5000, ge=10, le=50000),
 ) -> List[models.EquityPoint]:
     try:
-        return bundle_reader.list_equity(run_id, ts_from=from_, ts_to=to)
+        return bundle_reader.list_equity(run_id, ts_from=from_, ts_to=to, max_points=max_points)
     except bundle_reader.RunNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))

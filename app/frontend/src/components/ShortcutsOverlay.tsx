@@ -1,0 +1,32 @@
+// Discoverable "?" shortcuts overlay (POLISH_ROADMAP Phase P6). Body is
+// ShortcutsList, which renders directly from keyboard/shortcuts.ts's
+// SHORTCUTS array -- the same data every real key handler matches against
+// via isShortcut() -- so this can never drift from what actually works.
+// App.tsx's global '?'/Escape listener owns `open`; real dispatch for each
+// shortcut lives in ChartPanel, CommandPalette, and KeyboardShortcuts.tsx.
+import ShortcutsList from './ShortcutsList'
+
+export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null
+
+  return (
+    <div className="propbt-cmdk-overlay" onClick={onClose}>
+      <div
+        className="propbt-shortcuts-content"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Keyboard shortcuts"
+      >
+        <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+          <h2 className="text-sm font-semibold text-neutral-100">Keyboard shortcuts</h2>
+          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300">
+            Esc to close
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto p-4">
+          <ShortcutsList />
+        </div>
+      </div>
+    </div>
+  )
+}

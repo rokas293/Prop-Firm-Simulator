@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
-    "dev:backend": "python -m uvicorn app.backend.main:app --reload --port 8000",
+    "dev:backend": "python -m uvicorn app.backend.main:app --reload --reload-dir app/backend --reload-dir propbt --port 8000",
     "dev:frontend": "npm --prefix app/frontend run dev"
   },
   "devDependencies": {

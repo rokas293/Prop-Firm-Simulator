@@ -163,7 +163,16 @@ def range_compression(bars: pd.DataFrame, lookback_bars: int) -> Optional[float]
 
 
 def atr(bars: pd.DataFrame, lookback_bars: int) -> Optional[float]:
-    """Average true range over the last `lookback_bars` bars, in points."""
+    """Average true range over the last `lookback_bars` bars, in points.
+
+    Deliberately a hand-rolled numpy loop, not propbt.data.indicators.
+    atr_series() (used for the viz backend's ATR(14) chart pane) --
+    delegating there was tried and reverted: this is called once per bar in
+    the backtest hot loop, and the vectorized pandas version's overhead
+    (rolling/concat) is ~6.5x slower there (175-test suite: 20s -> 132s).
+    Both compute the identical formula; test_indicators.py's
+    test_atr_series_last_value_matches_scalar_atr cross-checks them.
+    """
     if len(bars) < lookback_bars + 1:
         return None
     window = bars.iloc[-(lookback_bars + 1):]
