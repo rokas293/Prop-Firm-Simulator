@@ -604,9 +604,18 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
       // (POLISH_ROADMAP Phase P3). If there's no current visible range yet
       // (first paint) there's nothing to ease from, so it snaps -- that
       // avoids an odd animation-from-nowhere on initial load.
+      //
+      // Guarded on real data for the same reason as setVisibleRange above:
+      // ChartPanel's own auto-fit effect already waits for bars to load,
+      // but the 'f' keyboard shortcut calls fitTrade() straight from a
+      // keydown handler gated only on `selectedTrade` existing -- if a
+      // trade is selected before its bars have finished fetching (e.g.
+      // switching trades quickly), that path reaches here with an empty
+      // chart and LWC throws instead of no-op-ing, same white-screen
+      // crash as the split-view case, confirmed live.
       fitRange: (from, to) => {
         const chart = chartRef.current
-        if (!chart) return
+        if (!chart || barsRef.current.length === 0) return
         if (fitAnimationRef.current !== null) {
           cancelAnimationFrame(fitAnimationRef.current)
           fitAnimationRef.current = null
@@ -631,7 +640,17 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
       fitContent: () => {
         chartRef.current?.timeScale().fitContent()
       },
+      // Guarded on having real data: a chart with zero bars has no logical
+      // (bar-index) range for LWC to map a time-based range onto, and
+      // setVisibleRange() throws in that state (ensureNotNull inside its
+      // own timeToLogicalRange) rather than no-op-ing. This is reachable in
+      // practice, not just in theory -- split view's sync (ChartPanel.tsx)
+      // mirrors the primary's very first auto-range onto the secondary
+      // chart the instant it mounts, before its own bars fetch has
+      // resolved, and an uncaught throw here took down the whole tree
+      // (no error boundary) with a real, 100%-reproducible white screen.
       setVisibleRange: (from, to) => {
+        if (barsRef.current.length === 0) return
         chartRef.current?.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
       },
       setCrosshairAt: (time) => {

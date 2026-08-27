@@ -90,13 +90,15 @@ export default function ReplayControls({
               ))}
             </select>
 
+            {/* No explicit accent-color class -- inherits the theme's live
+                accent-color from :root (POLISH_ROADMAP Phase P6). */}
             <input
               type="range"
               min={0}
               max={lastIndex}
               value={cursorIndex}
               onChange={(e) => onCursorIndexChange(Number(e.target.value))}
-              className="min-w-[160px] flex-1 accent-blue-600"
+              className="min-w-[160px] flex-1"
             />
 
             {cursorBar && <span className="whitespace-nowrap font-mono text-neutral-400">{fmtTime(cursorBar.time)}</span>}
