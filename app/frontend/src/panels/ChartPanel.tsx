@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import PriceChart, { type PriceChartHandle } from '../chart/PriceChart'
+import ChartKL from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/SessionBandsPrimitive'
 import { equityAtCursor, runningTotals } from '../chart/replay'
 import { withMargin } from '../chart/windowMargin'
@@ -12,6 +13,7 @@ import { filtersToParams, useTradeStore } from '../state/tradeStore'
 import { useIndicatorStore, type IndicatorPrefs } from '../state/indicatorStore'
 import { useChartViewStore } from '../state/chartViewStore'
 import { useChartDefaultsStore } from '../state/chartDefaultsStore'
+import { useChartEngineStore } from '../state/chartEngineStore'
 import { applyCompassFilters } from '../compass/breakdowns'
 import { isShortcut } from '../keyboard/shortcuts'
 import EmptyState from '../components/EmptyState'
@@ -103,6 +105,16 @@ export default function ChartPanel() {
   // store.
   const bracketDensity = useChartDefaultsStore((s) => s.bracketDensity)
   const setBracketDensity = useChartDefaultsStore((s) => s.setBracketDensity)
+
+  // KLineCharts engine feature flag (PART_A_REVISED_klinecharts.md Phase
+  // A0'). Every control below this point that isn't yet wired up for the
+  // KL engine (trade fitting, split view, brackets, indicators, drawings,
+  // replay -- later phases) is hidden rather than left dead when
+  // engine === 'kl', so there's never a button on screen that visibly does
+  // nothing.
+  const engine = useChartEngineStore((s) => s.engine)
+  const setEngine = useChartEngineStore((s) => s.setEngine)
+  const lwcEngine = engine === 'lwc'
 
   // Reset to a clean state whenever a different run is opened.
   useEffect(() => {
@@ -453,71 +465,96 @@ export default function ChartPanel() {
           Next trade &rarr;
         </button>
 
-        <div className="mx-1 h-4 w-px bg-neutral-800" />
+        {lwcEngine && (
+          <>
+            <div className="mx-1 h-4 w-px bg-neutral-800" />
 
-        <button
-          onClick={fitTrade}
-          disabled={!selectedTrade}
-          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-        >
-          Fit trade
-        </button>
-        <button
-          onClick={selectFullDay}
-          disabled={!selectedTrade}
-          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-        >
-          Full day
-        </button>
+            <button
+              onClick={fitTrade}
+              disabled={!selectedTrade}
+              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+            >
+              Fit trade
+            </button>
+            <button
+              onClick={selectFullDay}
+              disabled={!selectedTrade}
+              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+            >
+              Full day
+            </button>
 
-        <div className="mx-1 h-4 w-px bg-neutral-800" />
+            <div className="mx-1 h-4 w-px bg-neutral-800" />
 
-        <button
-          onClick={() => setSplitView((v) => !v)}
-          className={`rounded px-2 py-1 ${
-            splitView ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-          }`}
-        >
-          Split view
-        </button>
-        {splitView && (
-          <div className="flex gap-1">
-            {TIMEFRAMES.filter((tf) => tf !== timeframe).map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setSecondaryTimeframe(tf)}
-                className={`rounded px-2 py-1 ${
-                  secondaryTimeframe === tf
-                    ? 'bg-accent-blue text-white'
-                    : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-                }`}
-              >
-                {tf}
-              </button>
-            ))}
-          </div>
+            <button
+              onClick={() => setSplitView((v) => !v)}
+              className={`rounded px-2 py-1 ${
+                splitView ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              }`}
+            >
+              Split view
+            </button>
+            {splitView && (
+              <div className="flex gap-1">
+                {TIMEFRAMES.filter((tf) => tf !== timeframe).map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setSecondaryTimeframe(tf)}
+                    className={`rounded px-2 py-1 ${
+                      secondaryTimeframe === tf
+                        ? 'bg-accent-blue text-white'
+                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="mx-1 h-4 w-px bg-neutral-800" />
+
+            <span className="text-neutral-500">Brackets</span>
+            <div className="flex gap-1">
+              {(['auto', 'full', 'markers'] as BracketDensity[]).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setBracketDensity(d)}
+                  title={
+                    d === 'auto'
+                      ? 'Simplify narrow brackets to markers when zoomed out'
+                      : d === 'full'
+                        ? 'Always show full brackets'
+                        : 'Always show markers only'
+                  }
+                  className={`rounded px-2 py-1 capitalize ${
+                    bracketDensity === d ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                  }`}
+                >
+                  {d === 'markers' ? 'Off' : d}
+                </button>
+              ))}
+            </div>
+          </>
         )}
 
         <div className="mx-1 h-4 w-px bg-neutral-800" />
 
-        <span className="text-neutral-500">Brackets</span>
+        {/* REDESIGN_APPROACH.md / PART_A_REVISED_klinecharts.md feature flag
+            -- dropped once the KL engine reaches parity and
+            lightweight-charts retires. */}
+        <span className="text-neutral-500">Engine</span>
         <div className="flex gap-1">
-          {(['auto', 'full', 'markers'] as BracketDensity[]).map((d) => (
+          {(['lwc', 'kl'] as const).map((e) => (
             <button
-              key={d}
-              onClick={() => setBracketDensity(d)}
-              title={
-                d === 'auto'
-                  ? 'Simplify narrow brackets to markers when zoomed out'
-                  : d === 'full'
-                    ? 'Always show full brackets'
-                    : 'Always show markers only'
-              }
-              className={`rounded px-2 py-1 capitalize ${
-                bracketDensity === d ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              key={e}
+              onClick={() => setEngine(e)}
+              title={e === 'lwc' ? 'lightweight-charts (current)' : 'KLineCharts (in migration)'}
+              className={`rounded px-2 py-1 uppercase ${
+                engine === e ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
               }`}
             >
-              {d === 'markers' ? 'Off' : d}
+              {e}
             </button>
           ))}
         </div>
@@ -531,64 +568,79 @@ export default function ChartPanel() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 px-4 py-1.5">
-        <IndicatorTogglePanel />
-        <DrawingToolbar instrument={run?.instrument ?? null} />
-      </div>
-
-      <ReplayControls
-        active={replayActive}
-        onToggleActive={toggleReplay}
-        bars={bars ?? []}
-        cursorIndex={cursorIndex}
-        onCursorIndexChange={setCursorIndex}
-        isPlaying={isPlaying}
-        onTogglePlaying={() => setIsPlaying(!isPlaying)}
-        speed={speed}
-        onSpeedChange={setSpeed}
-        runningPnl={replayTotals.pnlUsd}
-        runningR={replayTotals.r}
-        equity={equityAtCursorPoint}
-      />
-
-      <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
-        <div className={splitView ? 'min-h-0 flex-1 border-b border-neutral-800' : 'h-full'}>
-          <PriceChart
-            ref={chartRef}
-            instrument={run?.instrument ?? null}
-            bars={bars ?? []}
-            trades={visibleTrades}
-            selectedTrade={selectedTrade}
-            sessionBands={sessionBands}
-            indicators={indicators}
-            prefs={indicatorPrefs}
-            bracketDensity={bracketDensity}
-            loading={barsFetching}
-            cursorTime={cursorTime}
-            onVisibleRangeChange={splitView ? handlePrimaryVisibleRangeChange : undefined}
-            onCrosshairMove={splitView ? handlePrimaryCrosshairMove : undefined}
-          />
+      {lwcEngine && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 px-4 py-1.5">
+          <IndicatorTogglePanel />
+          <DrawingToolbar instrument={run?.instrument ?? null} />
         </div>
-        {splitView && (
-          <div className="min-h-0 flex-1">
+      )}
+
+      {lwcEngine && (
+        <ReplayControls
+          active={replayActive}
+          onToggleActive={toggleReplay}
+          bars={bars ?? []}
+          cursorIndex={cursorIndex}
+          onCursorIndexChange={setCursorIndex}
+          isPlaying={isPlaying}
+          onTogglePlaying={() => setIsPlaying(!isPlaying)}
+          speed={speed}
+          onSpeedChange={setSpeed}
+          runningPnl={replayTotals.pnlUsd}
+          runningR={replayTotals.r}
+          equity={equityAtCursorPoint}
+        />
+      )}
+
+      {lwcEngine ? (
+        <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
+          <div className={splitView ? 'min-h-0 flex-1 border-b border-neutral-800' : 'h-full'}>
             <PriceChart
-              ref={secondaryChartRef}
+              ref={chartRef}
               instrument={run?.instrument ?? null}
-              bars={secondaryBars ?? []}
+              bars={bars ?? []}
               trades={visibleTrades}
               selectedTrade={selectedTrade}
               sessionBands={sessionBands}
-              indicators={EMPTY_INDICATORS}
-              prefs={INDICATORS_OFF}
+              indicators={indicators}
+              prefs={indicatorPrefs}
               bracketDensity={bracketDensity}
-              loading={secondaryBarsFetching}
+              loading={barsFetching}
               cursorTime={cursorTime}
-              onVisibleRangeChange={handleSecondaryVisibleRangeChange}
-              onCrosshairMove={handleSecondaryCrosshairMove}
+              onVisibleRangeChange={splitView ? handlePrimaryVisibleRangeChange : undefined}
+              onCrosshairMove={splitView ? handlePrimaryCrosshairMove : undefined}
             />
           </div>
-        )}
-      </div>
+          {splitView && (
+            <div className="min-h-0 flex-1">
+              <PriceChart
+                ref={secondaryChartRef}
+                instrument={run?.instrument ?? null}
+                bars={secondaryBars ?? []}
+                trades={visibleTrades}
+                selectedTrade={selectedTrade}
+                sessionBands={sessionBands}
+                indicators={EMPTY_INDICATORS}
+                prefs={INDICATORS_OFF}
+                bracketDensity={bracketDensity}
+                loading={secondaryBarsFetching}
+                cursorTime={cursorTime}
+                onVisibleRangeChange={handleSecondaryVisibleRangeChange}
+                onCrosshairMove={handleSecondaryCrosshairMove}
+              />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1">
+          <ChartKL
+            instrument={run?.instrument ?? null}
+            timeframe={timeframe}
+            from={barsWindow?.from ?? null}
+            to={barsWindow?.to ?? null}
+          />
+        </div>
+      )}
     </div>
   )
 }
