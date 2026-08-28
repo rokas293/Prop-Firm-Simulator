@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
-import { dispose, init, type Chart, type KLineData } from 'klinecharts'
+import { dispose, init, type Chart, type KLineData, type OverlayCreate } from 'klinecharts'
 import { api } from '../../api/client'
 import { findInstrument, pricePrecisionFromTick, tfToPeriod, tfToSeconds } from './instruments'
 import {
@@ -19,9 +19,33 @@ import {
   toolByName,
   type PersistedOverlay,
 } from './drawingOverlays'
+import {
+  KL_ATR14,
+  KL_EMA20,
+  KL_EMA50,
+  KL_VWAP,
+  ensureIndicatorsRegistered,
+  setIndicatorContext,
+} from './indicators'
+import {
+  FAIR_VALUE_GROUP,
+  SESSION_BAND_GROUP,
+  buildFairValueOverlay,
+  buildSessionBandOverlay,
+  ensureSessionBandOverlayRegistered,
+} from './sessionOverlay'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
 import { useThemeStore } from '../../state/themeStore'
-import type { Bar, TradeRecord } from '../../api/types'
+import type { IndicatorPrefs } from '../../state/indicatorStore'
+import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
+import type { SessionBand } from '../SessionBandsPrimitive'
+
+interface IndicatorData {
+  vwap: IndicatorPoint[]
+  ema20: IndicatorPoint[]
+  ema50: IndicatorPoint[]
+  atr14: IndicatorPoint[]
+}
 
 export interface ChartKLHandle {
   // Re-zoom to a time range without refetching (PART_A_REVISED_klinecharts.md
@@ -45,6 +69,9 @@ interface ChartKLProps {
   to: number | null
   trades: TradeRecord[]
   selectedTrade: TradeRecord | null
+  indicators: IndicatorData
+  sessionBands: SessionBand[]
+  prefs: IndicatorPrefs
   // Fires whenever the set of user drawings changes (placed, dragged,
   // removed, or restored on load) so the toolbar's manage dropdown can
   // show an up-to-date list without polling the chart instance itself.
@@ -84,7 +111,7 @@ function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart
 // fetch either (see ChartPanel.tsx's withMargin comment). Matching that
 // exact behavior keeps the two engines comparable.
 const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
-  { instrument, timeframe, from, to, trades, selectedTrade, onDrawingsChange },
+  { instrument, timeframe, from, to, trades, selectedTrade, indicators, sessionBands, prefs, onDrawingsChange },
   ref,
 ) {
   const colors = useThemeStore((s) => s.colors)
@@ -112,6 +139,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   selectedTradeRef.current = selectedTrade
   const colorsRef = useRef(colors)
   colorsRef.current = colors
+  const indicatorsRef = useRef(indicators)
+  indicatorsRef.current = indicators
+  const sessionBandsRef = useRef(sessionBands)
+  sessionBandsRef.current = sessionBands
+  const prefsRef = useRef(prefs)
+  prefsRef.current = prefs
 
   const rebuildOverlaysRef = useRef<() => void>(() => {})
   rebuildOverlaysRef.current = () => {
@@ -132,6 +165,62 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         colorsRef.current,
       )
       if (entryExit.length > 0 || selected.length > 0) chart.createOverlay([...entryExit, ...selected])
+    })
+  }
+
+  // Backend-sourced indicators (Phase A3) -- VWAP/EMA20/EMA50/ATR14 are
+  // pass-through custom indicators (see indicators.ts's header comment for
+  // why they're not klinecharts' own built-in EMA/ATR formulas).
+  // setIndicatorContext() first so each indicator's calc sees the fresh
+  // points the instant createIndicator triggers its first calc pass.
+  const rebuildIndicatorsRef = useRef<() => void>(() => {})
+  rebuildIndicatorsRef.current = () => {
+    const chart = chartRef.current
+    withReadyChart(chart, loadedBarsRef.current.length > 0, (chart) => {
+      setIndicatorContext(indicatorsRef.current)
+      const spec = findInstrument(requestRef.current.instrument ?? '')
+      const precision = spec ? pricePrecisionFromTick(spec.minmov, spec.pricescale) : 2
+      chart.removeIndicator({ name: KL_VWAP })
+      chart.removeIndicator({ name: KL_EMA20 })
+      chart.removeIndicator({ name: KL_EMA50 })
+      chart.removeIndicator({ name: KL_ATR14 })
+      const p = prefsRef.current
+      // `series: 'price'` on the template alone does NOT place these on
+      // the main candle pane -- verified live that it creates a brand new
+      // pane per indicator instead (getPaneOptions() showed 3 stacked
+      // panes for VOL/klVwap alone, with candles pushed out of view).
+      // paneId: 'candle_pane' is required to actually overlay on price.
+      // isStack: true is ALSO required once more than one of these share
+      // that pane -- verified live that without it, each new indicator on
+      // an already-occupied pane silently replaces the previous one
+      // instead of coexisting (enabling EMA20 then EMA50 left only EMA50
+      // -- VWAP and EMA20 had vanished from getIndicators() entirely).
+      if (p.vwap) chart.createIndicator({ name: KL_VWAP, precision, paneId: 'candle_pane' }, true)
+      if (p.ema20) chart.createIndicator({ name: KL_EMA20, precision, paneId: 'candle_pane' }, true)
+      if (p.ema50) chart.createIndicator({ name: KL_EMA50, precision, paneId: 'candle_pane' }, true)
+      if (p.atr14) chart.createIndicator({ name: KL_ATR14 }, false)
+    })
+  }
+
+  // Session shading + fair-value segments (Phase A3), from the same
+  // /api/sessions data ChartPanel already fetches for lightweight-charts.
+  const rebuildSessionOverlaysRef = useRef<() => void>(() => {})
+  rebuildSessionOverlaysRef.current = () => {
+    const chart = chartRef.current
+    withReadyChart(chart, loadedBarsRef.current.length > 0, (chart) => {
+      chart.removeOverlay({ groupId: SESSION_BAND_GROUP })
+      chart.removeOverlay({ groupId: FAIR_VALUE_GROUP })
+      const p = prefsRef.current
+      const bands = sessionBandsRef.current
+      const overlays: OverlayCreate[] = []
+      if (p.sessionShading) overlays.push(...bands.map(buildSessionBandOverlay))
+      if (p.fairValue) {
+        for (const band of bands) {
+          const fv = buildFairValueOverlay(band)
+          if (fv) overlays.push(fv)
+        }
+      }
+      if (overlays.length > 0) chart.createOverlay(overlays)
     })
   }
 
@@ -214,10 +303,16 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   useEffect(() => {
     ensureTradeZoneOverlayRegistered()
     ensureDrawingOverlaysRegistered()
+    ensureIndicatorsRegistered()
+    ensureSessionBandOverlayRegistered()
     if (!containerRef.current) return
     const chart = init(containerRef.current, { timezone: 'America/New_York' })
     if (!chart) return
     chartRef.current = chart
+    // Plain klinecharts built-in (Phase A3) -- just visualizes each bar's
+    // own volume field, no derived calculation, so no VIZ_SPEC risk. LWC
+    // shows volume unconditionally (no toggle); matched here the same way.
+    chart.createIndicator('VOL', false)
 
     chart.setDataLoader({
       getBars: ({ type, callback }) => {
@@ -234,6 +329,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
             callback(bars.map(toKLineData), { forward: false, backward: false })
             rebuildOverlaysRef.current()
             restoreDrawingsRef.current()
+            rebuildIndicatorsRef.current()
+            rebuildSessionOverlaysRef.current()
           })
           .catch(() => {
             loadedBarsRef.current = []
@@ -276,6 +373,16 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   useEffect(() => {
     rebuildOverlaysRef.current()
   }, [trades, selectedTrade, colors])
+
+  // Indicator data/toggle changed but the window didn't -- redraw against
+  // the bars already loaded, same as the trades effect above.
+  useEffect(() => {
+    rebuildIndicatorsRef.current()
+  }, [indicators, prefs])
+
+  useEffect(() => {
+    rebuildSessionOverlaysRef.current()
+  }, [sessionBands, prefs])
 
   useImperativeHandle(
     ref,

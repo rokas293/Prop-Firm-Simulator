@@ -597,11 +597,9 @@ export default function ChartPanel() {
         )}
       </div>
 
-      {lwcEngine && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 px-4 py-1.5">
-          <IndicatorTogglePanel />
-        </div>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 px-4 py-1.5">
+        <IndicatorTogglePanel />
+      </div>
 
       {lwcEngine && (
         <ReplayControls
@@ -671,6 +669,9 @@ export default function ChartPanel() {
               to={barsWindow?.to ?? null}
               trades={visibleTrades}
               selectedTrade={selectedTrade}
+              indicators={indicators}
+              sessionBands={sessionBands}
+              prefs={indicatorPrefs}
               onDrawingsChange={setKlDrawings}
             />
           </div>
