@@ -6,10 +6,11 @@
 // Charts series markers/price lines. Kept framework-free (no chart/React
 // imports) so it's unit-testable without mounting a chart, same pattern as
 // chart/tradeBracket.ts.
-import { registerOverlay, type OverlayCreate } from 'klinecharts'
+import type { OverlayCreate } from 'klinecharts'
 import type { TradeRecord } from '../../api/types'
 import type { ThemeColors } from '../../state/themeStore'
 import { hexToRgba } from '../color'
+import { registerRectOverlay } from './rectOverlay'
 
 export const ENTRY_EXIT_GROUP = 'kl-trade-entry-exit'
 export const SL_TP_LINE_GROUP = 'kl-trade-sltp-lines'
@@ -26,43 +27,13 @@ function toMs(seconds: number): number {
   return seconds * 1000
 }
 
-// A rectangle spanning two (time, price) corners -- there is no built-in
-// "rect" OVERLAY in KLineCharts core (only a built-in "rect" FIGURE,
-// confirmed against the v10.0.3 source at
-// github.com/klinecharts/KLineChart/tree/v10.0.3/src/extension/overlay,
-// which lists no rect.ts), so this registers one custom overlay type built
-// on that figure -- exactly the "registerOverlay for any custom shape not
-// built in" the phase brief calls for. Registered once at module load,
-// same as the library's own built-ins register themselves on import.
+// Non-interactive (ignoreEvent: true) since these are derived, read-only
+// trade visuals, not user-editable drawings -- see rectOverlay.ts for the
+// shared geometry, also used by the user-drawn "Zone" tool (Phase A2).
 const TRADE_ZONE_OVERLAY = 'klTradeZone'
 
-let zoneOverlayRegistered = false
 export function ensureTradeZoneOverlayRegistered(): void {
-  if (zoneOverlayRegistered) return
-  zoneOverlayRegistered = true
-  registerOverlay({
-    name: TRADE_ZONE_OVERLAY,
-    totalStep: 3,
-    needDefaultPointFigure: false,
-    needDefaultXAxisFigure: false,
-    needDefaultYAxisFigure: false,
-    createPointFigures: ({ coordinates }) => {
-      const [p0, p1] = coordinates
-      if (!p0 || !p1) return []
-      return [
-        {
-          type: 'rect',
-          attrs: {
-            x: Math.min(p0.x, p1.x),
-            y: Math.min(p0.y, p1.y),
-            width: Math.abs(p1.x - p0.x),
-            height: Math.abs(p1.y - p0.y),
-          },
-          ignoreEvent: true,
-        },
-      ]
-    },
-  })
+  registerRectOverlay(TRADE_ZONE_OVERLAY, false)
 }
 
 function entryExitAnnotation(

@@ -10,6 +10,16 @@ import {
   buildSelectedTradeOverlays,
   ensureTradeZoneOverlayRegistered,
 } from './tradeOverlays'
+import {
+  DRAWING_GROUP_ID,
+  ensureDrawingOverlaysRegistered,
+  hydrateOverlay,
+  serializeOverlay,
+  setMeasureBarsContext,
+  toolByName,
+  type PersistedOverlay,
+} from './drawingOverlays'
+import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
 import { useThemeStore } from '../../state/themeStore'
 import type { Bar, TradeRecord } from '../../api/types'
 
@@ -21,6 +31,11 @@ export interface ChartKLHandle {
   // pixel width, then scrolls to center it.
   fitRange: (from: number, to: number) => void
   scrollToTrade: (time: number) => void
+  // Phase A2's drawing toolbar levers.
+  startDrawing: (toolName: string) => void
+  cancelActiveDrawing: () => void
+  removeDrawing: (id: string) => void
+  clearDrawings: () => void
 }
 
 interface ChartKLProps {
@@ -30,6 +45,10 @@ interface ChartKLProps {
   to: number | null
   trades: TradeRecord[]
   selectedTrade: TradeRecord | null
+  // Fires whenever the set of user drawings changes (placed, dragged,
+  // removed, or restored on load) so the toolbar's manage dropdown can
+  // show an up-to-date list without polling the chart instance itself.
+  onDrawingsChange?: (overlays: PersistedOverlay[]) => void
 }
 
 function toKLineData(bar: Bar): KLineData {
@@ -51,12 +70,12 @@ function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart
 }
 
 // The KLineCharts-engine counterpart to PriceChart.tsx (PART_A_REVISED_
-// klinecharts.md Phase A1) -- now at trade-visual parity: entry/exit
-// markers, SL/TP lines + zones, and an open-position/PnL zone, all sourced
-// straight off TradeRecord (VIZ_SPEC section 0: no recomputation). Still
-// mounted behind chartEngineStore's feature flag alongside
-// lightweight-charts; indicators, drawings, and replay remain LWC-only
-// until later phases.
+// klinecharts.md Phases A1-A2) -- trade-visual parity (A1) plus a full
+// drawing toolbar on klinecharts' own overlay system (A2), replacing the
+// old hand-built drawing engine entirely. Still mounted behind
+// chartEngineStore's feature flag alongside lightweight-charts (which no
+// longer has drawing tools of its own -- see PriceChart.tsx); indicators
+// and replay remain LWC-only until later phases.
 //
 // Deliberately a FIXED window, not real forward/backward pan-triggered
 // pagination: ChartPanel already computes `from`/`to` (trade- or
@@ -65,7 +84,7 @@ function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart
 // fetch either (see ChartPanel.tsx's withMargin comment). Matching that
 // exact behavior keeps the two engines comparable.
 const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
-  { instrument, timeframe, from, to, trades, selectedTrade },
+  { instrument, timeframe, from, to, trades, selectedTrade, onDrawingsChange },
   ref,
 ) {
   const colors = useThemeStore((s) => s.colors)
@@ -73,6 +92,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const loadedBarsRef = useRef<Bar[]>([])
+  // The one overlay currently mid-placement (createOverlay was called but
+  // the user hasn't finished clicking all its points yet), so Escape can
+  // cancel it -- see cancelActiveDrawing below.
+  const activeDrawingIdRef = useRef<string | null>(null)
+  const onDrawingsChangeRef = useRef(onDrawingsChange)
+  onDrawingsChangeRef.current = onDrawingsChange
 
   // The DataLoader's getBars closure and the overlay-rebuild logic are both
   // registered/defined once and must always see the LATEST values, not
@@ -110,6 +135,75 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     })
   }
 
+  // Guards persistDrawingsRef against firing on the *internal* housekeeping
+  // remove/create inside restoreDrawingsRef below -- verified live that
+  // chart.removeOverlay({groupId}) fires each removed overlay's onRemoved
+  // callback before the others in the same group have been removed, so
+  // without this guard a persist mid-removal snapshots a transient PARTIAL
+  // set and overwrites storage with it (reproduced: 2 saved drawings ->
+  // reload -> only 1 survived, because removing the first of two during
+  // restoreDrawingsRef's own clear-before-restore step fired onRemoved,
+  // which read getOverlays() while the second one was still present but
+  // about to be removed, and saved that transient state). A real user
+  // deleting a drawing (removeDrawing/clearDrawings handle methods) is
+  // NOT wrapped in this guard, so those still persist correctly.
+  const suppressPersistRef = useRef(false)
+
+  // Reads the chart's current user-drawing overlays, saves them to
+  // localStorage keyed by instrument, and tells the toolbar. Attached as
+  // every drawing overlay's onDrawEnd/onPressedMoveEnd/onRemoved (both
+  // freshly-placed ones and ones restored from storage), so anything that
+  // changes what's on screen keeps storage and the toolbar in sync.
+  const persistDrawingsRef = useRef<() => void>(() => {})
+  persistDrawingsRef.current = () => {
+    if (suppressPersistRef.current) return
+    const chart = chartRef.current
+    const inst = requestRef.current.instrument
+    if (!chart || !inst) return
+    const overlays = chart.getOverlays({ groupId: DRAWING_GROUP_ID })
+    const persisted = overlays.map((o) =>
+      serializeOverlay({ id: o.id, name: o.name, points: o.points, styles: o.styles ?? undefined, extendData: o.extendData }),
+    )
+    useKLDrawingStore.getState().setOverlaysForInstrument(inst, persisted)
+    onDrawingsChangeRef.current?.(persisted)
+  }
+
+  const drawingCallbacks = () => ({
+    onDrawEnd: () => {
+      activeDrawingIdRef.current = null
+      persistDrawingsRef.current()
+    },
+    onPressedMoveEnd: () => {
+      persistDrawingsRef.current()
+    },
+    onRemoved: () => {
+      persistDrawingsRef.current()
+    },
+  })
+
+  // Clears whatever user-drawing overlays are on screen and recreates
+  // this instrument's persisted set -- called once per successful bars
+  // load (mount, instrument switch, or timeframe change), so drawings stay
+  // correct across all three without separately tracking "did the
+  // instrument actually change."
+  const restoreDrawingsRef = useRef<() => void>(() => {})
+  restoreDrawingsRef.current = () => {
+    const chart = chartRef.current
+    const inst = requestRef.current.instrument
+    if (!chart || !inst) return
+    suppressPersistRef.current = true
+    try {
+      chart.removeOverlay({ groupId: DRAWING_GROUP_ID })
+      const persisted = overlaysForInstrument(useKLDrawingStore.getState().overlaysByInstrument, inst)
+      for (const p of persisted) {
+        chart.createOverlay(hydrateOverlay(p, drawingCallbacks()))
+      }
+      onDrawingsChangeRef.current?.(persisted)
+    } finally {
+      suppressPersistRef.current = false
+    }
+  }
+
   // Mount/unmount the underlying klinecharts instance exactly once. Kept
   // separate from the reactive effect below (and NOT gated behind
   // `instrument`/`from`/`to` being ready) so the container div always
@@ -119,6 +213,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // fast-trade-switch crash fixes (see PriceChart.tsx).
   useEffect(() => {
     ensureTradeZoneOverlayRegistered()
+    ensureDrawingOverlaysRegistered()
     if (!containerRef.current) return
     const chart = init(containerRef.current, { timezone: 'America/New_York' })
     if (!chart) return
@@ -135,8 +230,10 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           .getBars({ instrument: req.instrument, tf: req.timeframe, from: req.from, to: req.to, max_points: 5000 })
           .then((bars) => {
             loadedBarsRef.current = bars
+            setMeasureBarsContext(bars)
             callback(bars.map(toKLineData), { forward: false, backward: false })
             rebuildOverlaysRef.current()
+            restoreDrawingsRef.current()
           })
           .catch(() => {
             loadedBarsRef.current = []
@@ -197,6 +294,45 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
           chart.scrollToTimestamp(time * 1000, 200)
         })
+      },
+      startDrawing: (toolName) => {
+        withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
+          const tool = toolByName(toolName)
+          if (!tool) return
+          let extendData: string | undefined
+          if (tool.promptsForText) {
+            const text = window.prompt(`${tool.label} text:`)
+            if (text === null) return
+            extendData = text
+          }
+          const id = `kl-drawing-${crypto.randomUUID()}`
+          activeDrawingIdRef.current = id
+          chart.createOverlay({ id, name: toolName, groupId: DRAWING_GROUP_ID, extendData, ...drawingCallbacks() })
+        })
+      },
+      cancelActiveDrawing: () => {
+        const chart = chartRef.current
+        const id = activeDrawingIdRef.current
+        if (!chart || !id) return
+        chart.removeOverlay({ id })
+        activeDrawingIdRef.current = null
+        // Explicit, not just relying on onRemoved: verified live that
+        // removing a still-incomplete overlay (points placed < totalStep,
+        // e.g. Escaping a 2-point Trend line after only the first click)
+        // doesn't reliably fire onRemoved the way removing a completed one
+        // does, which left a stale partial overlay in storage even though
+        // the chart itself no longer showed it.
+        persistDrawingsRef.current()
+      },
+      removeDrawing: (id) => {
+        chartRef.current?.removeOverlay({ id })
+        persistDrawingsRef.current()
+      },
+      clearDrawings: () => {
+        const chart = chartRef.current
+        if (!chart) return
+        chart.removeOverlay({ groupId: DRAWING_GROUP_ID })
+        persistDrawingsRef.current()
       },
     }),
     [],

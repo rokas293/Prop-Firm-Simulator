@@ -5,7 +5,8 @@ import type { SessionBand } from '../chart/SessionBandsPrimitive'
 import { equityAtCursor, runningTotals } from '../chart/replay'
 import { withMargin } from '../chart/windowMargin'
 import IndicatorTogglePanel from './IndicatorTogglePanel'
-import DrawingToolbar from './DrawingToolbar'
+import KLDrawingToolbar, { DRAWING_SHORTCUTS } from './KLDrawingToolbar'
+import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import ReplayControls from './ReplayControls'
 import { useBars, useEquity, useIndicators, useRun, useSessions, useTrades } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
@@ -94,6 +95,11 @@ export default function ChartPanel() {
   // instances, not a trigger for new data fetches).
   const [splitView, setSplitView] = useState(false)
   const [secondaryTimeframe, setSecondaryTimeframe] = useState<Timeframe>('15min')
+  // Lifted out of ChartKL (PART_A_REVISED_klinecharts.md Phase A2) so
+  // KLDrawingToolbar's manage dropdown can list/delete drawings without
+  // polling the chart instance -- ChartKL calls back via onDrawingsChange
+  // whenever the set actually changes (placed, dragged, removed, restored).
+  const [klDrawings, setKlDrawings] = useState<PersistedOverlay[]>([])
   const secondaryChartRef = useRef<PriceChartHandle>(null)
   const syncingRef = useRef(false)
 
@@ -384,6 +390,15 @@ export default function ChartPanel() {
           e.preventDefault()
           fitTrade()
         }
+      } else if (!lwcEngine && e.key === 'Escape') {
+        // Cancel a still-in-progress drawing (PART_A_REVISED_klinecharts.md
+        // Phase A2) -- shares the Escape key with the global
+        // 'closeOverlay' shortcut (command palette/settings), which is
+        // harmless: cancelActiveDrawing no-ops when nothing is being drawn.
+        klChartRef.current?.cancelActiveDrawing()
+      } else if (!lwcEngine && !e.ctrlKey && !e.metaKey && DRAWING_SHORTCUTS[e.key.toLowerCase()]) {
+        e.preventDefault()
+        klChartRef.current?.startDrawing(DRAWING_SHORTCUTS[e.key.toLowerCase()])
       } else {
         const tfIndex = TIMEFRAMES.findIndex((tf) => isShortcut(e, `timeframe-${tf}`))
         if (tfIndex >= 0) {
@@ -395,7 +410,7 @@ export default function ChartPanel() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trades, tradeIdx, selectedTrade])
+  }, [trades, tradeIdx, selectedTrade, lwcEngine])
 
   // Sync handlers: direct, synchronous imperative calls between the two
   // known chart instances -- see the syncingRef declaration's comment for
@@ -585,7 +600,6 @@ export default function ChartPanel() {
       {lwcEngine && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 px-4 py-1.5">
           <IndicatorTogglePanel />
-          <DrawingToolbar instrument={run?.instrument ?? null} />
         </div>
       )}
 
@@ -646,16 +660,20 @@ export default function ChartPanel() {
           )}
         </div>
       ) : (
-        <div className="min-h-0 flex-1">
-          <ChartKL
-            ref={klChartRef}
-            instrument={run?.instrument ?? null}
-            timeframe={timeframe}
-            from={barsWindow?.from ?? null}
-            to={barsWindow?.to ?? null}
-            trades={visibleTrades}
-            selectedTrade={selectedTrade}
-          />
+        <div className="flex min-h-0 flex-1">
+          <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} />
+          <div className="min-h-0 flex-1">
+            <ChartKL
+              ref={klChartRef}
+              instrument={run?.instrument ?? null}
+              timeframe={timeframe}
+              from={barsWindow?.from ?? null}
+              to={barsWindow?.to ?? null}
+              trades={visibleTrades}
+              selectedTrade={selectedTrade}
+              onDrawingsChange={setKlDrawings}
+            />
+          </div>
         </div>
       )}
     </div>

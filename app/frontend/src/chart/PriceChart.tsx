@@ -20,14 +20,12 @@ import {
 } from 'lightweight-charts'
 import type { IndicatorPoint, TradeRecord, Bar } from '../api/types'
 import type { IndicatorPrefs } from '../state/indicatorStore'
-import { useDrawingStore, POINTS_REQUIRED, type Drawing, type DrawingPoint } from '../state/drawingStore'
 import { TimeSpanPrimitive } from './TimeSpanPrimitive'
 import { SessionBandsPrimitive, type SessionBand } from './SessionBandsPrimitive'
-import { DrawingLayerPrimitive } from './DrawingLayerPrimitive'
 import { TradeBracketPrimitive } from './TradeBracketPrimitive'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from './replay'
 import { diffBars } from './barDiff'
-import { findBarAtOrBefore, findBarAtTime, snapPrice } from './snap'
+import { findBarAtOrBefore, findBarAtTime } from './snap'
 import { findBracketAt, formatBracketTooltip, type BracketDensity } from './tradeBracket'
 import { interpolateRange } from './animateRange'
 import { hexToRgba } from './color'
@@ -145,7 +143,6 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const spanPrimitiveRef = useRef<TimeSpanPrimitive | null>(null)
   const sessionBandsRef = useRef<SessionBandsPrimitive | null>(null)
-  const drawingLayerRef = useRef<DrawingLayerPrimitive | null>(null)
   const bracketPrimitiveRef = useRef<TradeBracketPrimitive | null>(null)
   const priceLinesRef = useRef<IPriceLine[]>([])
   const prevVisibleBarsRef = useRef<Bar[]>([])
@@ -174,12 +171,6 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
   prefsRef.current = prefs
   onVisibleRangeChangeRef.current = onVisibleRangeChange
   onCrosshairMoveRef.current = onCrosshairMove
-
-  const drawings = useDrawingStore((s) => s.drawings)
-  // Only used for the cursor-style hint below; the click/crosshair
-  // handlers read the live values imperatively via getState() instead of
-  // closing over these (see the chart-creation effect's comment).
-  const activeTool = useDrawingStore((s) => s.activeTool)
 
   // Legend value nodes, written to directly on crosshair move -- never
   // through React state, so hovering the chart never re-renders React
@@ -241,8 +232,6 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
     chart.panes()[0].attachPrimitive(sessionBandsPrimitive)
     const bracketPrimitive = new TradeBracketPrimitive(candles, [], null, 'auto')
     chart.panes()[0].attachPrimitive(bracketPrimitive)
-    const drawingLayer = new DrawingLayerPrimitive(candles, [], null, [])
-    chart.panes()[0].attachPrimitive(drawingLayer)
 
     chartRef.current = chart
     candleSeriesRef.current = candles
@@ -255,7 +244,6 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
     spanPrimitiveRef.current = spanPrimitive
     sessionBandsRef.current = sessionBandsPrimitive
     bracketPrimitiveRef.current = bracketPrimitive
-    drawingLayerRef.current = drawingLayer
 
     // Pan/zoom -> sibling chart sync (multi-chart split view). No data
     // fetching happens here (that was the earlier, reverted approach) --
@@ -265,29 +253,6 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
       onVisibleRangeChangeRef.current?.(range ? { from: range.from as number, to: range.to as number } : null)
     }
     chart.timeScale().subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange)
-
-    const handleClick = (param: MouseEventParams<Time>) => {
-      const store = useDrawingStore.getState()
-      const tool = store.activeTool
-      const inst = instrumentRef.current
-      if (!tool || !inst || param.time === undefined || !param.point) return
-      const rawPrice = candles.coordinateToPrice(param.point.y)
-      if (rawPrice === null) return
-      const bar = findBarAtTime(barsRef.current, param.time as number)
-      const price = snapPrice(rawPrice, bar)
-      const point: DrawingPoint = { time: param.time as number, price }
-
-      if (POINTS_REQUIRED[tool] === 1) {
-        store.addDrawing({ id: crypto.randomUUID(), type: tool, instrument: inst, points: [point] })
-        store.setActiveTool(null)
-      } else if (!store.pendingPoint) {
-        store.setPendingPoint(point)
-      } else {
-        store.addDrawing({ id: crypto.randomUUID(), type: tool, instrument: inst, points: [store.pendingPoint, point] })
-        store.cancelDrawing()
-      }
-    }
-    chart.subscribeClick(handleClick)
 
     const setLegendField = (key: string, text: string) => {
       const el = legendFieldRefs.current[key]
@@ -316,12 +281,10 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
         }
       }
 
-      // 2. Trade bracket hover tooltip -- suppressed while a drawing tool
-      // is armed so the two overlays never fight for the same cursor.
-      const store = useDrawingStore.getState()
+      // 2. Trade bracket hover tooltip.
       const tooltip = bracketTooltipRef.current
       if (tooltip) {
-        const hoverPrice = !store.activeTool && param.point ? candles.coordinateToPrice(param.point.y) : null
+        const hoverPrice = param.point ? candles.coordinateToPrice(param.point.y) : null
         const hit =
           hoverPrice !== null && param.time !== undefined
             ? findBracketAt(bracketViewsRef.current, param.time as number, hoverPrice)
@@ -338,25 +301,7 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
         }
       }
 
-      // 3. Live preview of an in-progress 2-click drawing.
-      if (store.activeTool && store.pendingPoint && param.time !== undefined && param.point) {
-        const rawPrice = candles.coordinateToPrice(param.point.y)
-        if (rawPrice !== null) {
-          const bar = findBarAtTime(barsRef.current, param.time as number)
-          const price = snapPrice(rawPrice, bar)
-          const preview: Drawing = {
-            id: '__preview__',
-            type: store.activeTool,
-            instrument: instrumentRef.current ?? '',
-            points: [store.pendingPoint, { time: param.time as number, price }],
-          }
-          drawingLayerRef.current?.update(store.drawings, preview, barsRef.current)
-        }
-      } else {
-        drawingLayerRef.current?.update(store.drawings, null, barsRef.current)
-      }
-
-      // 4. Multi-chart crosshair sync.
+      // 3. Multi-chart crosshair sync.
       onCrosshairMoveRef.current?.(param.time !== undefined ? (param.time as number) : null)
     }
     chart.subscribeCrosshairMove(handleCrosshairMove)
@@ -378,7 +323,6 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
       spanPrimitiveRef.current = null
       sessionBandsRef.current = null
       bracketPrimitiveRef.current = null
-      drawingLayerRef.current = null
       priceLinesRef.current = []
       prevVisibleBarsRef.current = []
       bracketViewsRef.current = []
@@ -582,20 +526,6 @@ const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceC
     )
   }, [selectedTrade, cursorTime, colors])
 
-  // Committed drawings changed (added/removed) -- refresh the layer. The
-  // live in-progress preview is driven separately, directly from the
-  // crosshair-move handler above (bypassing React for that high-frequency
-  // path); this effect always passes preview=null, which is correct any
-  // time drawings/bars change through React rather than a mouse move.
-  useEffect(() => {
-    drawingLayerRef.current?.update(drawings, null, bars)
-  }, [drawings, bars])
-
-  // Cursor hint: crosshair while a drawing tool is armed, so it's visually
-  // obvious the next click places a point rather than just panning.
-  useEffect(() => {
-    if (containerRef.current) containerRef.current.style.cursor = activeTool ? 'crosshair' : 'default'
-  }, [activeTool])
 
   useImperativeHandle(
     ref,

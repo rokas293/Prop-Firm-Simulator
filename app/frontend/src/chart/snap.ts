@@ -1,11 +1,5 @@
-// Drawing tools "snap to price/time" (POLISH_ROADMAP Phase P2). Time
-// snapping is already handled by Lightweight Charts itself --
-// `timeScale().coordinateToTime()` only ever returns a real bar timestamp,
-// never an arbitrary continuous value, since the time axis is indexed by
-// the loaded bars. What's left to do here is price: snap a raw
-// coordinate-derived price to whichever of that bar's own OHLC values is
-// closest, so a horizontal line dropped near a candle's high lands
-// exactly on the high, not one pixel off it.
+// Bar lookups for the legend/multi-chart-sync/replay readouts
+// (POLISH_ROADMAP Phase P2).
 import type { Bar } from '../api/types'
 
 export function findBarAtTime(bars: Bar[], time: number): Bar | undefined {
@@ -24,10 +18,4 @@ export function findBarAtOrBefore(bars: Bar[], time: number): Bar | undefined {
     result = b
   }
   return result
-}
-
-export function snapPrice(rawPrice: number, bar: Bar | undefined): number {
-  if (!bar) return rawPrice
-  const candidates = [bar.open, bar.high, bar.low, bar.close]
-  return candidates.reduce((closest, c) => (Math.abs(c - rawPrice) < Math.abs(closest - rawPrice) ? c : closest))
 }
