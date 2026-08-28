@@ -68,6 +68,24 @@ export function tfToPeriod(tf: string): Period | null {
   return TF_TO_PERIOD[tf] ?? null
 }
 
+const PERIOD_SECONDS: Record<Period['type'], number> = {
+  second: 1,
+  minute: 60,
+  hour: 3600,
+  day: 86400,
+  week: 604800,
+  month: 2592000,
+  year: 31536000,
+}
+
+// For Phase A1's fitRange bar-space computation (pane width / bar count in
+// the target range) -- only the 4 timeframes above are ever passed in
+// practice.
+export function tfToSeconds(tf: string): number | null {
+  const period = tfToPeriod(tf)
+  return period ? PERIOD_SECONDS[period.type] * period.span : null
+}
+
 export function findInstrument(symbol: string): InstrumentSpec | undefined {
   return INSTRUMENTS.find((i) => i.symbol === symbol)
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import PriceChart, { type PriceChartHandle } from '../chart/PriceChart'
-import ChartKL from '../chart/kl/ChartKL'
+import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/SessionBandsPrimitive'
 import { equityAtCursor, runningTotals } from '../chart/replay'
 import { withMargin } from '../chart/windowMargin'
@@ -80,6 +80,7 @@ export default function ChartPanel() {
   const trades = useMemo(() => applyCompassFilters(rawTrades ?? [], filters), [rawTrades, filters])
 
   const chartRef = useRef<PriceChartHandle>(null)
+  const klChartRef = useRef<ChartKLHandle>(null)
 
   // Split view: a second, independently-timeframed chart of the same
   // instrument (POLISH_ROADMAP Phase P2), synced to the primary's visible
@@ -322,20 +323,33 @@ export default function ChartPanel() {
     // structure by default instead of having to zoom out by hand.
     const pad = Math.max(MIN_FIT_PAD_SECONDS, (selectedTrade.exit_time - selectedTrade.entry_time) * 1.5)
     chartRef.current?.fitRange(selectedTrade.entry_time - pad, selectedTrade.exit_time + pad)
+    klChartRef.current?.fitRange(selectedTrade.entry_time - pad, selectedTrade.exit_time + pad)
   }
 
   const pickTrade = (tradeId: number) => {
     selectTrade(tradeId)
     selectTradeView()
+    // Immediate pan attempt (PART_A_REVISED_klinecharts.md Phase A1:
+    // "clicking a trade... scrolls the chart to it") -- no-ops via the
+    // ready-guard if this trade's bars haven't loaded into KL yet; the
+    // bars-loaded effect below applies the real fit once they do.
+    const trade = trades?.find((t) => t.trade_id === tradeId)
+    if (trade) klChartRef.current?.scrollToTrade(trade.entry_time)
   }
 
-  // Once new bars land for the active view, fit the chart to them.
+  // Once new bars land for the active view, fit the chart to them. `bars`
+  // is lightweight-charts' own fetch, but both engines are handed the same
+  // computed window (see barsWindow below), so it's a reasonable proxy for
+  // "the target window is now ready" for KL too -- KL's own fitRange
+  // no-ops harmlessly via its ready-guard if its independent fetch hasn't
+  // resolved yet.
   useEffect(() => {
     if (!bars || bars.length === 0) return
     if (viewMode === 'trade') {
       fitTrade()
     } else {
       chartRef.current?.fitContent()
+      if (targetWindow) klChartRef.current?.fitRange(targetWindow.from, targetWindow.to)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, viewMode])
@@ -465,25 +479,25 @@ export default function ChartPanel() {
           Next trade &rarr;
         </button>
 
+        <div className="mx-1 h-4 w-px bg-neutral-800" />
+
+        <button
+          onClick={fitTrade}
+          disabled={!selectedTrade}
+          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+        >
+          Fit trade
+        </button>
+        <button
+          onClick={selectFullDay}
+          disabled={!selectedTrade}
+          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+        >
+          Full day
+        </button>
+
         {lwcEngine && (
           <>
-            <div className="mx-1 h-4 w-px bg-neutral-800" />
-
-            <button
-              onClick={fitTrade}
-              disabled={!selectedTrade}
-              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-            >
-              Fit trade
-            </button>
-            <button
-              onClick={selectFullDay}
-              disabled={!selectedTrade}
-              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-            >
-              Full day
-            </button>
-
             <div className="mx-1 h-4 w-px bg-neutral-800" />
 
             <button
@@ -634,10 +648,13 @@ export default function ChartPanel() {
       ) : (
         <div className="min-h-0 flex-1">
           <ChartKL
+            ref={klChartRef}
             instrument={run?.instrument ?? null}
             timeframe={timeframe}
             from={barsWindow?.from ?? null}
             to={barsWindow?.to ?? null}
+            trades={visibleTrades}
+            selectedTrade={selectedTrade}
           />
         </div>
       )}
