@@ -38,11 +38,11 @@ export default function KLDrawingToolbar({
   const [manageOpen, setManageOpen] = useState(false)
 
   return (
-    <div className="flex h-full w-32 flex-none flex-col border-r border-neutral-800 bg-neutral-950 text-xs">
+    <div className="flex h-full w-32 flex-none flex-col border-r border-border bg-bg text-xs">
       <div className="flex-1 overflow-y-auto py-2">
         {GROUP_ORDER.map((group) => (
           <div key={group} className="mb-2">
-            <div className="px-2 pb-1 text-[10px] uppercase tracking-wide text-neutral-600">{GROUP_LABELS[group]}</div>
+            <div className="px-2 pb-1 text-[10px] uppercase tracking-wide text-text-muted">{GROUP_LABELS[group]}</div>
             {DRAWING_TOOLS.filter((t) => t.group === group).map((tool) => {
               const shortcutKey = Object.entries(DRAWING_SHORTCUTS).find(([, name]) => name === tool.name)?.[0]
               return (
@@ -50,7 +50,7 @@ export default function KLDrawingToolbar({
                   key={tool.name}
                   onClick={() => klChartRef.current?.startDrawing(tool.name)}
                   title={shortcutKey ? `${tool.label} (${shortcutKey.toUpperCase()})` : tool.label}
-                  className="block w-full px-2 py-1 text-left text-neutral-300 hover:bg-neutral-800"
+                  className="block w-full px-2 py-1 text-left text-text hover:bg-surface-2"
                 >
                   {tool.label}
                 </button>
@@ -62,37 +62,37 @@ export default function KLDrawingToolbar({
 
       {/* Outside the scrollable tool list (not `mt-auto` inside it) so the
           manage button stays reachable without scrolling past ~20 tools. */}
-      <div className="flex-none border-t border-neutral-800 py-2">
+      <div className="flex-none border-t border-border py-2">
         <div className="relative px-2">
           <button
             onClick={() => setManageOpen((o) => !o)}
             disabled={drawings.length === 0}
-            className="w-full rounded bg-neutral-800 px-2 py-1 text-left text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+            className="w-full rounded bg-surface-2 px-2 py-1 text-left text-text hover:bg-surface-2-hover disabled:opacity-40"
           >
             Drawings ({drawings.length})
           </button>
           {manageOpen && drawings.length > 0 && (
-            <div className="absolute bottom-full left-2 z-10 mb-1 w-48 rounded border border-neutral-700 bg-neutral-900 py-1 shadow-lg">
+            <div className="absolute bottom-full left-2 z-10 mb-1 w-48 rounded border border-border bg-surface py-1 shadow-lg">
               {drawings.map((d) => (
-                <div key={d.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-neutral-800">
-                  <span className="truncate text-neutral-300">
+                <div key={d.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-surface-2">
+                  <span className="truncate text-text">
                     {DRAWING_TOOLS.find((t) => t.name === d.name)?.label ?? d.name}
                   </span>
                   <button
                     onClick={() => klChartRef.current?.removeDrawing(d.id)}
-                    className="ml-2 shrink-0 text-neutral-500 hover:text-accent-red"
+                    className="ml-2 shrink-0 text-text-muted hover:text-negative"
                   >
                     Delete
                   </button>
                 </div>
               ))}
-              <div className="mt-1 border-t border-neutral-800 px-3 pt-1.5">
+              <div className="mt-1 border-t border-border px-3 pt-1.5">
                 <button
                   onClick={() => {
                     klChartRef.current?.clearDrawings()
                     setManageOpen(false)
                   }}
-                  className="text-neutral-500 hover:text-accent-red"
+                  className="text-text-muted hover:text-negative"
                 >
                   Clear all
                 </button>

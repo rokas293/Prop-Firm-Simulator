@@ -20,16 +20,16 @@ export default function RunsListPage() {
   }
 
   if (isLoading) {
-    return <div className="p-6 text-neutral-400">Loading runs…</div>
+    return <div className="p-6 text-text-muted">Loading runs…</div>
   }
   if (isError) {
-    return <div className="p-6 text-accent-red">Failed to load runs: {(error as Error).message}</div>
+    return <div className="p-6 text-negative">Failed to load runs: {(error as Error).message}</div>
   }
   if (!runs || runs.length === 0) {
     return (
-      <div className="p-6 text-neutral-400">
+      <div className="p-6 text-text-muted">
         No runs yet. Generate one with{' '}
-        <code className="rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-200">
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 text-text">
           python run.py review --config propbt/config/strategy.yaml
         </code>
         .
@@ -42,18 +42,18 @@ export default function RunsListPage() {
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Runs</h1>
         {compareSelection.length > 0 && (
-          <div className="flex items-center gap-2 text-sm text-neutral-400">
+          <div className="flex items-center gap-2 text-sm text-text-muted">
             <span>{compareSelection.length} / 2 selected for compare</span>
             <button
               onClick={() => setCompareSelection([])}
-              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
             >
               Clear
             </button>
             <button
               onClick={() => setCompareRunIds([compareSelection[0], compareSelection[1]])}
               disabled={compareSelection.length !== 2}
-              className="rounded bg-accent-blue px-3 py-1 text-white disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-500"
+              className="rounded bg-accent px-3 py-1 text-white disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-muted"
             >
               Compare
             </button>
@@ -62,7 +62,7 @@ export default function RunsListPage() {
       </div>
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-neutral-800 text-left text-neutral-400">
+          <tr className="border-b border-border text-left text-text-muted">
             <th className="py-2 pr-4 font-medium" title="Select up to 2 runs to compare">
               Cmp
             </th>
@@ -79,8 +79,8 @@ export default function RunsListPage() {
             <tr
               key={run.run_id}
               onMouseEnter={() => prefetchRun(run.run_id)}
-              className={`border-b border-neutral-900 hover:bg-neutral-900 ${
-                selectedRunId === run.run_id ? 'bg-neutral-900' : ''
+              className={`border-b border-border hover:bg-surface ${
+                selectedRunId === run.run_id ? 'bg-surface' : ''
               }`}
             >
               <td className="py-2 pr-4">
@@ -93,25 +93,25 @@ export default function RunsListPage() {
                   onClick={(e) => e.stopPropagation()}
                 />
               </td>
-              <td className="cursor-pointer py-2 pr-4 font-mono text-xs text-neutral-300" onClick={() => selectRun(run.run_id)}>
+              <td className="cursor-pointer py-2 pr-4 font-mono text-xs text-text" onClick={() => selectRun(run.run_id)}>
                 {run.run_id}
               </td>
               <td className="cursor-pointer py-2 pr-4" onClick={() => selectRun(run.run_id)}>
                 {run.instrument}
               </td>
-              <td className="cursor-pointer py-2 pr-4 text-neutral-300" onClick={() => selectRun(run.run_id)}>
+              <td className="cursor-pointer py-2 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
                 {run.date_from} &rarr; {run.date_to}
               </td>
               <td className="cursor-pointer py-2 pr-4" onClick={() => selectRun(run.run_id)}>
                 {run.result.passed ? (
-                  <span className="text-accent-green">PASSED</span>
+                  <span className="text-positive">PASSED</span>
                 ) : (
-                  <span className="text-accent-red">
+                  <span className="text-negative">
                     {run.result.fail_reason ? `FAILED (${run.result.fail_reason})` : 'INCOMPLETE'}
                   </span>
                 )}
               </td>
-              <td className="cursor-pointer py-2 pr-4 text-neutral-300" onClick={() => selectRun(run.run_id)}>
+              <td className="cursor-pointer py-2 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
                 {run.params_count}
               </td>
               <td className="py-2 pr-4">
@@ -120,7 +120,7 @@ export default function RunsListPage() {
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  className="text-xs text-neutral-500 underline hover:text-neutral-300"
+                  className="text-xs text-text-muted underline hover:text-text"
                   title="Export a self-contained static HTML snapshot of this run"
                 >
                   Export

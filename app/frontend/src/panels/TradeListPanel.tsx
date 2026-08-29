@@ -138,12 +138,12 @@ export default function TradeListPanel() {
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="space-y-2 border-b border-neutral-800 p-3 text-xs">
+      <div className="space-y-2 border-b border-border p-3 text-xs">
         <div className="flex flex-wrap gap-2">
           <select
             value={filters.leg ?? ''}
             onChange={(e) => setFilter('leg', e.target.value || null)}
-            className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+            className="rounded bg-surface-2 px-1.5 py-1 text-text"
           >
             <option value="">Leg: all</option>
             {legOptions.map((v) => (
@@ -155,7 +155,7 @@ export default function TradeListPanel() {
           <select
             value={filters.session ?? ''}
             onChange={(e) => setFilter('session', e.target.value || null)}
-            className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+            className="rounded bg-surface-2 px-1.5 py-1 text-text"
           >
             <option value="">Session: all</option>
             {sessionOptions.map((v) => (
@@ -167,7 +167,7 @@ export default function TradeListPanel() {
           <select
             value={filters.side ?? ''}
             onChange={(e) => setFilter('side', e.target.value || null)}
-            className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+            className="rounded bg-surface-2 px-1.5 py-1 text-text"
           >
             <option value="">Side: all</option>
             {SIDE_OPTIONS.map((v) => (
@@ -179,7 +179,7 @@ export default function TradeListPanel() {
           <select
             value={filters.result ?? ''}
             onChange={(e) => setFilter('result', (e.target.value || null) as ResultFilter)}
-            className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+            className="rounded bg-surface-2 px-1.5 py-1 text-text"
           >
             <option value="">Result: all</option>
             <option value="win">Win</option>
@@ -188,7 +188,7 @@ export default function TradeListPanel() {
           <select
             value={filters.exitType ?? ''}
             onChange={(e) => setFilter('exitType', e.target.value || null)}
-            className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+            className="rounded bg-surface-2 px-1.5 py-1 text-text"
           >
             <option value="">Exit: all</option>
             {EXIT_TYPE_OPTIONS.map((v) => (
@@ -199,42 +199,42 @@ export default function TradeListPanel() {
           </select>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-neutral-500">From</label>
+          <label className="text-text-muted">From</label>
           <input
             type="date"
             value={filters.dateFrom ?? ''}
             onChange={(e) => setFilter('dateFrom', e.target.value || null)}
-            className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+            className="rounded bg-surface-2 px-1.5 py-1 text-text"
           />
-          <label className="text-neutral-500">To</label>
+          <label className="text-text-muted">To</label>
           <input
             type="date"
             value={filters.dateTo ?? ''}
             onChange={(e) => setFilter('dateTo', e.target.value || null)}
-            className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+            className="rounded bg-surface-2 px-1.5 py-1 text-text"
           />
           {hasFilters && (
             <button
               onClick={clearFilters}
-              className="ml-auto rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+              className="ml-auto rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
             >
               Clear
             </button>
           )}
         </div>
-        <div className="text-neutral-500">{sorted.length} trades</div>
+        <div className="text-text-muted">{sorted.length} trades</div>
       </div>
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
         <div
-          className="sticky top-0 z-10 grid border-b border-neutral-800 bg-neutral-950 text-left text-xs text-neutral-400"
+          className="sticky top-0 z-10 grid border-b border-border bg-bg text-left text-xs text-text-muted"
           style={{ gridTemplateColumns: GRID_TEMPLATE, minWidth: GRID_TOTAL_WIDTH }}
         >
           {COLUMNS.map((c) => (
             <div
               key={c.key}
               onClick={() => toggleSort(c.key)}
-              className="cursor-pointer whitespace-nowrap px-2 py-1.5 font-medium hover:text-neutral-200"
+              className="cursor-pointer whitespace-nowrap px-2 py-1.5 font-medium hover:text-text"
             >
               {c.label}
               {sortCol === c.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
@@ -243,10 +243,10 @@ export default function TradeListPanel() {
         </div>
 
         {sorted.length === 0 ? (
-          <div className="px-2 py-8 text-center text-xs text-neutral-500">
+          <div className="px-2 py-8 text-center text-xs text-text-muted">
             <div>No trades match the current filters.</div>
             {hasFilters && (
-              <button onClick={clearFilters} className="mt-2 rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700">
+              <button onClick={clearFilters} className="mt-2 rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
                 Clear filters
               </button>
             )}
@@ -270,28 +270,28 @@ export default function TradeListPanel() {
                     transform: `translateY(${vRow.start}px)`,
                     gridTemplateColumns: GRID_TEMPLATE,
                   }}
-                  className={`grid cursor-pointer items-center border-b border-neutral-900 text-xs hover:bg-neutral-900 ${
-                    selectedTradeId === t.trade_id ? 'bg-neutral-800' : ''
+                  className={`grid cursor-pointer items-center border-b border-border text-xs hover:bg-surface ${
+                    selectedTradeId === t.trade_id ? 'bg-surface-2' : ''
                   }`}
                 >
-                  <div className="truncate whitespace-nowrap px-2 font-mono text-neutral-300">
+                  <div className="truncate whitespace-nowrap px-2 font-mono text-text">
                     {fmtTime(t.entry_time)}
                   </div>
-                  <div className="truncate px-2 text-neutral-300">{t.leg ?? '-'}</div>
-                  <div className="truncate px-2 text-neutral-300">{t.session ?? '-'}</div>
-                  <div className="truncate px-2 text-neutral-300">{t.side}</div>
-                  <div className="truncate px-2 text-neutral-300">{t.size_contracts}</div>
-                  <div className="truncate px-2 text-neutral-300">{t.entry_price.toFixed(2)}</div>
-                  <div className="truncate px-2 text-neutral-300">{t.exit_price.toFixed(2)}</div>
-                  <div className="truncate px-2 text-neutral-300">{t.exit_type}</div>
-                  <div className={`truncate px-2 ${t.pnl_usd >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+                  <div className="truncate px-2 text-text">{t.leg ?? '-'}</div>
+                  <div className="truncate px-2 text-text">{t.session ?? '-'}</div>
+                  <div className="truncate px-2 text-text">{t.side}</div>
+                  <div className="truncate px-2 text-text">{t.size_contracts}</div>
+                  <div className="truncate px-2 text-text">{t.entry_price.toFixed(2)}</div>
+                  <div className="truncate px-2 text-text">{t.exit_price.toFixed(2)}</div>
+                  <div className="truncate px-2 text-text">{t.exit_type}</div>
+                  <div className={`truncate px-2 ${t.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
                     {t.pnl_usd.toFixed(2)}
                   </div>
-                  <div className="truncate px-2 text-neutral-300">
+                  <div className="truncate px-2 text-text">
                     {t.r_multiple !== null ? t.r_multiple.toFixed(2) : '-'}
                   </div>
-                  <div className="truncate px-2 text-neutral-300">{t.mae_points.toFixed(2)}</div>
-                  <div className="truncate px-2 text-neutral-300">{t.mfe_points.toFixed(2)}</div>
+                  <div className="truncate px-2 text-text">{t.mae_points.toFixed(2)}</div>
+                  <div className="truncate px-2 text-text">{t.mfe_points.toFixed(2)}</div>
                 </div>
               )
             })}

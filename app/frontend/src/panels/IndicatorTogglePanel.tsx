@@ -16,9 +16,9 @@ export default function IndicatorTogglePanel() {
   const toggle = useIndicatorStore((s) => s.toggle)
 
   return (
-    <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400">
+    <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
       {TOGGLES.map((t) => (
-        <label key={t.key} className="flex cursor-pointer items-center gap-1.5 hover:text-neutral-200">
+        <label key={t.key} className="flex cursor-pointer items-center gap-1.5 hover:text-text">
           {/* No explicit accent-color class -- inherits the theme's live
               accent-color from :root (themeStore.ts's applyThemeToDocument),
               POLISH_ROADMAP Phase P6: "native controls... follow the theme." */}

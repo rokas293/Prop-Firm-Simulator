@@ -25,9 +25,10 @@ export default function App() {
   // themeStore.ts's comment for why this is a CSS-custom-property push
   // rather than a Tailwind class swap (POLISH_ROADMAP Phase P6).
   const themeColors = useThemeStore((s) => s.colors)
+  const themeMode = useThemeStore((s) => s.mode)
   useEffect(() => {
-    applyThemeToDocument(themeColors)
-  }, [themeColors])
+    applyThemeToDocument(themeColors, themeMode)
+  }, [themeColors, themeMode])
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -54,27 +55,27 @@ export default function App() {
   }, [])
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <header className="flex items-center gap-3 border-b border-neutral-800 px-6 py-3">
-        <h1 className="text-sm font-semibold tracking-wide text-neutral-300">propbt viz</h1>
+    <div className="min-h-screen bg-bg text-text">
+      <header className="flex items-center gap-3 border-b border-border px-6 py-3">
+        <h1 className="text-sm font-semibold tracking-wide text-text">propbt viz</h1>
         {!compareRunIds && selectedRunId && (
           <>
-            <div className="h-4 w-px bg-neutral-800" />
+            <div className="h-4 w-px bg-surface-2" />
             <button
               onClick={() => selectRun(null)}
-              className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700"
+              className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
             >
               &larr; Runs
             </button>
-            <span className="font-mono text-xs text-neutral-500">{selectedRunId}</span>
-            {run && <span className="text-xs text-neutral-400">{run.instrument}</span>}
+            <span className="font-mono text-xs text-text-muted">{selectedRunId}</span>
+            {run && <span className="text-xs text-text-muted">{run.instrument}</span>}
           </>
         )}
         <button
           onClick={togglePerf}
           title="Toggle the perf HUD (render/fetch timings)"
           className={`ml-auto rounded px-2 py-1 text-xs transition-colors ${
-            perfEnabled ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
+            perfEnabled ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-2-hover'
           }`}
         >
           Perf
@@ -82,13 +83,13 @@ export default function App() {
         <button
           onClick={() => setSettingsOpen(true)}
           title="Settings: themes, layouts, shortcuts, data defaults"
-          className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300 transition-colors hover:bg-neutral-700"
+          className="rounded bg-surface-2 px-2 py-1 text-xs text-text transition-colors hover:bg-surface-2-hover"
         >
           Settings
         </button>
-        <span className="text-xs text-neutral-600">
-          <kbd className="rounded border border-neutral-700 px-1.5 py-0.5">Ctrl/Cmd K</kbd> commands &middot;{' '}
-          <button onClick={() => setShortcutsOpen(true)} className="rounded border border-neutral-700 px-1.5 py-0.5 hover:border-neutral-500 hover:text-neutral-300">
+        <span className="text-xs text-text-muted">
+          <kbd className="rounded border border-border px-1.5 py-0.5">Ctrl/Cmd K</kbd> commands &middot;{' '}
+          <button onClick={() => setShortcutsOpen(true)} className="rounded border border-border px-1.5 py-0.5 hover:border-border-hover hover:text-text">
             ?
           </button>{' '}
           shortcuts

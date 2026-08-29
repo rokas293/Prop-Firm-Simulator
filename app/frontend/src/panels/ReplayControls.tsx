@@ -44,12 +44,12 @@ export default function ReplayControls({
   const cursorBar = bars[cursorIndex]
 
   return (
-    <div className="border-b border-neutral-800 px-6 py-2 text-xs">
+    <div className="border-b border-border px-6 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={onToggleActive}
           className={`rounded px-2 py-1 ${
-            active ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+            active ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
           }`}
         >
           {active ? 'Exit replay' : 'Replay'}
@@ -60,20 +60,20 @@ export default function ReplayControls({
             <button
               onClick={() => onCursorIndexChange(Math.max(0, cursorIndex - 1))}
               disabled={cursorIndex <= 0}
-              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
             >
               &larr; Step
             </button>
             <button
               onClick={onTogglePlaying}
-              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
             >
               {isPlaying ? 'Pause' : 'Play'}
             </button>
             <button
               onClick={() => onCursorIndexChange(Math.min(lastIndex, cursorIndex + 1))}
               disabled={cursorIndex >= lastIndex}
-              className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
             >
               Step &rarr;
             </button>
@@ -81,7 +81,7 @@ export default function ReplayControls({
             <select
               value={speed}
               onChange={(e) => onSpeedChange(Number(e.target.value))}
-              className="rounded bg-neutral-800 px-1.5 py-1 text-neutral-200"
+              className="rounded bg-surface-2 px-1.5 py-1 text-text"
             >
               {SPEEDS.map((s) => (
                 <option key={s} value={s}>
@@ -101,34 +101,34 @@ export default function ReplayControls({
               className="min-w-[160px] flex-1"
             />
 
-            {cursorBar && <span className="whitespace-nowrap font-mono text-neutral-400">{fmtTime(cursorBar.time)}</span>}
+            {cursorBar && <span className="whitespace-nowrap font-mono text-text-muted">{fmtTime(cursorBar.time)}</span>}
           </>
         )}
       </div>
 
       {active && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-4 text-neutral-400">
+        <div className="mt-1.5 flex flex-wrap items-center gap-4 text-text-muted">
           <span>
-            Running: <span className={runningPnl >= 0 ? 'text-accent-green' : 'text-accent-red'}>{fmtUsd(runningPnl)}</span>{' '}
-            <span className="text-neutral-500">({runningR.toFixed(2)}R)</span>
+            Running: <span className={runningPnl >= 0 ? 'text-positive' : 'text-negative'}>{fmtUsd(runningPnl)}</span>{' '}
+            <span className="text-text-muted">({runningR.toFixed(2)}R)</span>
           </span>
           {equity ? (
             <>
               <span>
-                Equity: <span className="text-neutral-200">{fmtUsd(equity.equity)}</span>
+                Equity: <span className="text-text">{fmtUsd(equity.equity)}</span>
               </span>
               <span>
-                MLL floor: <span className="text-neutral-200">{fmtUsd(equity.mll_floor)}</span>
+                MLL floor: <span className="text-text">{fmtUsd(equity.mll_floor)}</span>
               </span>
               <span>
                 Distance to breach:{' '}
-                <span className={equity.equity - equity.mll_floor > 0 ? 'text-neutral-200' : 'text-accent-red'}>
+                <span className={equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}>
                   {fmtUsd(equity.equity - equity.mll_floor)}
                 </span>
               </span>
             </>
           ) : (
-            <span className="text-neutral-600">No equity data at cursor</span>
+            <span className="text-text-muted">No equity data at cursor</span>
           )}
         </div>
       )}

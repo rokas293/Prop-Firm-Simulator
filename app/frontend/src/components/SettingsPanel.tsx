@@ -19,8 +19,8 @@ const BRACKET_DENSITIES: BracketDensity[] = ['auto', 'full', 'markers']
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="border-b border-neutral-800 px-4 py-4 last:border-b-0">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">{title}</h3>
+    <div className="border-b border-border px-4 py-4 last:border-b-0">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-muted">{title}</h3>
       {children}
     </div>
   )
@@ -30,8 +30,8 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   const colors = useThemeStore((s) => s.colors)
   const applyPreset = useThemeStore((s) => s.applyPreset)
   const setAccent = useThemeStore((s) => s.setAccent)
-  const setUp = useThemeStore((s) => s.setUp)
-  const setDown = useThemeStore((s) => s.setDown)
+  const setUpCandle = useThemeStore((s) => s.setUpCandle)
+  const setDownCandle = useThemeStore((s) => s.setDownCandle)
   const resetTheme = useThemeStore((s) => s.reset)
 
   const workspaceApi = useWorkspaceApiStore((s) => s.api)
@@ -55,9 +55,9 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   return (
     <div className="propbt-cmdk-overlay" onClick={onClose}>
       <div className="propbt-settings-content" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
-        <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-          <h2 className="text-sm font-semibold text-neutral-100">Settings</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-text">Settings</h2>
+          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
             Esc to close
           </button>
         </div>
@@ -72,39 +72,39 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   title={preset.name}
                   className={`flex items-center gap-2 rounded border px-2.5 py-1.5 text-xs transition-colors ${
                     activePresetId === preset.id
-                      ? 'border-accent-blue bg-neutral-800 text-neutral-100'
-                      : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:border-neutral-700'
+                      ? 'border-accent bg-surface-2 text-text'
+                      : 'border-border bg-surface text-text-muted hover:border-border-hover'
                   }`}
                 >
                   <span className="flex gap-0.5">
                     <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.accent }} />
-                    <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.up }} />
-                    <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.down }} />
+                    <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.upCandle }} />
+                    <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.downCandle }} />
                   </span>
                   {preset.name}
                 </button>
               ))}
               {activePresetId === 'custom' && (
-                <span className="flex items-center rounded border border-dashed border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-500">
+                <span className="flex items-center rounded border border-dashed border-border px-2.5 py-1.5 text-xs text-text-muted">
                   Custom
                 </span>
               )}
             </div>
 
-            <div className="flex flex-wrap gap-4 text-xs text-neutral-400">
+            <div className="flex flex-wrap gap-4 text-xs text-text-muted">
               <label className="flex items-center gap-2">
                 Accent
-                <input type="color" value={colors.accent} onChange={(e) => setAccent(e.target.value)} className="h-7 w-10 cursor-pointer rounded border border-neutral-700 bg-transparent" />
+                <input type="color" value={colors.accent} onChange={(e) => setAccent(e.target.value)} className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent" />
               </label>
               <label className="flex items-center gap-2">
                 Candle up
-                <input type="color" value={colors.up} onChange={(e) => setUp(e.target.value)} className="h-7 w-10 cursor-pointer rounded border border-neutral-700 bg-transparent" />
+                <input type="color" value={colors.upCandle} onChange={(e) => setUpCandle(e.target.value)} className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent" />
               </label>
               <label className="flex items-center gap-2">
                 Candle down
-                <input type="color" value={colors.down} onChange={(e) => setDown(e.target.value)} className="h-7 w-10 cursor-pointer rounded border border-neutral-700 bg-transparent" />
+                <input type="color" value={colors.downCandle} onChange={(e) => setDownCandle(e.target.value)} className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent" />
               </label>
-              <button onClick={resetTheme} className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700">
+              <button onClick={resetTheme} className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
                 Reset to default
               </button>
             </div>
@@ -112,19 +112,19 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
 
           <Section title="Layout">
             {!workspaceApi ? (
-              <p className="text-xs text-neutral-600">Open a run to manage its workspace layout.</p>
+              <p className="text-xs text-text-muted">Open a run to manage its workspace layout.</p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {PRESETS.map((p) => (
                   <button
                     key={p.name}
                     onClick={() => p.apply(workspaceApi)}
-                    className="rounded bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700"
+                    className="rounded bg-surface-2 px-2.5 py-1.5 text-xs text-text hover:bg-surface-2-hover"
                   >
                     {p.name}
                   </button>
                 ))}
-                <button onClick={resetLayout} className="rounded bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700">
+                <button onClick={resetLayout} className="rounded bg-surface-2 px-2.5 py-1.5 text-xs text-text hover:bg-surface-2-hover">
                   Reset layout
                 </button>
               </div>
@@ -132,16 +132,16 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
           </Section>
 
           <Section title="Data defaults">
-            <div className="flex flex-wrap gap-6 text-xs text-neutral-400">
+            <div className="flex flex-wrap gap-6 text-xs text-text-muted">
               <div>
-                <div className="mb-1.5 text-neutral-500">Default chart timeframe</div>
+                <div className="mb-1.5 text-text-muted">Default chart timeframe</div>
                 <div className="flex gap-1">
                   {TIMEFRAMES.map((tf) => (
                     <button
                       key={tf}
                       onClick={() => setDefaultTimeframe(tf)}
                       className={`rounded px-2 py-1 ${
-                        defaultTimeframe === tf ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                        defaultTimeframe === tf ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                       }`}
                     >
                       {tf}
@@ -150,14 +150,14 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 </div>
               </div>
               <div>
-                <div className="mb-1.5 text-neutral-500">Default trade bracket density</div>
+                <div className="mb-1.5 text-text-muted">Default trade bracket density</div>
                 <div className="flex gap-1">
                   {BRACKET_DENSITIES.map((d) => (
                     <button
                       key={d}
                       onClick={() => setBracketDensity(d)}
                       className={`rounded px-2 py-1 capitalize ${
-                        bracketDensity === d ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                        bracketDensity === d ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                       }`}
                     >
                       {d === 'markers' ? 'Off' : d}

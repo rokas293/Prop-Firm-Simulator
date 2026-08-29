@@ -2,18 +2,13 @@ import { useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useEquity, useRun, useStats, type StatsScope } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
-import { useThemeStore } from '../state/themeStore'
+import { useThemeStore, COMPARE_B_COLOR } from '../state/themeStore'
 
 const SCOPES: { key: StatsScope; label: string }[] = [
   { key: 'oos', label: 'Out-of-sample' },
   { key: 'is', label: 'In-sample' },
   { key: 'all', label: 'All' },
 ]
-
-// Run B stays a fixed distinguishing amber -- "run A" vs "run B" isn't a
-// win/loss or up/down semantic the theme's 3-color model covers, same scope
-// decision as the chart's indicator line colors (POLISH_ROADMAP Phase P6).
-const COLOR_B = '#e3b341'
 
 function fmtUsd(v: number | null | undefined): string {
   if (v === null || v === undefined) return '-'
@@ -108,7 +103,7 @@ export default function ComparePage() {
         <h1 className="text-xl font-semibold">Compare runs</h1>
         <button
           onClick={() => setCompareRunIds(null)}
-          className="rounded bg-neutral-800 px-3 py-1 text-sm text-neutral-300 hover:bg-neutral-700"
+          className="rounded bg-surface-2 px-3 py-1 text-sm text-text hover:bg-surface-2-hover"
         >
           Exit compare
         </button>
@@ -116,17 +111,17 @@ export default function ComparePage() {
 
       <div className="mb-4 grid grid-cols-2 gap-4 text-sm">
         <RunHeader color={colorA} label="A" run={runA} />
-        <RunHeader color={COLOR_B} label="B" run={runB} />
+        <RunHeader color={COMPARE_B_COLOR} label="B" run={runB} />
       </div>
 
       <div className="mb-4 flex items-center gap-2">
-        <span className="text-xs text-neutral-500">Scope:</span>
+        <span className="text-xs text-text-muted">Scope:</span>
         {SCOPES.map((s) => (
           <button
             key={s.key}
             onClick={() => setScope(s.key)}
             className={`rounded px-3 py-1 text-sm ${
-              scope === s.key ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              scope === s.key ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
             }`}
           >
             {s.label}
@@ -134,22 +129,22 @@ export default function ComparePage() {
         ))}
       </div>
 
-      <div className="mb-6 rounded border border-neutral-800 bg-neutral-900 p-4">
-        <div className="mb-2 text-sm font-medium text-neutral-300">
+      <div className="mb-6 rounded border border-border bg-surface p-4">
+        <div className="mb-2 text-sm font-medium text-text">
           Equity vs elapsed trading time (each run re-based to day 0 at its own start)
         </div>
         <ResponsiveContainer width="100%" height={320}>
           <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
             <XAxis
               dataKey="elapsedDays"
               type="number"
-              tick={{ fill: '#8b949e', fontSize: 11 }}
-              label={{ value: 'Elapsed days', position: 'insideBottom', offset: -5, fill: '#8b949e', fontSize: 11 }}
+              tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+              label={{ value: 'Elapsed days', position: 'insideBottom', offset: -5, fill: 'var(--color-text-muted)', fontSize: 11 }}
             />
-            <YAxis tick={{ fill: '#8b949e', fontSize: 11 }} domain={['auto', 'auto']} />
+            <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} domain={['auto', 'auto']} />
             <Tooltip
-              contentStyle={{ background: '#161b22', border: '1px solid #30363d' }}
+              contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
               formatter={(v) => fmtUsd(Number(v))}
               labelFormatter={(v) => `day ${v}`}
             />
@@ -167,7 +162,7 @@ export default function ComparePage() {
               type="stepAfter"
               dataKey="equityB"
               name={runB?.instrument ? `B: ${runB.instrument}` : 'B'}
-              stroke={COLOR_B}
+              stroke={COMPARE_B_COLOR}
               dot={false}
               strokeWidth={1.5}
               connectNulls
@@ -176,31 +171,31 @@ export default function ComparePage() {
         </ResponsiveContainer>
       </div>
 
-      <div className="rounded border border-neutral-800 bg-neutral-900 p-4">
-        <div className="mb-2 text-sm font-medium text-neutral-300">Side-by-side stats ({scope})</div>
+      <div className="rounded border border-border bg-surface p-4">
+        <div className="mb-2 text-sm font-medium text-text">Side-by-side stats ({scope})</div>
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-neutral-800 text-left text-neutral-500">
+            <tr className="border-b border-border text-left text-text-muted">
               <th className="py-1.5 pr-3 font-medium"></th>
               <th className="py-1.5 pr-3 font-medium" style={{ color: colorA }}>
                 A &middot; {runA?.instrument ?? '...'}
               </th>
-              <th className="py-1.5 pr-3 font-medium" style={{ color: COLOR_B }}>
+              <th className="py-1.5 pr-3 font-medium" style={{ color: COMPARE_B_COLOR }}>
                 B &middot; {runB?.instrument ?? '...'}
               </th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.label} className="border-b border-neutral-900">
-                <td className="py-1.5 pr-3 text-neutral-400">{r.label}</td>
-                <td className="py-1.5 pr-3 text-neutral-200">{r.a}</td>
-                <td className="py-1.5 pr-3 text-neutral-200">{r.b}</td>
+              <tr key={r.label} className="border-b border-border">
+                <td className="py-1.5 pr-3 text-text-muted">{r.label}</td>
+                <td className="py-1.5 pr-3 text-text">{r.a}</td>
+                <td className="py-1.5 pr-3 text-text">{r.b}</td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={3} className="py-3 text-center text-neutral-500">
+                <td colSpan={3} className="py-3 text-center text-text-muted">
                   Loading stats…
                 </td>
               </tr>
@@ -214,20 +209,20 @@ export default function ComparePage() {
 
 function RunHeader({ color, label, run }: { color: string; label: string; run: { run_id: string; instrument: string; date_from: string; date_to: string } | undefined }) {
   return (
-    <div className="rounded border border-neutral-800 bg-neutral-900 p-3">
+    <div className="rounded border border-border bg-surface p-3">
       <div className="flex items-center gap-2">
         <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
-        <span className="font-semibold text-neutral-200">Run {label}</span>
+        <span className="font-semibold text-text">Run {label}</span>
       </div>
       {run ? (
-        <div className="mt-1 text-xs text-neutral-500">
+        <div className="mt-1 text-xs text-text-muted">
           <div className="font-mono">{run.run_id}</div>
           <div>
             {run.instrument} &middot; {run.date_from} &rarr; {run.date_to}
           </div>
         </div>
       ) : (
-        <div className="mt-1 text-xs text-neutral-600">Loading…</div>
+        <div className="mt-1 text-xs text-text-muted">Loading…</div>
       )}
     </div>
   )

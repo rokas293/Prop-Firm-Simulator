@@ -11,7 +11,7 @@ import type { TradeRecord } from '../../api/types'
 import type { ThemeColors } from '../../state/themeStore'
 import type { ReplayTradeView } from '../replay'
 
-const colors: ThemeColors = { accent: '#58a6ff', up: '#3fb950', down: '#f85149' }
+const colors: ThemeColors = { accent: '#58a6ff', positive: '#3fb950', negative: '#f85149', upCandle: '#3fb950', downCandle: '#f85149' }
 
 function makeTrade(overrides: Partial<TradeRecord> = {}): TradeRecord {
   return {
@@ -69,12 +69,12 @@ describe('buildEntryExitOverlays', () => {
   it('colors the entry with the accent color and a winning exit with the up color', () => {
     const [entry, exit] = buildEntryExitOverlays([makeView()], bars, null, colors)
     expect((entry.styles as { line: { color: string } }).line.color).toBe(colors.accent)
-    expect((exit.styles as { line: { color: string } }).line.color).toBe(colors.up)
+    expect((exit.styles as { line: { color: string } }).line.color).toBe(colors.positive)
   })
 
   it('colors a losing exit with the down color', () => {
     const [, exit] = buildEntryExitOverlays([makeView({ pnl_usd: -10 })], bars, null, colors)
-    expect((exit.styles as { line: { color: string } }).line.color).toBe(colors.down)
+    expect((exit.styles as { line: { color: string } }).line.color).toBe(colors.negative)
   })
 
   it('emphasizes only the selected trade', () => {

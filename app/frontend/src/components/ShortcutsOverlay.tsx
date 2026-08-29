@@ -17,9 +17,9 @@ export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onC
         role="dialog"
         aria-label="Keyboard shortcuts"
       >
-        <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-          <h2 className="text-sm font-semibold text-neutral-100">Keyboard shortcuts</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-text">Keyboard shortcuts</h2>
+          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
             Esc to close
           </button>
         </div>

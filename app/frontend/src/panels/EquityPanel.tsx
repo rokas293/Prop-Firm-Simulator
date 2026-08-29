@@ -25,49 +25,49 @@ export default function EquityPanel() {
 
   return (
     <div className="flex h-full w-full flex-col gap-4 overflow-auto p-4">
-      <div className="text-xs text-neutral-500">
+      <div className="text-xs text-text-muted">
         {run ? `${run.instrument} · ${run.date_from} → ${run.date_to}` : 'Loading…'}
       </div>
 
-      <div className="rounded border border-neutral-800 bg-neutral-900 p-4">
-        <div className="mb-2 text-sm font-medium text-neutral-300">Equity & trailing MLL (full run)</div>
+      <div className="rounded border border-border bg-surface p-4">
+        <div className="mb-2 text-sm font-medium text-text">Equity & trailing MLL (full run)</div>
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={equity ?? []}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
             <XAxis
               dataKey="time"
-              tick={{ fill: '#8b949e', fontSize: 11 }}
+              tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
               tickFormatter={(t) => new Date(t * 1000).toISOString().slice(0, 10)}
             />
-            <YAxis tick={{ fill: '#8b949e', fontSize: 11 }} domain={['auto', 'auto']} />
+            <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} domain={['auto', 'auto']} />
             <Tooltip
-              contentStyle={{ background: '#161b22', border: '1px solid #30363d' }}
+              contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
               labelFormatter={(t) => new Date((t as number) * 1000).toISOString()}
               formatter={(v) => fmtUsd(Number(v))}
             />
             <Line type="stepAfter" dataKey="equity" stroke={colors.accent} dot={false} strokeWidth={1.5} />
-            <Line type="stepAfter" dataKey="mll_floor" stroke={colors.down} dot={false} strokeWidth={1} strokeDasharray="4 3" />
+            <Line type="stepAfter" dataKey="mll_floor" stroke={colors.negative} dot={false} strokeWidth={1} strokeDasharray="4 3" />
           </LineChart>
         </ResponsiveContainer>
       </div>
 
-      <div className="rounded border border-neutral-800 bg-neutral-900 p-4">
-        <div className="mb-2 text-sm font-medium text-neutral-300">Drawdown from peak equity (full run)</div>
+      <div className="rounded border border-border bg-surface p-4">
+        <div className="mb-2 text-sm font-medium text-text">Drawdown from peak equity (full run)</div>
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={equity ?? []}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
             <XAxis
               dataKey="time"
-              tick={{ fill: '#8b949e', fontSize: 11 }}
+              tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
               tickFormatter={(t) => new Date(t * 1000).toISOString().slice(0, 10)}
             />
-            <YAxis tick={{ fill: '#8b949e', fontSize: 11 }} reversed />
+            <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} reversed />
             <Tooltip
-              contentStyle={{ background: '#161b22', border: '1px solid #30363d' }}
+              contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
               labelFormatter={(t) => new Date((t as number) * 1000).toISOString()}
               formatter={(v) => fmtUsd(Number(v))}
             />
-            <Line type="stepAfter" dataKey="drawdown_usd" stroke={colors.down} dot={false} strokeWidth={1.5} />
+            <Line type="stepAfter" dataKey="drawdown_usd" stroke={colors.negative} dot={false} strokeWidth={1.5} />
           </LineChart>
         </ResponsiveContainer>
       </div>

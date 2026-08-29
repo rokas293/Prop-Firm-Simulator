@@ -23,10 +23,10 @@ export default function PerfHud() {
   const renderMs = renderSamples.map((s) => s.ms)
 
   return (
-    <div className="fixed bottom-3 right-3 z-[200] w-72 rounded border border-neutral-700 bg-neutral-950/95 p-3 font-mono text-[10px] leading-relaxed text-neutral-300 shadow-lg">
-      <div className="mb-1.5 text-neutral-500">PERF HUD</div>
+    <div className="fixed bottom-3 right-3 z-[200] w-72 rounded border border-border bg-bg/95 p-3 font-mono text-[10px] leading-relaxed text-text shadow-lg">
+      <div className="mb-1.5 text-text-muted">PERF HUD</div>
 
-      <div className="mb-0.5 text-neutral-500">
+      <div className="mb-0.5 text-text-muted">
         Fetches n={fetchMs.length} avg {avg(fetchMs).toFixed(1)}ms max {max(fetchMs).toFixed(1)}ms
       </div>
       {fetchSamples
@@ -36,11 +36,11 @@ export default function PerfHud() {
         .map((s, i) => (
           <div key={i} className="flex justify-between gap-2">
             <span className="truncate">{s.path}</span>
-            <span className={s.ms > 200 ? 'text-amber-400' : ''}>{s.ms.toFixed(1)}ms</span>
+            <span className={s.ms > 200 ? 'text-warning' : ''}>{s.ms.toFixed(1)}ms</span>
           </div>
         ))}
 
-      <div className="mb-0.5 mt-2 text-neutral-500">
+      <div className="mb-0.5 mt-2 text-text-muted">
         Renders n={renderMs.length} avg {avg(renderMs).toFixed(1)}ms max {max(renderMs).toFixed(1)}ms
       </div>
       {renderSamples
@@ -52,7 +52,7 @@ export default function PerfHud() {
             <span className="truncate">
               {s.id} ({s.phase})
             </span>
-            <span className={s.ms > 16 ? 'text-amber-400' : ''}>{s.ms.toFixed(1)}ms</span>
+            <span className={s.ms > 16 ? 'text-warning' : ''}>{s.ms.toFixed(1)}ms</span>
           </div>
         ))}
     </div>

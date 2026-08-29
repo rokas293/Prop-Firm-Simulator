@@ -14,16 +14,16 @@ export default function KpiTile({
   accent?: boolean
 }) {
   return (
-    <div className="rounded border border-neutral-800 bg-neutral-900 px-3 py-2">
-      <div className="text-[11px] uppercase tracking-wide text-neutral-500">{label}</div>
+    <div className="rounded border border-border bg-surface px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-text-muted">{label}</div>
       <div
         className={`text-lg font-semibold ${
-          accent === undefined ? 'text-neutral-100' : accent ? 'text-accent-green' : 'text-accent-red'
+          accent === undefined ? 'text-text' : accent ? 'text-positive' : 'text-negative'
         }`}
       >
         {value}
       </div>
-      {sub && <div className="text-[11px] text-neutral-500">{sub}</div>}
+      {sub && <div className="text-[11px] text-text-muted">{sub}</div>}
     </div>
   )
 }

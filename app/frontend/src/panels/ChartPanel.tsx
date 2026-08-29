@@ -426,10 +426,10 @@ export default function ChartPanel() {
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-neutral-800 px-4 py-2 text-sm">
-        {run && <span className="text-neutral-400">{run.instrument}</span>}
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2 text-sm">
+        {run && <span className="text-text-muted">{run.instrument}</span>}
 
-        <div className="mx-1 h-4 w-px bg-neutral-800" />
+        <div className="mx-1 h-4 w-px bg-surface-2" />
 
         <div className="flex gap-1">
           {TIMEFRAMES.map((tf) => (
@@ -438,8 +438,8 @@ export default function ChartPanel() {
               onClick={() => setTimeframe(tf)}
               className={`rounded px-2 py-1 ${
                 timeframe === tf
-                  ? 'bg-accent-blue text-white'
-                  : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                  ? 'bg-accent text-white'
+                  : 'bg-surface-2 text-text hover:bg-surface-2-hover'
               }`}
             >
               {tf}
@@ -447,49 +447,49 @@ export default function ChartPanel() {
           ))}
         </div>
 
-        <div className="mx-1 h-4 w-px bg-neutral-800" />
+        <div className="mx-1 h-4 w-px bg-surface-2" />
 
         <button
           onClick={() => tradeIdx > 0 && trades && pickTrade(trades[tradeIdx - 1].trade_id)}
           disabled={tradeIdx <= 0}
-          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           &larr; Prev trade
         </button>
-        <span className="text-neutral-400">
+        <span className="text-text-muted">
           {trades && trades.length > 0 ? `Trade ${tradeIdx + 1} / ${trades.length}` : 'No trades'}
         </span>
         <button
           onClick={() => trades && tradeIdx < trades.length - 1 && pickTrade(trades[tradeIdx + 1].trade_id)}
           disabled={!trades || tradeIdx < 0 || tradeIdx >= trades.length - 1}
-          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           Next trade &rarr;
         </button>
 
-        <div className="mx-1 h-4 w-px bg-neutral-800" />
+        <div className="mx-1 h-4 w-px bg-surface-2" />
 
         <button
           onClick={fitTrade}
           disabled={!selectedTrade}
-          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           Fit trade
         </button>
         <button
           onClick={selectFullDay}
           disabled={!selectedTrade}
-          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           Full day
         </button>
 
-        <div className="mx-1 h-4 w-px bg-neutral-800" />
+        <div className="mx-1 h-4 w-px bg-surface-2" />
 
         <button
           onClick={() => setSplitView((v) => !v)}
           className={`rounded px-2 py-1 ${
-            splitView ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+            splitView ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
           }`}
         >
           Split view
@@ -502,8 +502,8 @@ export default function ChartPanel() {
                 onClick={() => setSecondaryTimeframe(tf)}
                 className={`rounded px-2 py-1 ${
                   secondaryTimeframe === tf
-                    ? 'bg-accent-blue text-white'
-                    : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                    ? 'bg-accent text-white'
+                    : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                 }`}
               >
                 {tf}
@@ -512,9 +512,9 @@ export default function ChartPanel() {
           </div>
         )}
 
-        <div className="mx-1 h-4 w-px bg-neutral-800" />
+        <div className="mx-1 h-4 w-px bg-surface-2" />
 
-        <span className="text-neutral-500">Brackets</span>
+        <span className="text-text-muted">Brackets</span>
         <div className="flex gap-1">
           {(['auto', 'full', 'markers'] as BracketDensity[]).map((d) => (
             <button
@@ -528,7 +528,7 @@ export default function ChartPanel() {
                     : 'Always show markers only'
               }
               className={`rounded px-2 py-1 capitalize ${
-                bracketDensity === d ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                bracketDensity === d ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
               }`}
             >
               {d === 'markers' ? 'Off' : d}
@@ -537,7 +537,7 @@ export default function ChartPanel() {
         </div>
 
         {selectedTrade && (
-          <span className="ml-auto text-xs text-neutral-500">
+          <span className="ml-auto text-xs text-text-muted">
             #{selectedTrade.trade_id} &middot; {selectedTrade.leg ?? '-'} &middot;{' '}
             {selectedTrade.session ?? '-'} &middot; {selectedTrade.side} &middot; $
             {selectedTrade.pnl_usd.toFixed(2)}
@@ -545,7 +545,7 @@ export default function ChartPanel() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 px-4 py-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-1.5">
         <IndicatorTogglePanel />
       </div>
 
@@ -567,7 +567,7 @@ export default function ChartPanel() {
       <div className="flex min-h-0 flex-1">
         <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} />
         <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
-          <div className={splitView ? 'min-h-0 flex-1 border-b border-neutral-800' : 'h-full'}>
+          <div className={splitView ? 'min-h-0 flex-1 border-b border-border' : 'h-full'}>
             <ChartKL
               ref={klChartRef}
               instrument={run?.instrument ?? null}

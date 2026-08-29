@@ -5,7 +5,8 @@ import { useDailyRisk, useEquity } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { CHART_PANEL_ID } from '../workspace/panelIds'
 import EmptyState from '../components/EmptyState'
-import { useThemeStore } from '../state/themeStore'
+import { useThemeStore, useThemeBase } from '../state/themeStore'
+import { hexToRgba } from '../chart/color'
 import type { DailyRiskPoint } from '../api/types'
 
 // High enough that a multi-year run's change-detection-compressed equity
@@ -19,13 +20,14 @@ function fmtUsd(v: number): string {
 }
 
 // Visualization buckets against the MLL's cushion, not a prop rule itself.
-// "Close" stays a fixed amber caution color -- see RiskChart.tsx's own
-// DAILY_LOSS_COLOR/LOCK_COLOR comment (POLISH_ROADMAP Phase P6).
-function riskColor(d: DailyRiskPoint, up: string, down: string): string {
-  if (d.breached) return down
-  if (d.min_distance_to_mll_usd <= 200) return down
-  if (d.min_distance_to_mll_usd <= 750) return '#d29922'
-  return up
+// "Close" stays the theme's fixed `warning` base token -- see RiskChart.tsx's
+// own comment (Part C1 audit risk #2: a caution outside the tunable
+// accent/positive/negative model).
+function riskColor(d: DailyRiskPoint, positive: string, negative: string, warning: string): string {
+  if (d.breached) return negative
+  if (d.min_distance_to_mll_usd <= 200) return negative
+  if (d.min_distance_to_mll_usd <= 750) return warning
+  return positive
 }
 
 // A standalone dockable panel: the MLL/daily-loss/breach view + day strip.
@@ -34,6 +36,7 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
   const jumpToTradingDay = useUiStore((s) => s.jumpToTradingDay)
   const chartRef = useRef<RiskChartHandle>(null)
   const colors = useThemeStore((s) => s.colors)
+  const base = useThemeBase()
 
   const { data: equity } = useEquity(runId, RISK_EQUITY_MAX_POINTS)
   const { data: dailyRisk } = useDailyRisk(runId)
@@ -51,14 +54,14 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex flex-wrap items-center gap-4 border-b border-neutral-800 px-4 py-2 text-xs text-neutral-400">
+      <div className="flex flex-wrap items-center gap-4 border-b border-border px-4 py-2 text-xs text-text-muted">
         <Legend swatch={colors.accent} label="Equity" line />
-        <Legend swatch={colors.down} label="Trailing MLL floor" dashed />
-        <Legend swatch="#d29922" label="Daily loss floor" dotted />
-        <Legend swatch={colors.up} label="Profit target" dashed />
-        <Legend swatch={`${colors.down}59`} label="Distance-to-breach band" />
+        <Legend swatch={colors.negative} label="Trailing MLL floor" dashed />
+        <Legend swatch={base.warning} label="Daily loss floor" dotted />
+        <Legend swatch={colors.positive} label="Profit target" dashed />
+        <Legend swatch={hexToRgba(colors.negative, 0.35)} label="Distance-to-breach band" />
         {breachDay && (
-          <span className="ml-auto text-accent-red">
+          <span className="ml-auto text-negative">
             Breached {breachDay.trading_day} ({fmtUsd(breachDay.min_distance_to_mll_usd)})
           </span>
         )}
@@ -68,13 +71,13 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
         <RiskChart ref={chartRef} equity={equity ?? []} dailyRisk={dailyRisk ?? []} />
       </div>
 
-      <div className="border-t border-neutral-800 px-4 py-3">
-        <div className="mb-1.5 flex items-center justify-between text-xs text-neutral-500">
+      <div className="border-t border-border px-4 py-3">
+        <div className="mb-1.5 flex items-center justify-between text-xs text-text-muted">
           <span>Daily risk -- worst distance to MLL each trading day (click a day to jump the chart)</span>
           <div className="flex items-center gap-3">
-            <Legend swatch={colors.up} label="Safe" small />
-            <Legend swatch="#d29922" label="Close" small />
-            <Legend swatch={colors.down} label="Breach / near-breach" small />
+            <Legend swatch={colors.positive} label="Safe" small />
+            <Legend swatch={base.warning} label="Close" small />
+            <Legend swatch={colors.negative} label="Breach / near-breach" small />
           </div>
         </div>
         <div className="flex h-10 w-full gap-px overflow-hidden rounded">
@@ -86,10 +89,10 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
                 d.daily_locked ? ' -- daily loss lock triggered' : ''
               }${d.breached ? ' -- BREACHED' : ''} -- ${d.trades} trade${d.trades === 1 ? '' : 's'}`}
               className="relative min-w-[3px] flex-1 cursor-pointer transition-opacity hover:opacity-75"
-              style={{ background: riskColor(d, colors.up, colors.down) }}
+              style={{ background: riskColor(d, colors.positive, colors.negative, base.warning) }}
             >
               {d.daily_locked && (
-                <span className="absolute inset-x-0 top-0 h-1 bg-neutral-100" title="Daily loss lock triggered" />
+                <span className="absolute inset-x-0 top-0 h-1 bg-warning" title="Daily loss lock triggered" />
               )}
             </button>
           ))}

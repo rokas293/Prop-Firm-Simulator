@@ -28,7 +28,7 @@ export class MllBandPrimitive implements IPanePrimitive<Time> {
   constructor(
     private series: ISeriesApi<'Line'>,
     private points: BandPoint[],
-    private color: string = 'rgba(248, 81, 73, 0.15)',
+    private color: string,
   ) {
     this._paneViews = [new MllBandPaneView(this)]
   }

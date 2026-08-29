@@ -38,7 +38,7 @@ import {
   type SessionBand,
 } from './sessionOverlay'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
-import { useThemeStore, type ThemeColors } from '../../state/themeStore'
+import { useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
 import type { IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
@@ -104,37 +104,72 @@ interface ChartKLProps {
   onVisibleRangeChange?: (range: { from: number; to: number } | null) => void
 }
 
-// PriceChart.tsx's theme-changed effect recolors the candle series, the
-// volume series, brackets, and the span on every theme change (POLISH_
-// ROADMAP Phase P6) -- klinecharts has no per-series color option (unlike
-// Lightweight Charts' series.applyOptions), only this chart-wide
-// setStyles(), so both the candle body/wick/border AND VOL's own up/down
-// bars are set together here. compareRule: 'current_open' makes a candle's
-// own color depend on ITS close vs ITS open (bullish/bearish within the
-// bar) -- the same convention Lightweight Charts' candlestick series uses
-// -- rather than klinecharts' other option of comparing to the previous
-// bar's close, which would visibly disagree with every other chart in the
-// app on quiet, small-range bars.
-function themeStyles(colors: ThemeColors) {
+// Theme/mode-changed effect (REDESIGN_APPROACH.md Part C1) recolors
+// everything klinecharts renders that ISN'T a trade/session/drawing
+// overlay (those rebuild fresh from `colors` on every change already, see
+// rebuildOverlaysRef etc. below) -- candles, volume, grid, axis, and
+// crosshair. klinecharts has no per-series color option (unlike Lightweight
+// Charts' series.applyOptions), only this chart-wide setStyles(), so it's
+// all set together here. compareRule: 'current_open' makes a candle's own
+// color depend on ITS close vs ITS open (bullish/bearish within the bar) --
+// the same convention Lightweight Charts' candlestick series uses -- rather
+// than klinecharts' other option of comparing to the previous bar's close,
+// which would visibly disagree with every other chart in the app on quiet,
+// small-range bars. There is deliberately no "background" here: klinecharts'
+// public Styles has no pane-background field at all (confirmed against the
+// v10.0.3 type declarations) -- the canvas is transparent and the visible
+// background is the container div's own CSS (bg-bg, set on the wrapper
+// below), same as every other panel.
+function themeStyles(colors: ThemeColors, base: ThemeBase) {
   return {
+    grid: {
+      horizontal: { color: base.grid },
+      vertical: { color: base.grid },
+    },
     candle: {
       bar: {
         compareRule: 'current_open' as const,
-        upColor: colors.up,
-        downColor: colors.down,
-        noChangeColor: colors.up,
-        upBorderColor: colors.up,
-        downBorderColor: colors.down,
-        noChangeBorderColor: colors.up,
-        upWickColor: colors.up,
-        downWickColor: colors.down,
-        noChangeWickColor: colors.up,
+        upColor: colors.upCandle,
+        downColor: colors.downCandle,
+        noChangeColor: colors.upCandle,
+        upBorderColor: colors.upCandle,
+        downBorderColor: colors.downCandle,
+        noChangeBorderColor: colors.upCandle,
+        upWickColor: colors.upCandle,
+        downWickColor: colors.downCandle,
+        noChangeWickColor: colors.upCandle,
       },
     },
     indicator: {
-      bars: [{ upColor: colors.up, downColor: colors.down, noChangeColor: colors.up }],
+      bars: [{ upColor: colors.upCandle, downColor: colors.downCandle, noChangeColor: colors.upCandle }],
+    },
+    xAxis: {
+      axisLine: { color: base.border },
+      tickLine: { color: base.border },
+      tickText: { color: base.textMuted },
+    },
+    yAxis: {
+      axisLine: { color: base.border },
+      tickLine: { color: base.border },
+      tickText: { color: base.textMuted },
+    },
+    crosshair: {
+      horizontal: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface } },
+      vertical: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface } },
     },
   }
+}
+
+// VWAP (theme accent) and ATR14 (theme textMuted, different dark vs light)
+// track the live theme -- restyled via overrideIndicator rather than
+// baked into their one-time registerIndicator call (indicators.ts), which
+// only sets an initial placeholder. EMA20/EMA50 are fixed categorical
+// colors (registered once, correct forever) so they're not touched here.
+// Safe to call even when an indicator isn't currently created --
+// overrideIndicator just returns false, confirmed from the v10.0.3 types.
+function applyIndicatorColors(chart: Chart, colors: ThemeColors, base: ThemeBase): void {
+  chart.overrideIndicator({ name: KL_VWAP, styles: { lines: [{ color: colors.accent }] } })
+  chart.overrideIndicator({ name: KL_ATR14, styles: { lines: [{ color: base.textMuted }] } })
 }
 
 function toKLineData(bar: Bar): KLineData {
@@ -155,12 +190,12 @@ function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart
   fn(chart)
 }
 
-// The KLineCharts-engine counterpart to PriceChart.tsx (PART_A_REVISED_
-// klinecharts.md Phases A1-A5) -- trade-visual parity (A1), a full drawing
-// toolbar on klinecharts' own overlay system (A2, replacing the old
-// hand-built drawing engine entirely), backend-sourced indicators/session
-// shading (A3), replay (A4), and multi-chart sync (A5). Still mounted
-// behind chartEngineStore's feature flag alongside lightweight-charts.
+// The sole price-chart engine (PART_A_REVISED_klinecharts.md Phases A1-A5
+// brought it to parity with, and then replaced, the old lightweight-charts
+// PriceChart.tsx) -- trade-visual parity (A1), a full drawing toolbar on
+// klinecharts' own overlay system (A2, replacing the old hand-built drawing
+// engine entirely), backend-sourced indicators/session shading (A3), replay
+// (A4), and multi-chart sync (A5).
 //
 // Deliberately a FIXED window, not real forward/backward pan-triggered
 // pagination: ChartPanel already computes `from`/`to` (trade- or
@@ -196,6 +231,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   ref,
 ) {
   const colors = useThemeStore((s) => s.colors)
+  const base = useThemeBase()
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -236,6 +272,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   selectedTradeRef.current = selectedTrade
   const colorsRef = useRef(colors)
   colorsRef.current = colors
+  const baseRef = useRef(base)
+  baseRef.current = base
   const indicatorsRef = useRef(indicators)
   indicatorsRef.current = indicators
   const sessionBandsRef = useRef(sessionBands)
@@ -330,6 +368,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       if (p.ema20) chart.createIndicator({ name: KL_EMA20, precision, paneId: 'candle_pane' }, true)
       if (p.ema50) chart.createIndicator({ name: KL_EMA50, precision, paneId: 'candle_pane' }, true)
       if (p.atr14) chart.createIndicator({ name: KL_ATR14 }, false)
+      applyIndicatorColors(chart, colorsRef.current, baseRef.current)
     })
   }
 
@@ -440,7 +479,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     const chart = init(containerRef.current, { timezone: 'America/New_York' })
     if (!chart) return
     chartRef.current = chart
-    chart.setStyles(themeStyles(colorsRef.current))
+    chart.setStyles(themeStyles(colorsRef.current, baseRef.current))
     // Plain klinecharts built-in (Phase A3) -- just visualizes each bar's
     // own volume field, no derived calculation, so no VIZ_SPEC risk. LWC
     // shows volume unconditionally (no toggle); matched here the same way.
@@ -601,13 +640,17 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     rebuildOverlaysRef.current()
   }, [trades, selectedTrade, colors, bracketDensity])
 
-  // Theme switch (POLISH_ROADMAP Phase P6) -- recolor the candles/volume
-  // themselves too, not just the trade overlays above. Safe to call before
-  // data loads (setStyles doesn't touch data), unlike the withReadyChart-
-  // guarded calls elsewhere in this file.
+  // Theme/mode switch (REDESIGN_APPROACH.md Part C1) -- recolor the
+  // candles/volume/grid/axis/crosshair too, not just the trade overlays
+  // above, and restyle the two theme-tracking indicator lines. Safe to call
+  // before data loads (setStyles/overrideIndicator don't touch data),
+  // unlike the withReadyChart-guarded calls elsewhere in this file.
   useEffect(() => {
-    chartRef.current?.setStyles(themeStyles(colors))
-  }, [colors])
+    const chart = chartRef.current
+    if (!chart) return
+    chart.setStyles(themeStyles(colors, base))
+    applyIndicatorColors(chart, colors, base)
+  }, [colors, base])
 
   // Indicator data/toggle changed but the window didn't -- redraw against
   // the bars already loaded, same as the trades effect above.
@@ -692,12 +735,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   )
 
   return (
-    <div className="relative h-full w-full">
+    <div className="relative h-full w-full bg-bg">
       <LoadingBar active={loading} />
       <div ref={containerRef} className="h-full w-full" />
       {tooltip && (
         <div
-          className="pointer-events-none absolute z-20 whitespace-pre rounded border border-neutral-700 bg-neutral-900/95 px-2 py-1 text-xs text-neutral-200 shadow-lg"
+          className="pointer-events-none absolute z-20 whitespace-pre rounded border border-border bg-surface/95 px-2 py-1 text-xs text-text shadow-lg"
           style={{ left: Math.min(tooltip.x + 12, (containerRef.current?.clientWidth ?? 0) - 180), top: Math.max(tooltip.y - 12, 0) }}
         >
           {tooltip.text}

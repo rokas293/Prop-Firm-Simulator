@@ -11,6 +11,8 @@
 // corners (the deferred "true full-height" version noted in
 // tradeOverlays.ts's PnL-zone comment).
 import { registerOverlay, type OverlayCreate } from 'klinecharts'
+import { SESSION_COLORS as SESSION_HEX } from '../../state/themeStore'
+import { hexToRgba } from '../color'
 
 export const KL_SESSION_BAND = 'klSessionBand'
 export const SESSION_BAND_GROUP = 'kl-session-band'
@@ -28,14 +30,19 @@ export interface SessionBand {
   fairValue: number | null
 }
 
-// Same palette as SessionBandsPrimitive.ts (the lightweight-charts
-// version) -- kept identical so the two engines look like the same
-// product, not a reskin.
+// Session identity colors come from themeStore.ts's SESSION_COLORS (Part C1
+// audit risk #3 -- "which session is this" is categorical, not a
+// win/loss/accent semantic, so it's a fixed hex per session there, shared
+// with anything else that ever needs to show a session's identity color).
+// hexToRgba applies each shading alpha here, at the point of use, since the
+// alpha (how STRONG the shading is) is a rendering concern of this overlay,
+// not part of the session's identity.
+const SESSION_ALPHA: Record<string, number> = { asia: 0.07, london: 0.07, ny: 0.07, news: 0.09 }
 const SESSION_COLORS: Record<string, string> = {
-  asia: 'rgba(163, 113, 247, 0.07)',
-  london: 'rgba(88, 166, 255, 0.07)',
-  ny: 'rgba(63, 185, 80, 0.07)',
-  news: 'rgba(210, 153, 34, 0.09)',
+  asia: hexToRgba(SESSION_HEX.asia, SESSION_ALPHA.asia),
+  london: hexToRgba(SESSION_HEX.london, SESSION_ALPHA.london),
+  ny: hexToRgba(SESSION_HEX.ny, SESSION_ALPHA.ny),
+  news: hexToRgba(SESSION_HEX.news, SESSION_ALPHA.news),
 }
 const DEFAULT_SESSION_COLOR = 'rgba(139, 148, 158, 0.06)'
 export const FAIR_VALUE_COLOR = 'rgba(201, 209, 217, 0.6)'

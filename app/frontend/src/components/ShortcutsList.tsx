@@ -18,12 +18,12 @@ export default function ShortcutsList() {
     <>
       {groups.map(([category, defs]) => (
         <div key={category} className="mb-4 last:mb-0">
-          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-neutral-500">{category}</div>
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-text-muted">{category}</div>
           <div className="space-y-1">
             {defs.map((d) => (
-              <div key={d.id} className="flex items-center justify-between gap-4 rounded px-2 py-1 text-sm hover:bg-neutral-900">
-                <span className="text-neutral-300">{d.description}</span>
-                <kbd className="whitespace-nowrap rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 font-mono text-[11px] text-neutral-400">
+              <div key={d.id} className="flex items-center justify-between gap-4 rounded px-2 py-1 text-sm hover:bg-surface">
+                <span className="text-text">{d.description}</span>
+                <kbd className="whitespace-nowrap rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[11px] text-text-muted">
                   {d.label}
                 </kbd>
               </div>

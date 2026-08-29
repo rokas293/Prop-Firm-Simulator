@@ -108,7 +108,7 @@ export function buildEntryExitOverlays(
           t.exit_time,
           exitAnchor,
           `${t.exit_type} ${win ? 'win' : 'loss'}`,
-          win ? colors.up : colors.down,
+          win ? colors.positive : colors.negative,
           emphasize,
         ),
       )
@@ -164,7 +164,7 @@ export function buildSelectedTradeOverlays(
       groupId: SL_TP_LINE_GROUP,
       lock: true,
       points: [{ timestamp: toMs(leftEdgeTime), value: trade.sl_price }],
-      styles: { line: { color: colors.down, style: 'dashed', size: 2 }, text: { color: colors.down } },
+      styles: { line: { color: colors.negative, style: 'dashed', size: 2 }, text: { color: colors.negative } },
     })
   }
   if (trade.tp_price !== null) {
@@ -174,7 +174,7 @@ export function buildSelectedTradeOverlays(
       groupId: SL_TP_LINE_GROUP,
       lock: true,
       points: [{ timestamp: toMs(leftEdgeTime), value: trade.tp_price }],
-      styles: { line: { color: colors.up, style: 'dashed', size: 2 }, text: { color: colors.up } },
+      styles: { line: { color: colors.positive, style: 'dashed', size: 2 }, text: { color: colors.positive } },
     })
   }
 
@@ -221,7 +221,7 @@ export function buildTradeBracketOverlays(
           { timestamp: toMs(trade.entry_time), value: trade.entry_price },
           { timestamp: toMs(bounds.timeTo), value: trade.sl_price },
         ],
-        styles: { rect: { style: 'fill', color: hexToRgba(colors.down, 0.08) } },
+        styles: { rect: { style: 'fill', color: hexToRgba(colors.negative, 0.08) } },
       })
     }
     if (trade.tp_price !== null) {
@@ -234,13 +234,13 @@ export function buildTradeBracketOverlays(
           { timestamp: toMs(trade.entry_time), value: trade.entry_price },
           { timestamp: toMs(bounds.timeTo), value: trade.tp_price },
         ],
-        styles: { rect: { style: 'fill', color: hexToRgba(colors.up, 0.08) } },
+        styles: { rect: { style: 'fill', color: hexToRgba(colors.positive, 0.08) } },
       })
     }
 
     if (bounds.outcome === 'open') continue // exit_price/outcome unknown yet -- no look-ahead (VIZ_SPEC §0)
     const win = bounds.outcome === 'win'
-    const stroke = win ? colors.up : colors.down
+    const stroke = win ? colors.positive : colors.negative
     overlays.push({
       id: `kl-bracket-pnl-${trade.trade_id}`,
       name: TRADE_ZONE_OVERLAY,

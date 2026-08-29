@@ -134,20 +134,20 @@ export default function Workspace() {
 
   return (
     <div className="flex h-[calc(100vh-49px)] flex-col">
-      <div className="flex items-center gap-2 border-b border-neutral-800 px-4 py-1.5 text-xs">
-        <span className="text-neutral-500">Layout:</span>
+      <div className="flex items-center gap-2 border-b border-border px-4 py-1.5 text-xs">
+        <span className="text-text-muted">Layout:</span>
         {PRESETS.map((p) => (
           <button
             key={p.name}
             onClick={() => apiRef.current && p.apply(apiRef.current)}
-            className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+            className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
           >
             {p.name}
           </button>
         ))}
         <button
           onClick={resetLayout}
-          className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
         >
           Reset layout
         </button>
@@ -155,20 +155,20 @@ export default function Workspace() {
         <div className="relative ml-auto">
           <button
             onClick={() => setAddMenuOpen((o) => !o)}
-            className="rounded bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+            className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
           >
             + Panel
           </button>
           {addMenuOpen && (
-            <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded border border-neutral-700 bg-neutral-900 py-1 shadow-lg">
+            <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded border border-border bg-surface py-1 shadow-lg">
               {closedPanels.length === 0 ? (
-                <div className="px-3 py-1.5 text-neutral-500">All panels open</div>
+                <div className="px-3 py-1.5 text-text-muted">All panels open</div>
               ) : (
                 closedPanels.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => addPanel(p.id)}
-                    className="block w-full px-3 py-1.5 text-left text-neutral-300 hover:bg-neutral-800"
+                    className="block w-full px-3 py-1.5 text-left text-text hover:bg-surface-2"
                   >
                     {p.title}
                   </button>

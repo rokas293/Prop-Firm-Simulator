@@ -14,11 +14,7 @@
 // each bar's own volume field, so there's no divergence risk.
 import { registerIndicator } from 'klinecharts'
 import type { IndicatorPoint } from '../../api/types'
-
-export const VWAP_COLOR = '#e3b341'
-export const EMA20_COLOR = '#79c0ff'
-export const EMA50_COLOR = '#d2a8ff'
-export const ATR_COLOR = '#8b949e'
+import { CHART_LINE_COLORS, resolveBase, useThemeStore } from '../../state/themeStore'
 
 export const KL_VWAP = 'klVwap'
 export const KL_EMA20 = 'klEma20'
@@ -86,12 +82,21 @@ function registerPassthroughIndicator(
   })
 }
 
+// EMA20/EMA50 are fixed CATEGORICAL colors (Part C1 audit risk #3 -- "which
+// line is this", not a tunable semantic), registered once and never
+// restyled. VWAP (theme accent) and ATR14 (theme textMuted, which differs
+// dark vs light) DO need to track live theme/mode changes -- read from the
+// store directly (registration happens once at app start, outside any
+// component) so the registration-time value is the user's actual current
+// theme rather than a guessed placeholder; ChartKL.tsx's immediate
+// chart.overrideIndicator() call keeps both correct on every later change.
 let registered = false
 export function ensureIndicatorsRegistered(): void {
   if (registered) return
   registered = true
-  registerPassthroughIndicator(KL_VWAP, 'VWAP', VWAP_COLOR, 'price', (c) => c.vwap)
-  registerPassthroughIndicator(KL_EMA20, 'EMA20', EMA20_COLOR, 'price', (c) => c.ema20)
-  registerPassthroughIndicator(KL_EMA50, 'EMA50', EMA50_COLOR, 'price', (c) => c.ema50)
-  registerPassthroughIndicator(KL_ATR14, 'ATR14', ATR_COLOR, 'normal', (c) => c.atr14)
+  const { colors, mode } = useThemeStore.getState()
+  registerPassthroughIndicator(KL_VWAP, 'VWAP', colors.accent, 'price', (c) => c.vwap)
+  registerPassthroughIndicator(KL_EMA20, 'EMA20', CHART_LINE_COLORS.ema20, 'price', (c) => c.ema20)
+  registerPassthroughIndicator(KL_EMA50, 'EMA50', CHART_LINE_COLORS.ema50, 'price', (c) => c.ema50)
+  registerPassthroughIndicator(KL_ATR14, 'ATR14', resolveBase(mode).textMuted, 'normal', (c) => c.atr14)
 }

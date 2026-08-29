@@ -5,8 +5,8 @@
 export default function EmptyState({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center">
-      <div className="text-sm text-neutral-400">{title}</div>
-      {hint && <div className="max-w-xs text-xs text-neutral-600">{hint}</div>}
+      <div className="text-sm text-text-muted">{title}</div>
+      {hint && <div className="max-w-xs text-xs text-text-muted">{hint}</div>}
     </div>
   )
 }

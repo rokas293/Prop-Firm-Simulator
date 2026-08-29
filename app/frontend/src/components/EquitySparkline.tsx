@@ -21,15 +21,15 @@ export default function EquitySparkline({ runId, onViewFull }: { runId: string |
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs text-neutral-500">Equity (full run)</span>
+        <span className="text-xs text-text-muted">Equity (full run)</span>
         {onViewFull && (
-          <button onClick={onViewFull} className="text-xs text-accent-blue hover:text-neutral-100">
+          <button onClick={onViewFull} className="text-xs text-accent hover:text-text">
             View full chart &rarr;
           </button>
         )}
       </div>
       {!equity || equity.length === 0 ? (
-        <div className="flex h-20 items-center justify-center text-xs text-neutral-600">No equity data</div>
+        <div className="flex h-20 items-center justify-center text-xs text-text-muted">No equity data</div>
       ) : (
         <>
           <ResponsiveContainer width="100%" height={80}>
@@ -44,7 +44,7 @@ export default function EquitySparkline({ runId, onViewFull }: { runId: string |
               />
             </LineChart>
           </ResponsiveContainer>
-          {last && <div className="mt-1 text-right text-xs text-neutral-400">{fmtUsd(last.equity)}</div>}
+          {last && <div className="mt-1 text-right text-xs text-text-muted">{fmtUsd(last.equity)}</div>}
         </>
       )}
     </div>

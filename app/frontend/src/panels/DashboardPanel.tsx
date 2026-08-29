@@ -68,11 +68,11 @@ function BucketBarChart({
   return (
     <ResponsiveContainer width="100%" height={180}>
       <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
-        <XAxis dataKey="key" tick={{ fill: '#8b949e', fontSize: 11 }} />
-        <YAxis tick={{ fill: '#8b949e', fontSize: 11 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
+        <XAxis dataKey="key" tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} />
+        <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} />
         <Tooltip
-          contentStyle={{ background: '#161b22', border: '1px solid #30363d' }}
+          contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
           formatter={(v) => [fmtUsd(Number(v)), valueLabel]}
           labelFormatter={(k) => `${k}`}
         />
@@ -100,14 +100,14 @@ function StreakChart({
   return (
     <ResponsiveContainer width="100%" height={180}>
       <BarChart data={streaks.distribution}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
         <XAxis
           dataKey="length"
-          tick={{ fill: '#8b949e', fontSize: 11 }}
-          label={{ value: 'Streak length', position: 'insideBottom', offset: -5, fill: '#8b949e', fontSize: 11 }}
+          tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+          label={{ value: 'Streak length', position: 'insideBottom', offset: -5, fill: 'var(--color-text-muted)', fontSize: 11 }}
         />
-        <YAxis tick={{ fill: '#8b949e', fontSize: 11 }} allowDecimals={false} />
-        <Tooltip contentStyle={{ background: '#161b22', border: '1px solid #30363d' }} />
+        <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} allowDecimals={false} />
+        <Tooltip contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }} />
         <Bar
           dataKey="winCount"
           name="Win streaks"
@@ -133,28 +133,28 @@ function StreakChart({
 function ScoreCard({ score }: { score: CompassScore }) {
   return (
     <Card title="Compass score">
-      <p className="mb-3 text-xs text-neutral-500">
+      <p className="mb-3 text-xs text-text-muted">
         Formula: the plain average of four 0-100 components below (each equally weighted, 25%). This is a
         descriptive summary, not a prop-rule outcome -- it doesn't affect pass/fail.
       </p>
       <div className="mb-4 flex items-baseline gap-3">
-        <span className="text-4xl font-bold text-neutral-100">{score.total}</span>
-        <span className="text-sm text-neutral-500">/ 100</span>
+        <span className="text-4xl font-bold text-text">{score.total}</span>
+        <span className="text-sm text-text-muted">/ 100</span>
       </div>
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
         {score.components.map((c) => (
           <div key={c.key}>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-neutral-300">{c.label}</span>
+              <span className="text-xs font-medium text-text">{c.label}</span>
               <span
                 className={`text-sm font-semibold ${
-                  c.score >= 67 ? 'text-accent-green' : c.score >= 34 ? 'text-amber-400' : 'text-accent-red'
+                  c.score >= 67 ? 'text-positive' : c.score >= 34 ? 'text-warning' : 'text-negative'
                 }`}
               >
                 {c.score}
               </span>
             </div>
-            <div className="mt-1 text-[11px] text-neutral-500">{c.detail}</div>
+            <div className="mt-1 text-[11px] text-text-muted">{c.detail}</div>
           </div>
         ))}
       </div>
@@ -277,13 +277,13 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
   return (
     <div className="h-full overflow-auto p-4">
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-neutral-500">Scope:</span>
+        <span className="text-xs text-text-muted">Scope:</span>
         {SCOPES.map((s) => (
           <button
             key={s.key}
             onClick={() => setScope(s.key)}
             className={`rounded px-3 py-1 text-sm ${
-              scope === s.key ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              scope === s.key ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
             }`}
           >
             {s.label}
@@ -291,12 +291,12 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           </button>
         ))}
         {!run?.is_oos_split_date && (
-          <span className="text-xs text-neutral-600">this run has no IS/OOS split date -- scope has no effect</span>
+          <span className="text-xs text-text-muted">this run has no IS/OOS split date -- scope has no effect</span>
         )}
         {hasActiveFilter && (
-          <span className="flex items-center gap-1.5 rounded bg-accent-blue/15 px-2 py-1 text-xs text-accent-blue">
+          <span className="flex items-center gap-1.5 rounded bg-accent/15 px-2 py-1 text-xs text-accent">
             Trade List + Chart filtered by {activeFilterDescription}
-            <button onClick={clearFilters} className="text-accent-blue hover:text-neutral-100">
+            <button onClick={clearFilters} className="text-accent hover:text-text">
               &times;
             </button>
           </span>
@@ -326,19 +326,19 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           accent={overall.profit_factor !== null ? overall.profit_factor >= 1 : undefined}
         />
       </div>
-      <div className="mb-4 text-xs text-neutral-600">
+      <div className="mb-4 text-xs text-text-muted">
         {overall.trades} trades · {result ? result.trading_days : '-'} trading days
       </div>
 
-      <div className="mb-4 flex gap-1 border-b border-neutral-800">
+      <div className="mb-4 flex gap-1 border-b border-border">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
             className={`rounded-t px-3 py-1.5 text-sm ${
               activeTab === t.key
-                ? 'border-b-2 border-accent-blue text-neutral-100'
-                : 'text-neutral-400 hover:text-neutral-200'
+                ? 'border-b-2 border-accent text-text'
+                : 'text-text-muted hover:text-text'
             }`}
           >
             {t.label}
@@ -353,7 +353,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             {run?.result.days_to_fail != null && <KpiTile label="Days to fail" value={String(run.result.days_to_fail)} accent={false} />}
           </div>
           {result && (
-            <div className="text-xs text-neutral-500">
+            <div className="text-xs text-text-muted">
               target hit: {result.target_hit ? 'yes' : 'no'} · consistency:{' '}
               {result.consistency_passed === null ? 'n/a' : result.consistency_passed ? 'passed' : 'failed'} · final balance:{' '}
               {fmtUsd(result.final_balance)}
@@ -378,14 +378,14 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             <Card title="R-multiple distribution">
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={histogram}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
-                  <XAxis dataKey="r" tick={{ fill: '#8b949e', fontSize: 11 }} tickFormatter={(v) => `${v}R`} />
-                  <YAxis tick={{ fill: '#8b949e', fontSize: 11 }} allowDecimals={false} />
-                  <Tooltip contentStyle={{ background: '#161b22', border: '1px solid #30363d' }} labelFormatter={(v) => `${v}R bucket`} />
-                  <ReferenceLine x={0} stroke="#30363d" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
+                  <XAxis dataKey="r" tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} tickFormatter={(v) => `${v}R`} />
+                  <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }} labelFormatter={(v) => `${v}R bucket`} />
+                  <ReferenceLine x={0} stroke="var(--color-border)" />
                   <Bar dataKey="count">
                     {histogram.map((h, i) => (
-                      <Cell key={i} fill={h.r >= 0 ? colors.up : colors.down} />
+                      <Cell key={i} fill={h.r >= 0 ? colors.positive : colors.negative} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -393,39 +393,39 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             </Card>
 
             <Card title="MAE vs MFE (stop-tightness view)">
-              <div className="mb-2 text-xs text-neutral-500">
+              <div className="mb-2 text-xs text-text-muted">
                 {clippedStops.length} trade{clippedStops.length === 1 ? '' : 's'} exited at SL after reaching at least the planned TP
                 distance in favorable excursion (amber) -- the stop likely clipped a winner.
               </div>
               <ResponsiveContainer width="100%" height={180}>
                 <ScatterChart>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
                   <XAxis
                     type="number"
                     dataKey="mae_points"
                     name="MAE"
-                    tick={{ fill: '#8b949e', fontSize: 11 }}
-                    label={{ value: 'MAE (pts)', position: 'insideBottom', offset: -5, fill: '#8b949e', fontSize: 11 }}
+                    tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+                    label={{ value: 'MAE (pts)', position: 'insideBottom', offset: -5, fill: 'var(--color-text-muted)', fontSize: 11 }}
                   />
                   <YAxis
                     type="number"
                     dataKey="mfe_points"
                     name="MFE"
-                    tick={{ fill: '#8b949e', fontSize: 11 }}
-                    label={{ value: 'MFE (pts)', angle: -90, position: 'insideLeft', fill: '#8b949e', fontSize: 11 }}
+                    tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+                    label={{ value: 'MFE (pts)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-muted)', fontSize: 11 }}
                   />
                   <ZAxis range={[24, 24]} />
                   <Tooltip
                     cursor={{ strokeDasharray: '3 3' }}
-                    contentStyle={{ background: '#161b22', border: '1px solid #30363d' }}
+                    contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
                     formatter={(v, name) => [Number(v).toFixed(2), String(name)]}
                   />
-                  <Scatter data={wins} fill={colors.up} fillOpacity={0.6} />
-                  <Scatter data={losses} fill={colors.down} fillOpacity={0.6} />
-                  <Scatter data={clippedStops} fill="#d29922" fillOpacity={0.9} />
+                  <Scatter data={wins} fill={colors.positive} fillOpacity={0.6} />
+                  <Scatter data={losses} fill={colors.negative} fillOpacity={0.6} />
+                  <Scatter data={clippedStops} fill="var(--color-warning)" fillOpacity={0.9} />
                 </ScatterChart>
               </ResponsiveContainer>
-              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-neutral-800 pt-3 sm:grid-cols-4">
+              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border pt-3 sm:grid-cols-4">
                 <KpiTile label="Losses" value={String(regime.losses)} />
                 <KpiTile label="Clipped stops" value={String(regime.clippedStops)} accent={regime.clippedStops === 0} />
                 <KpiTile
@@ -440,25 +440,25 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card title="Net PnL by hour of day (America/New_York)">
-              <BucketBarChart data={hourBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('entryHourNy', Number(k))} winColor={colors.up} lossColor={colors.down} />
+              <BucketBarChart data={hourBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('entryHourNy', Number(k))} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
             <Card title="Net PnL by weekday">
-              <BucketBarChart data={weekdayBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('weekday', k)} winColor={colors.up} lossColor={colors.down} />
+              <BucketBarChart data={weekdayBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('weekday', k)} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card title="Net PnL by hold time (bars_held)">
-              <BucketBarChart data={holdTimeBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('holdTimeBucket', k)} winColor={colors.up} lossColor={colors.down} />
+              <BucketBarChart data={holdTimeBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('holdTimeBucket', k)} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
             <Card title="Win/loss streak distribution">
-              <StreakChart streaks={streaks} onSelect={(type, length) => crossFilter('streakSelector', { type, length })} winColor={colors.up} lossColor={colors.down} />
-              <div className="mt-2 flex items-center gap-4 text-[11px] text-neutral-500">
+              <StreakChart streaks={streaks} onSelect={(type, length) => crossFilter('streakSelector', { type, length })} winColor={colors.positive} lossColor={colors.negative} />
+              <div className="mt-2 flex items-center gap-4 text-[11px] text-text-muted">
                 <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.up }} /> Win streaks
+                  <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.positive }} /> Win streaks
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.down }} /> Loss streaks
+                  <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.negative }} /> Loss streaks
                 </span>
                 <span className="ml-auto">
                   Longest win {streaks.longestWin} &middot; longest loss {streaks.longestLoss}
@@ -474,23 +474,23 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           <ScoreCard score={score} />
           <Card>
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-medium text-neutral-300">AI insight (optional)</div>
+              <div className="text-sm font-medium text-text">AI insight (optional)</div>
               <button
                 onClick={() => runId && summarizeMutation.mutate({ runId, scope })}
                 disabled={!aiStatusQuery.data?.available || summarizeMutation.isPending}
-                className="rounded bg-accent-blue px-3 py-1 text-xs text-white disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-500"
+                className="rounded bg-accent px-3 py-1 text-xs text-white disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-muted"
               >
                 {summarizeMutation.isPending ? 'Summarizing…' : 'Summarize this run'}
               </button>
             </div>
             {!aiStatusQuery.data?.available && (
-              <p className="text-xs text-neutral-600">
+              <p className="text-xs text-text-muted">
                 Not configured -- set ANTHROPIC_API_KEY on the backend to enable this. Sends only the aggregated stats shown on this page
                 (never raw trades or bars) to Claude for a short plain-English read.
               </p>
             )}
-            {summarizeMutation.isError && <p className="text-xs text-accent-red">{(summarizeMutation.error as Error).message}</p>}
-            {summarizeMutation.data && <p className="whitespace-pre-line text-sm text-neutral-300">{summarizeMutation.data.summary}</p>}
+            {summarizeMutation.isError && <p className="text-xs text-negative">{(summarizeMutation.error as Error).message}</p>}
+            {summarizeMutation.data && <p className="whitespace-pre-line text-sm text-text">{summarizeMutation.data.summary}</p>}
           </Card>
         </div>
       )}
