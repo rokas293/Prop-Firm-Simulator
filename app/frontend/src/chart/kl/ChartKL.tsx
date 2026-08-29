@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { dispose, init, type Chart, type KLineData, type OverlayCreate } from 'klinecharts'
 import { api } from '../../api/client'
 import { findInstrument, pricePrecisionFromTick, tfToPeriod, tfToSeconds } from './instruments'
@@ -8,8 +8,10 @@ import {
   ZONE_GROUP,
   buildEntryExitOverlays,
   buildSelectedTradeOverlays,
+  buildTradeBracketOverlays,
   ensureTradeZoneOverlayRegistered,
 } from './tradeOverlays'
+import { findBracketAt, formatBracketTooltip, type BracketDensity } from '../tradeBracket'
 import {
   DRAWING_GROUP_ID,
   ensureDrawingOverlaysRegistered,
@@ -33,13 +35,14 @@ import {
   buildFairValueOverlay,
   buildSessionBandOverlay,
   ensureSessionBandOverlayRegistered,
+  type SessionBand,
 } from './sessionOverlay'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
-import { useThemeStore } from '../../state/themeStore'
+import { useThemeStore, type ThemeColors } from '../../state/themeStore'
 import type { IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
-import type { SessionBand } from '../SessionBandsPrimitive'
-import { filterBarsForReplay, filterTradesForReplay } from '../replay'
+import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
+import LoadingBar from '../../components/LoadingBar'
 
 interface IndicatorData {
   vwap: IndicatorPoint[]
@@ -73,6 +76,14 @@ interface ChartKLProps {
   indicators: IndicatorData
   sessionBands: SessionBand[]
   prefs: IndicatorPrefs
+  // All-trades bracket density (PART_A_REVISED_klinecharts.md parity audit
+  // -- ported from PriceChart.tsx's TradeBracketPrimitive/Brackets toolbar,
+  // same store, same three modes). Optional/defaulted since ChartPanel's
+  // secondary split-view chart doesn't show trade brackets at all.
+  bracketDensity?: BracketDensity
+  // Same LoadingBar contract as PriceChart.tsx's own `loading` prop --
+  // ChartPanel passes its `isFetching` flag straight through.
+  loading?: boolean
   // Replay cursor (PART_A_REVISED_klinecharts.md Phase A4, VIZ_SPEC §0: no
   // look-ahead). null = normal mode, everything visible. When set, bars
   // and trade overlays are clipped to time <= cursorTime -- same contract
@@ -91,6 +102,39 @@ interface ChartKLProps {
   // than index 50 on a 15min chart), so this resolves the indices to this
   // chart's own loaded bar timestamps first and reports THOSE.
   onVisibleRangeChange?: (range: { from: number; to: number } | null) => void
+}
+
+// PriceChart.tsx's theme-changed effect recolors the candle series, the
+// volume series, brackets, and the span on every theme change (POLISH_
+// ROADMAP Phase P6) -- klinecharts has no per-series color option (unlike
+// Lightweight Charts' series.applyOptions), only this chart-wide
+// setStyles(), so both the candle body/wick/border AND VOL's own up/down
+// bars are set together here. compareRule: 'current_open' makes a candle's
+// own color depend on ITS close vs ITS open (bullish/bearish within the
+// bar) -- the same convention Lightweight Charts' candlestick series uses
+// -- rather than klinecharts' other option of comparing to the previous
+// bar's close, which would visibly disagree with every other chart in the
+// app on quiet, small-range bars.
+function themeStyles(colors: ThemeColors) {
+  return {
+    candle: {
+      bar: {
+        compareRule: 'current_open' as const,
+        upColor: colors.up,
+        downColor: colors.down,
+        noChangeColor: colors.up,
+        upBorderColor: colors.up,
+        downBorderColor: colors.down,
+        noChangeBorderColor: colors.up,
+        upWickColor: colors.up,
+        downWickColor: colors.down,
+        noChangeWickColor: colors.up,
+      },
+    },
+    indicator: {
+      bars: [{ upColor: colors.up, downColor: colors.down, noChangeColor: colors.up }],
+    },
+  }
 }
 
 function toKLineData(bar: Bar): KLineData {
@@ -143,6 +187,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     indicators,
     sessionBands,
     prefs,
+    bracketDensity = 'auto',
+    loading = false,
     cursorTime = null,
     onDrawingsChange,
     onVisibleRangeChange,
@@ -150,6 +196,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   ref,
 ) {
   const colors = useThemeStore((s) => s.colors)
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
@@ -195,6 +242,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   sessionBandsRef.current = sessionBands
   const prefsRef = useRef(prefs)
   prefsRef.current = prefs
+  const bracketDensityRef = useRef(bracketDensity)
+  bracketDensityRef.current = bracketDensity
 
   const rebuildOverlaysRef = useRef<() => void>(() => {})
   rebuildOverlaysRef.current = () => {
@@ -220,7 +269,33 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         colorsRef.current,
       )
       const selected = buildSelectedTradeOverlays(selectedView, loadedBarsRef.current[0]?.time ?? null, colorsRef.current)
-      if (entryExit.length > 0 || selected.length > 0) chart.createOverlay([...entryExit, ...selected])
+      // Per-trade on-screen width, for the density collapse threshold
+      // (tradeBracket.ts's shouldSimplify) -- resolved here, not inside the
+      // framework-free tradeOverlays.ts, since only the mounted chart
+      // instance can convert a timestamp to a pixel coordinate. A trade
+      // whose span has scrolled off either edge of the pane comes back
+      // undefined from convertToPixel; treated as "can't measure it", so
+      // it's skipped rather than guessed at (matches TradeBracketPrimitive
+      // skipping items whose coordinates it can't resolve either).
+      const widthPxFor = (view: ReplayTradeView) => {
+        const bounds = { from: view.trade.entry_time, to: view.openSpanEnd }
+        const [p1, p2] = chart.convertToPixel(
+          [{ timestamp: bounds.from * 1000 }, { timestamp: bounds.to * 1000 }],
+          { paneId: 'candle_pane' },
+        ) as Array<{ x?: number }>
+        if (p1?.x === undefined || p2?.x === undefined) return null
+        return Math.abs(p2.x - p1.x)
+      }
+      const brackets = buildTradeBracketOverlays(
+        views,
+        selectedTradeRef.current?.trade_id ?? null,
+        bracketDensityRef.current,
+        widthPxFor,
+        colorsRef.current,
+      )
+      if (entryExit.length > 0 || selected.length > 0 || brackets.length > 0) {
+        chart.createOverlay([...entryExit, ...selected, ...brackets])
+      }
     })
   }
 
@@ -365,6 +440,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     const chart = init(containerRef.current, { timezone: 'America/New_York' })
     if (!chart) return
     chartRef.current = chart
+    chart.setStyles(themeStyles(colorsRef.current))
     // Plain klinecharts built-in (Phase A3) -- just visualizes each bar's
     // own volume field, no derived calculation, so no VIZ_SPEC risk. LWC
     // shows volume unconditionally (no toggle); matched here the same way.
@@ -441,10 +517,53 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       const toBar = dataList[clamp(range.to)]
       onChange({ from: fromBar.timestamp / 1000, to: toBar.timestamp / 1000 })
     }
+    // Bracket widths are pixel-based (see widthPxFor above), so every pan/
+    // zoom can flip a trade across the density threshold -- rebuild
+    // whenever the visible range moves, not just when trades/colors/
+    // density change.
+    const handleVisibleRangeChangeForBrackets = () => rebuildOverlaysRef.current()
     chart.subscribeAction('onVisibleRangeChange', handleVisibleRangeChange)
+    chart.subscribeAction('onVisibleRangeChange', handleVisibleRangeChangeForBrackets)
+
+    // Bracket hover tooltip (PriceChart.tsx's bracketTooltipRef parity) --
+    // onCrosshairChange gives a pixel position + timestamp directly;
+    // convertFromPixel resolves the price at that same pixel so
+    // findBracketAt (chart/tradeBracket.ts, framework-free) can hit-test
+    // against the same bounds buildTradeBracketOverlays just drew.
+    const handleCrosshairChange = (data?: unknown) => {
+      const crosshair = data as { x?: number; y?: number; paneId?: string } | undefined
+      if (!crosshair || crosshair.x === undefined || crosshair.y === undefined) {
+        setTooltip(null)
+        return
+      }
+      if (crosshair.paneId && crosshair.paneId !== 'candle_pane') {
+        setTooltip(null)
+        return
+      }
+      // The action payload's own `timestamp` field is unreliable (observed
+      // live: absent from the emitted Crosshair object even though the
+      // public type declares it) -- convertFromPixel resolves timestamp
+      // AND price together from the same x/y, so it's used for both here
+      // instead of trusting the action data's timestamp.
+      const [point] = chart.convertFromPixel([{ x: crosshair.x, y: crosshair.y }], { paneId: 'candle_pane' }) as Array<{
+        timestamp?: number
+        value?: number
+      }>
+      if (point?.value === undefined || point?.timestamp === undefined) {
+        setTooltip(null)
+        return
+      }
+      const cursor = cursorTimeRef.current
+      const views = filterTradesForReplay(tradesRef.current, cursor)
+      const trade = findBracketAt(views, point.timestamp / 1000, point.value)
+      setTooltip(trade ? { x: crosshair.x, y: crosshair.y, text: formatBracketTooltip(trade) } : null)
+    }
+    chart.subscribeAction('onCrosshairChange', handleCrosshairChange)
 
     return () => {
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChange)
+      chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChangeForBrackets)
+      chart.unsubscribeAction('onCrosshairChange', handleCrosshairChange)
       dispose(chart)
       chartRef.current = null
       loadedBarsRef.current = []
@@ -474,12 +593,21 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     chart.resetData()
   }, [instrument, timeframe, from, to])
 
-  // Trades/selection/theme changed but the window didn't (e.g. picking a
-  // different already-visible trade, or a theme switch) -- no refetch
-  // needed, just redraw the overlays against the bars already loaded.
+  // Trades/selection/theme/density changed but the window didn't (e.g.
+  // picking a different already-visible trade, a theme switch, or toggling
+  // the Brackets density button) -- no refetch needed, just redraw the
+  // overlays against the bars already loaded.
   useEffect(() => {
     rebuildOverlaysRef.current()
-  }, [trades, selectedTrade, colors])
+  }, [trades, selectedTrade, colors, bracketDensity])
+
+  // Theme switch (POLISH_ROADMAP Phase P6) -- recolor the candles/volume
+  // themselves too, not just the trade overlays above. Safe to call before
+  // data loads (setStyles doesn't touch data), unlike the withReadyChart-
+  // guarded calls elsewhere in this file.
+  useEffect(() => {
+    chartRef.current?.setStyles(themeStyles(colors))
+  }, [colors])
 
   // Indicator data/toggle changed but the window didn't -- redraw against
   // the bars already loaded, same as the trades effect above.
@@ -563,7 +691,20 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     [],
   )
 
-  return <div ref={containerRef} className="h-full w-full" />
+  return (
+    <div className="relative h-full w-full">
+      <LoadingBar active={loading} />
+      <div ref={containerRef} className="h-full w-full" />
+      {tooltip && (
+        <div
+          className="pointer-events-none absolute z-20 whitespace-pre rounded border border-neutral-700 bg-neutral-900/95 px-2 py-1 text-xs text-neutral-200 shadow-lg"
+          style={{ left: Math.min(tooltip.x + 12, (containerRef.current?.clientWidth ?? 0) - 180), top: Math.max(tooltip.y - 12, 0) }}
+        >
+          {tooltip.text}
+        </div>
+      )}
+    </div>
+  )
 })
 
 export default ChartKL

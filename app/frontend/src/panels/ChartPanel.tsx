@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import PriceChart, { type PriceChartHandle } from '../chart/PriceChart'
 import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
-import type { SessionBand } from '../chart/SessionBandsPrimitive'
+import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { equityAtCursor, runningTotals } from '../chart/replay'
 import { withMargin } from '../chart/windowMargin'
 import IndicatorTogglePanel from './IndicatorTogglePanel'
@@ -14,7 +13,6 @@ import { filtersToParams, useTradeStore } from '../state/tradeStore'
 import { useIndicatorStore, type IndicatorPrefs } from '../state/indicatorStore'
 import { useChartViewStore } from '../state/chartViewStore'
 import { useChartDefaultsStore } from '../state/chartDefaultsStore'
-import { useChartEngineStore } from '../state/chartEngineStore'
 import { applyCompassFilters } from '../compass/breakdowns'
 import { isShortcut } from '../keyboard/shortcuts'
 import EmptyState from '../components/EmptyState'
@@ -80,19 +78,17 @@ export default function ChartPanel() {
   // see tradeStore.ts's TradeFilters comment (POLISH_ROADMAP Phase P5).
   const trades = useMemo(() => applyCompassFilters(rawTrades ?? [], filters), [rawTrades, filters])
 
-  const chartRef = useRef<PriceChartHandle>(null)
   const klChartRef = useRef<ChartKLHandle>(null)
 
   // Split view: a second, independently-timeframed chart of the same
   // instrument (POLISH_ROADMAP Phase P2), synced to the primary's visible
-  // range + crosshair. `syncingRef` is a plain re-entrancy guard owned
-  // here (not inside PriceChart): since ChartPanel drives both chart refs
-  // directly and synchronously, it can guarantee a sibling's mirrored
-  // change never bounces back, without guessing at Lightweight Charts'
-  // internal event-dispatch timing (an earlier attempt at reactive
-  // pan-driven fetching broke exactly on that uncertainty -- this sync is
-  // deliberately just direct imperative calls between two known chart
-  // instances, not a trigger for new data fetches).
+  // range. `klSyncingRef` is a plain re-entrancy guard owned here: since
+  // ChartPanel drives both chart refs directly and synchronously, it can
+  // guarantee a sibling's mirrored change never bounces back, without
+  // guessing at klinecharts' internal event-dispatch timing (an earlier
+  // attempt at reactive pan-driven fetching broke exactly on that
+  // uncertainty -- this sync is deliberately just direct imperative calls
+  // between two known chart instances, not a trigger for new data fetches).
   const [splitView, setSplitView] = useState(false)
   const [secondaryTimeframe, setSecondaryTimeframe] = useState<Timeframe>('15min')
   // Lifted out of ChartKL (PART_A_REVISED_klinecharts.md Phase A2) so
@@ -100,13 +96,6 @@ export default function ChartPanel() {
   // polling the chart instance -- ChartKL calls back via onDrawingsChange
   // whenever the set actually changes (placed, dragged, removed, restored).
   const [klDrawings, setKlDrawings] = useState<PersistedOverlay[]>([])
-  const secondaryChartRef = useRef<PriceChartHandle>(null)
-  const syncingRef = useRef(false)
-  // Same split-view sync, KL side (PART_A_REVISED_klinecharts.md Phase
-  // A5) -- a separate ref/pair of handlers rather than reusing the LWC
-  // ones above since only one engine's pair is ever actually wired at a
-  // time (splitView/secondaryTimeframe state is shared, the sync plumbing
-  // isn't), keeping each engine's imperative calls unambiguous.
   const klSecondaryChartRef = useRef<ChartKLHandle>(null)
   const klSyncingRef = useRef(false)
 
@@ -119,16 +108,6 @@ export default function ChartPanel() {
   // store.
   const bracketDensity = useChartDefaultsStore((s) => s.bracketDensity)
   const setBracketDensity = useChartDefaultsStore((s) => s.setBracketDensity)
-
-  // KLineCharts engine feature flag (PART_A_REVISED_klinecharts.md Phase
-  // A0'). Every control below this point that isn't yet wired up for the
-  // KL engine (trade fitting, split view, brackets, indicators, drawings,
-  // replay -- later phases) is hidden rather than left dead when
-  // engine === 'kl', so there's never a button on screen that visibly does
-  // nothing.
-  const engine = useChartEngineStore((s) => s.engine)
-  const setEngine = useChartEngineStore((s) => s.setEngine)
-  const lwcEngine = engine === 'lwc'
 
   // Reset to a clean state whenever a different run is opened.
   useEffect(() => {
@@ -232,7 +211,11 @@ export default function ChartPanel() {
     barsWindow?.to ?? null,
   )
 
-  const { data: secondaryBars, isFetching: secondaryBarsFetching } = useBars(
+  // KL's own DataLoader fetches the secondary chart's bars itself (see
+  // ChartKL.tsx) -- this query's `data` is unused now that PriceChart is
+  // gone; kept only for `isFetching`, which feeds the secondary chart's
+  // loading indicator with the same timing signal.
+  const { isFetching: secondaryBarsFetching } = useBars(
     splitView ? (run?.instrument ?? null) : null,
     secondaryTimeframe,
     barsWindow?.from ?? null,
@@ -335,7 +318,6 @@ export default function ChartPanel() {
     // duration for longer trades -- enough to see the surrounding
     // structure by default instead of having to zoom out by hand.
     const pad = Math.max(MIN_FIT_PAD_SECONDS, (selectedTrade.exit_time - selectedTrade.entry_time) * 1.5)
-    chartRef.current?.fitRange(selectedTrade.entry_time - pad, selectedTrade.exit_time + pad)
     klChartRef.current?.fitRange(selectedTrade.entry_time - pad, selectedTrade.exit_time + pad)
   }
 
@@ -351,18 +333,16 @@ export default function ChartPanel() {
   }
 
   // Once new bars land for the active view, fit the chart to them. `bars`
-  // is lightweight-charts' own fetch, but both engines are handed the same
-  // computed window (see barsWindow below), so it's a reasonable proxy for
-  // "the target window is now ready" for KL too -- KL's own fitRange
-  // no-ops harmlessly via its ready-guard if its independent fetch hasn't
-  // resolved yet.
+  // and KL's own independent fetch are handed the same computed window
+  // (see barsWindow below), so this is a reasonable proxy for "the target
+  // window is now ready" -- KL's own fitRange no-ops harmlessly via its
+  // ready-guard if its fetch hasn't resolved yet.
   useEffect(() => {
     if (!bars || bars.length === 0) return
     if (viewMode === 'trade') {
       fitTrade()
-    } else {
-      chartRef.current?.fitContent()
-      if (targetWindow) klChartRef.current?.fitRange(targetWindow.from, targetWindow.to)
+    } else if (targetWindow) {
+      klChartRef.current?.fitRange(targetWindow.from, targetWindow.to)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, viewMode])
@@ -397,13 +377,13 @@ export default function ChartPanel() {
           e.preventDefault()
           fitTrade()
         }
-      } else if (!lwcEngine && e.key === 'Escape') {
+      } else if (e.key === 'Escape') {
         // Cancel a still-in-progress drawing (PART_A_REVISED_klinecharts.md
         // Phase A2) -- shares the Escape key with the global
         // 'closeOverlay' shortcut (command palette/settings), which is
         // harmless: cancelActiveDrawing no-ops when nothing is being drawn.
         klChartRef.current?.cancelActiveDrawing()
-      } else if (!lwcEngine && !e.ctrlKey && !e.metaKey && DRAWING_SHORTCUTS[e.key.toLowerCase()]) {
+      } else if (!e.ctrlKey && !e.metaKey && DRAWING_SHORTCUTS[e.key.toLowerCase()]) {
         e.preventDefault()
         klChartRef.current?.startDrawing(DRAWING_SHORTCUTS[e.key.toLowerCase()])
       } else {
@@ -417,47 +397,12 @@ export default function ChartPanel() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trades, tradeIdx, selectedTrade, lwcEngine])
+  }, [trades, tradeIdx, selectedTrade])
 
-  // Sync handlers: direct, synchronous imperative calls between the two
-  // known chart instances -- see the syncingRef declaration's comment for
-  // why this is safe without needing to guess at event-timing.
-  const withSyncGuard = (fn: () => void) => {
-    if (syncingRef.current) return
-    syncingRef.current = true
-    fn()
-    queueMicrotask(() => {
-      syncingRef.current = false
-    })
-  }
-
-  const handlePrimaryVisibleRangeChange = (range: { from: number; to: number } | null) => {
-    if (!splitView || !range) return
-    withSyncGuard(() => secondaryChartRef.current?.setVisibleRange(range.from, range.to))
-  }
-  const handleSecondaryVisibleRangeChange = (range: { from: number; to: number } | null) => {
-    if (!splitView || !range) return
-    withSyncGuard(() => chartRef.current?.setVisibleRange(range.from, range.to))
-  }
-  const handlePrimaryCrosshairMove = (time: number | null) => {
-    if (!splitView) return
-    withSyncGuard(() => {
-      if (time !== null) secondaryChartRef.current?.setCrosshairAt(time)
-      else secondaryChartRef.current?.clearCrosshair()
-    })
-  }
-  const handleSecondaryCrosshairMove = (time: number | null) => {
-    if (!splitView) return
-    withSyncGuard(() => {
-      if (time !== null) chartRef.current?.setCrosshairAt(time)
-      else chartRef.current?.clearCrosshair()
-    })
-  }
-
-  // KL side of the same split-view sync (Phase A5) -- fitRange doubles as
-  // the "set visible range" lever here (see ChartKLHandle's own comment:
-  // klinecharts has no direct setVisibleRange-by-time). No crosshair sync
-  // -- see ChartKL.tsx's header comment for why that's not implemented.
+  // Split-view sync (Phase A5) -- fitRange doubles as the "set visible
+  // range" lever here (see ChartKLHandle's own comment: klinecharts has no
+  // direct setVisibleRange-by-time). No crosshair sync -- see ChartKL.tsx's
+  // header comment for why that's not implemented.
   const withKLSyncGuard = (fn: () => void) => {
     if (klSyncingRef.current) return
     klSyncingRef.current = true
@@ -567,51 +512,26 @@ export default function ChartPanel() {
           </div>
         )}
 
-        {lwcEngine && (
-          <>
-            <div className="mx-1 h-4 w-px bg-neutral-800" />
-
-            <span className="text-neutral-500">Brackets</span>
-            <div className="flex gap-1">
-              {(['auto', 'full', 'markers'] as BracketDensity[]).map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setBracketDensity(d)}
-                  title={
-                    d === 'auto'
-                      ? 'Simplify narrow brackets to markers when zoomed out'
-                      : d === 'full'
-                        ? 'Always show full brackets'
-                        : 'Always show markers only'
-                  }
-                  className={`rounded px-2 py-1 capitalize ${
-                    bracketDensity === d ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-                  }`}
-                >
-                  {d === 'markers' ? 'Off' : d}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
         <div className="mx-1 h-4 w-px bg-neutral-800" />
 
-        {/* REDESIGN_APPROACH.md / PART_A_REVISED_klinecharts.md feature flag
-            -- dropped once the KL engine reaches parity and
-            lightweight-charts retires. */}
-        <span className="text-neutral-500">Engine</span>
+        <span className="text-neutral-500">Brackets</span>
         <div className="flex gap-1">
-          {(['lwc', 'kl'] as const).map((e) => (
+          {(['auto', 'full', 'markers'] as BracketDensity[]).map((d) => (
             <button
-              key={e}
-              onClick={() => setEngine(e)}
-              title={e === 'lwc' ? 'lightweight-charts (current)' : 'KLineCharts (in migration)'}
-              className={`rounded px-2 py-1 uppercase ${
-                engine === e ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              key={d}
+              onClick={() => setBracketDensity(d)}
+              title={
+                d === 'auto'
+                  ? 'Simplify narrow brackets to markers when zoomed out'
+                  : d === 'full'
+                    ? 'Always show full brackets'
+                    : 'Always show markers only'
+              }
+              className={`rounded px-2 py-1 capitalize ${
+                bracketDensity === d ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
               }`}
             >
-              {e}
+              {d === 'markers' ? 'Off' : d}
             </button>
           ))}
         </div>
@@ -644,87 +564,50 @@ export default function ChartPanel() {
         equity={equityAtCursorPoint}
       />
 
-      {lwcEngine ? (
+      <div className="flex min-h-0 flex-1">
+        <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} />
         <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
           <div className={splitView ? 'min-h-0 flex-1 border-b border-neutral-800' : 'h-full'}>
-            <PriceChart
-              ref={chartRef}
+            <ChartKL
+              ref={klChartRef}
               instrument={run?.instrument ?? null}
-              bars={bars ?? []}
+              timeframe={timeframe}
+              from={barsWindow?.from ?? null}
+              to={barsWindow?.to ?? null}
               trades={visibleTrades}
               selectedTrade={selectedTrade}
-              sessionBands={sessionBands}
               indicators={indicators}
+              sessionBands={sessionBands}
               prefs={indicatorPrefs}
               bracketDensity={bracketDensity}
               loading={barsFetching}
               cursorTime={cursorTime}
-              onVisibleRangeChange={splitView ? handlePrimaryVisibleRangeChange : undefined}
-              onCrosshairMove={splitView ? handlePrimaryCrosshairMove : undefined}
+              onDrawingsChange={setKlDrawings}
+              onVisibleRangeChange={splitView ? handlePrimaryKLVisibleRangeChange : undefined}
             />
           </div>
           {splitView && (
             <div className="min-h-0 flex-1">
-              <PriceChart
-                ref={secondaryChartRef}
-                instrument={run?.instrument ?? null}
-                bars={secondaryBars ?? []}
-                trades={visibleTrades}
-                selectedTrade={selectedTrade}
-                sessionBands={sessionBands}
-                indicators={EMPTY_INDICATORS}
-                prefs={INDICATORS_OFF}
-                bracketDensity={bracketDensity}
-                loading={secondaryBarsFetching}
-                cursorTime={cursorTime}
-                onVisibleRangeChange={handleSecondaryVisibleRangeChange}
-                onCrosshairMove={handleSecondaryCrosshairMove}
-              />
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} />
-          <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
-            <div className={splitView ? 'min-h-0 flex-1 border-b border-neutral-800' : 'h-full'}>
               <ChartKL
-                ref={klChartRef}
+                ref={klSecondaryChartRef}
                 instrument={run?.instrument ?? null}
-                timeframe={timeframe}
+                timeframe={secondaryTimeframe}
                 from={barsWindow?.from ?? null}
                 to={barsWindow?.to ?? null}
                 trades={visibleTrades}
                 selectedTrade={selectedTrade}
-                indicators={indicators}
+                indicators={EMPTY_INDICATORS}
                 sessionBands={sessionBands}
-                prefs={indicatorPrefs}
+                prefs={INDICATORS_OFF}
+                bracketDensity={bracketDensity}
+                loading={secondaryBarsFetching}
                 cursorTime={cursorTime}
-                onDrawingsChange={setKlDrawings}
-                onVisibleRangeChange={splitView ? handlePrimaryKLVisibleRangeChange : undefined}
+                onVisibleRangeChange={handleSecondaryKLVisibleRangeChange}
               />
             </div>
-            {splitView && (
-              <div className="min-h-0 flex-1">
-                <ChartKL
-                  ref={klSecondaryChartRef}
-                  instrument={run?.instrument ?? null}
-                  timeframe={secondaryTimeframe}
-                  from={barsWindow?.from ?? null}
-                  to={barsWindow?.to ?? null}
-                  trades={visibleTrades}
-                  selectedTrade={selectedTrade}
-                  indicators={EMPTY_INDICATORS}
-                  sessionBands={sessionBands}
-                  prefs={INDICATORS_OFF}
-                  cursorTime={cursorTime}
-                  onVisibleRangeChange={handleSecondaryKLVisibleRangeChange}
-                />
-              </div>
-            )}
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

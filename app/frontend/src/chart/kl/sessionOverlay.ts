@@ -11,11 +11,22 @@
 // corners (the deferred "true full-height" version noted in
 // tradeOverlays.ts's PnL-zone comment).
 import { registerOverlay, type OverlayCreate } from 'klinecharts'
-import type { SessionBand } from '../SessionBandsPrimitive'
 
 export const KL_SESSION_BAND = 'klSessionBand'
 export const SESSION_BAND_GROUP = 'kl-session-band'
 export const FAIR_VALUE_GROUP = 'kl-fair-value'
+
+// Session shape shared with ChartPanel.tsx, which fetches /api/sessions
+// once and hands the same bands to whichever engine is mounted -- lived on
+// the lightweight-charts-only SessionBandsPrimitive.ts until that file was
+// removed (PART_A_REVISED_klinecharts.md's parity audit), moved here since
+// this is the side that outlives it.
+export interface SessionBand {
+  start: number
+  end: number
+  session: string
+  fairValue: number | null
+}
 
 // Same palette as SessionBandsPrimitive.ts (the lightweight-charts
 // version) -- kept identical so the two engines look like the same

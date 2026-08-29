@@ -11,6 +11,7 @@ import type { ThemeColors } from '../../state/themeStore'
 import { hexToRgba } from '../color'
 import { registerRectOverlay } from './rectOverlay'
 import type { ReplayTradeView } from '../replay'
+import { computeBracketBounds, shouldSimplify, type BracketDensity } from '../tradeBracket'
 
 export const ENTRY_EXIT_GROUP = 'kl-trade-entry-exit'
 export const SL_TP_LINE_GROUP = 'kl-trade-sltp-lines'
@@ -132,22 +133,21 @@ function findBarAtOrBefore<T extends { time: number }>(bars: T[], time: number):
   return result
 }
 
-// SL/TP price lines + the PnL/SL/TP zones, for the SELECTED trade only --
-// exactly PriceChart.tsx's split (its SL/TP price-line effect is keyed on
-// `selectedTrade`, not `trades`). Takes a ReplayTradeView (or null), same
-// as buildEntryExitOverlays -- SL/TP are the PLANNED levels known from the
-// moment of entry, so their lines/corridors render regardless of whether
-// the trade has exited yet (using `openSpanEnd`, which grows with the
-// cursor while still open), but the PnL zone specifically is skipped
-// until showExit is true: its color and far corner depend on exit_price/
-// win-loss, which is future information while the trade is still open
-// (VIZ_SPEC §0: no look-ahead) -- mirrors tradeBracket.ts's own
-// computeBracketBounds, which likewise omits exit_price for outcome
-// 'open'. `priceLine`'s built-in geometry draws from its own anchor point
-// rightward to the pane edge (confirmed from v10.0.3 source), not the
-// full pane width both directions like Lightweight Charts' createPriceLine
-// -- anchoring at `leftEdgeTime` (the earliest loaded bar) makes it span
-// the whole visible chart to match.
+// SL/TP price lines for the SELECTED trade only -- exactly PriceChart.tsx's
+// split (its SL/TP price-line effect is keyed on `selectedTrade`, not
+// `trades`). Takes a ReplayTradeView (or null), same as
+// buildEntryExitOverlays -- SL/TP are the PLANNED levels known from the
+// moment of entry, so their lines render regardless of whether the trade
+// has exited yet (VIZ_SPEC §0: no look-ahead is about the PnL zone's
+// outcome, not these). `priceLine`'s built-in geometry draws from its own
+// anchor point rightward to the pane edge (confirmed from v10.0.3 source),
+// not the full pane width both directions like Lightweight Charts'
+// createPriceLine -- anchoring at `leftEdgeTime` (the earliest loaded bar)
+// makes it span the whole visible chart to match. The PnL/SL/TP shaded
+// zones themselves live in buildTradeBracketOverlays below, which covers
+// every trade (selected included, via a thicker border) -- exactly
+// PriceChart.tsx's own split between its selected-trade price-line effect
+// and its all-trades TradeBracketPrimitive.
 export function buildSelectedTradeOverlays(
   view: ReplayTradeView | null,
   leftEdgeTime: number | null,
@@ -156,8 +156,6 @@ export function buildSelectedTradeOverlays(
   if (!view || leftEdgeTime === null) return []
   const trade = view.trade
   const overlays: OverlayCreate[] = []
-  const openEnd = view.openSpanEnd
-  const win = trade.pnl_usd > 0
 
   if (trade.sl_price !== null) {
     overlays.push({
@@ -180,55 +178,82 @@ export function buildSelectedTradeOverlays(
     })
   }
 
-  // Open-position / PnL zone: entry<->exit in both time and price, shaded
-  // by outcome. This doubles as the "open-position shading" the phase
-  // brief asks for -- its time extent IS the span the position was live --
-  // rather than a separate full-pane-height band like PriceChart.tsx's
-  // TimeSpanPrimitive, which needs raw pixel geometry KLineCharts' built-in
-  // price/time-anchored overlays don't expose. A true full-height version
-  // would need its own custom overlay reading pane `bounding` -- noted as
-  // a possible follow-up, not required for this phase's stated scope.
-  // Only once the outcome is known (see this function's header comment).
-  if (view.showExit) {
-    overlays.push({
-      id: `kl-pnl-zone-${trade.trade_id}`,
-      name: TRADE_ZONE_OVERLAY,
-      groupId: ZONE_GROUP,
-      lock: true,
-      points: [
-        { timestamp: toMs(trade.entry_time), value: trade.entry_price },
-        { timestamp: toMs(openEnd), value: trade.exit_price },
-      ],
-      styles: { rect: { style: 'fill', color: hexToRgba(win ? colors.up : colors.down, 0.18) } },
-    })
-  }
+  return overlays
+}
 
-  if (trade.sl_price !== null) {
-    overlays.push({
-      id: `kl-sl-zone-${trade.trade_id}`,
-      name: TRADE_ZONE_OVERLAY,
-      groupId: ZONE_GROUP,
-      lock: true,
-      points: [
-        { timestamp: toMs(trade.entry_time), value: trade.entry_price },
-        { timestamp: toMs(openEnd), value: trade.sl_price },
-      ],
-      styles: { rect: { style: 'fill', color: hexToRgba(colors.down, 0.08) } },
-    })
-  }
-  if (trade.tp_price !== null) {
-    overlays.push({
-      id: `kl-tp-zone-${trade.trade_id}`,
-      name: TRADE_ZONE_OVERLAY,
-      groupId: ZONE_GROUP,
-      lock: true,
-      points: [
-        { timestamp: toMs(trade.entry_time), value: trade.entry_price },
-        { timestamp: toMs(openEnd), value: trade.tp_price },
-      ],
-      styles: { rect: { style: 'fill', color: hexToRgba(colors.up, 0.08) } },
-    })
-  }
+// The KL counterpart to PriceChart.tsx's TradeBracketPrimitive (PART_A_
+// REVISED_klinecharts.md's parity audit) -- one PnL/SL/TP zone box per
+// VISIBLE trade (not just the selected one), collapsing to nothing but its
+// existing entry/exit annotation (buildEntryExitOverlays already draws
+// that, for every trade, unconditionally) when `widthPx` is too narrow to
+// read -- reuses tradeBracket.ts's shouldSimplify exactly as
+// TradeBracketPrimitive does, so the two engines collapse at the same
+// zoom level. `widthPx` is supplied by the caller (ChartKL resolves it via
+// chart.convertToPixel, which this framework-free module can't do itself)
+// -- same "pass in what needs the chart instance, keep the builder pure"
+// pattern as `bars`/`leftEdgeTime` elsewhere in this file. The selected
+// trade still gets a box here (matching TradeBracketPrimitive, which does
+// not skip it either) -- only its border thickens, via `isSelected`, since
+// buildSelectedTradeOverlays above no longer duplicates this zone.
+export function buildTradeBracketOverlays(
+  views: ReplayTradeView[],
+  selectedTradeId: number | null,
+  density: BracketDensity,
+  widthPxFor: (view: ReplayTradeView) => number | null,
+  colors: ThemeColors,
+): OverlayCreate[] {
+  const overlays: OverlayCreate[] = []
+  for (const view of views) {
+    const widthPx = widthPxFor(view)
+    if (widthPx === null || shouldSimplify(widthPx, density)) continue
+    const trade = view.trade
+    const bounds = computeBracketBounds(view)
+    const isSelected = trade.trade_id === selectedTradeId
+    const borderSize = isSelected ? 2 : 1
 
+    if (trade.sl_price !== null) {
+      overlays.push({
+        id: `kl-bracket-sl-${trade.trade_id}`,
+        name: TRADE_ZONE_OVERLAY,
+        groupId: ZONE_GROUP,
+        lock: true,
+        points: [
+          { timestamp: toMs(trade.entry_time), value: trade.entry_price },
+          { timestamp: toMs(bounds.timeTo), value: trade.sl_price },
+        ],
+        styles: { rect: { style: 'fill', color: hexToRgba(colors.down, 0.08) } },
+      })
+    }
+    if (trade.tp_price !== null) {
+      overlays.push({
+        id: `kl-bracket-tp-${trade.trade_id}`,
+        name: TRADE_ZONE_OVERLAY,
+        groupId: ZONE_GROUP,
+        lock: true,
+        points: [
+          { timestamp: toMs(trade.entry_time), value: trade.entry_price },
+          { timestamp: toMs(bounds.timeTo), value: trade.tp_price },
+        ],
+        styles: { rect: { style: 'fill', color: hexToRgba(colors.up, 0.08) } },
+      })
+    }
+
+    if (bounds.outcome === 'open') continue // exit_price/outcome unknown yet -- no look-ahead (VIZ_SPEC §0)
+    const win = bounds.outcome === 'win'
+    const stroke = win ? colors.up : colors.down
+    overlays.push({
+      id: `kl-bracket-pnl-${trade.trade_id}`,
+      name: TRADE_ZONE_OVERLAY,
+      groupId: ZONE_GROUP,
+      lock: true,
+      points: [
+        { timestamp: toMs(trade.entry_time), value: trade.entry_price },
+        { timestamp: toMs(bounds.timeTo), value: trade.exit_price },
+      ],
+      styles: {
+        rect: { style: 'stroke_fill', color: hexToRgba(stroke, 0.18), borderColor: hexToRgba(stroke, 0.9), borderSize },
+      },
+    })
+  }
   return overlays
 }

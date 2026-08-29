@@ -5,6 +5,7 @@ import {
   ZONE_GROUP,
   buildEntryExitOverlays,
   buildSelectedTradeOverlays,
+  buildTradeBracketOverlays,
 } from './tradeOverlays'
 import type { TradeRecord } from '../../api/types'
 import type { ThemeColors } from '../../state/themeStore'
@@ -115,37 +116,74 @@ describe('buildSelectedTradeOverlays', () => {
     expect(buildSelectedTradeOverlays(makeView(), null, colors)).toEqual([])
   })
 
-  it('builds SL/TP price lines anchored at the left edge, plus PnL/SL/TP zones', () => {
+  it('builds SL/TP price lines anchored at the left edge', () => {
     const overlays = buildSelectedTradeOverlays(makeView(), 900, colors)
     const slLine = overlays.find((o) => o.id === 'kl-sl-line-1')!
     const tpLine = overlays.find((o) => o.id === 'kl-tp-line-1')!
     expect(slLine.groupId).toBe(SL_TP_LINE_GROUP)
     expect(slLine.points![0]).toEqual({ timestamp: 900000, value: 95 })
     expect(tpLine.points![0]).toEqual({ timestamp: 900000, value: 110 })
-
-    const zones = overlays.filter((o) => o.groupId === ZONE_GROUP)
-    expect(zones.map((z) => z.id).sort()).toEqual(['kl-pnl-zone-1', 'kl-sl-zone-1', 'kl-tp-zone-1'])
+    // Zones live in buildTradeBracketOverlays now, not here.
+    expect(overlays.some((o) => o.groupId === ZONE_GROUP)).toBe(false)
   })
 
-  it('omits SL/TP lines and zones when the trade has no stop or target', () => {
+  it('omits SL/TP lines when the trade has no stop or target', () => {
     const overlays = buildSelectedTradeOverlays(makeView({ sl_price: null, tp_price: null }), 900, colors)
-    expect(overlays.some((o) => o.id?.includes('sl'))).toBe(false)
-    expect(overlays.some((o) => o.id?.includes('tp'))).toBe(false)
-    expect(overlays.some((o) => o.id === 'kl-pnl-zone-1')).toBe(true)
+    expect(overlays).toHaveLength(0)
+  })
+})
+
+describe('buildTradeBracketOverlays', () => {
+  const wide = () => 100 // well above MIN_BRACKET_WIDTH_PX (28)
+  const narrow = () => 10 // below it
+
+  it('builds a PnL zone plus SL/TP zones for a wide, closed trade', () => {
+    const overlays = buildTradeBracketOverlays([makeView()], null, 'auto', wide, colors)
+    expect(overlays.map((o) => o.id).sort()).toEqual(['kl-bracket-pnl-1', 'kl-bracket-sl-1', 'kl-bracket-tp-1'])
+    expect(overlays.every((o) => o.groupId === ZONE_GROUP)).toBe(true)
+  })
+
+  it('collapses to nothing when narrower than the density threshold', () => {
+    const overlays = buildTradeBracketOverlays([makeView()], null, 'auto', narrow, colors)
+    expect(overlays).toHaveLength(0)
+  })
+
+  it('always collapses under density "markers", even when wide', () => {
+    const overlays = buildTradeBracketOverlays([makeView()], null, 'markers', wide, colors)
+    expect(overlays).toHaveLength(0)
+  })
+
+  it('never collapses under density "full", even when narrow', () => {
+    const overlays = buildTradeBracketOverlays([makeView()], null, 'full', narrow, colors)
+    expect(overlays.length).toBeGreaterThan(0)
+  })
+
+  it('skips a trade entirely when widthPxFor returns null (off-screen)', () => {
+    const overlays = buildTradeBracketOverlays([makeView()], null, 'full', () => null, colors)
+    expect(overlays).toHaveLength(0)
+  })
+
+  it('thickens the border for the selected trade', () => {
+    const pnlSelected = buildTradeBracketOverlays([makeView()], 1, 'full', wide, colors).find(
+      (o) => o.id === 'kl-bracket-pnl-1',
+    )!
+    const pnlUnselected = buildTradeBracketOverlays([makeView()], 2, 'full', wide, colors).find(
+      (o) => o.id === 'kl-bracket-pnl-1',
+    )!
+    expect((pnlSelected.styles as { rect: { borderSize: number } }).rect.borderSize).toBe(2)
+    expect((pnlUnselected.styles as { rect: { borderSize: number } }).rect.borderSize).toBe(1)
   })
 
   // Replay/no-look-ahead (Phase A4): while a trade is still open as of the
-  // cursor, its outcome (exit_price, win/loss color) isn't known yet --
-  // the PnL zone must not render, even though the SL/TP corridors (known
-  // at entry) still do, growing to openSpanEnd (the cursor, not the real
+  // cursor, its outcome (exit_price, win/loss color) isn't known yet -- the
+  // PnL zone must not render, even though the SL/TP corridors (known at
+  // entry) still do, growing to openSpanEnd (the cursor, not the real
   // future exit time).
-  it('skips the PnL zone but still shows SL/TP lines/zones (grown to openSpanEnd) while still open', () => {
+  it('skips the PnL zone but still shows SL/TP zones (grown to openSpanEnd) while still open', () => {
     const view: ReplayTradeView = { trade: makeTrade(), showExit: false, openSpanEnd: 1500 }
-    const overlays = buildSelectedTradeOverlays(view, 900, colors)
-    expect(overlays.some((o) => o.id === 'kl-pnl-zone-1')).toBe(false)
-    expect(overlays.some((o) => o.id === 'kl-sl-line-1')).toBe(true)
-    expect(overlays.some((o) => o.id === 'kl-tp-line-1')).toBe(true)
-    const slZone = overlays.find((o) => o.id === 'kl-sl-zone-1')!
+    const overlays = buildTradeBracketOverlays([view], null, 'full', wide, colors)
+    expect(overlays.some((o) => o.id === 'kl-bracket-pnl-1')).toBe(false)
+    const slZone = overlays.find((o) => o.id === 'kl-bracket-sl-1')!
     expect(slZone.points![1].timestamp).toBe(1500_000) // openSpanEnd, not the real (future) exit_time
   })
 })

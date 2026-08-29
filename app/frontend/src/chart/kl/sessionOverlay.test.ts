@@ -6,8 +6,8 @@ import {
   buildSessionBandOverlay,
   ensureSessionBandOverlayRegistered,
   sessionColor,
+  type SessionBand,
 } from './sessionOverlay'
-import type { SessionBand } from '../SessionBandsPrimitive'
 
 const band: SessionBand = { start: 1000, end: 2000, session: 'asia', fairValue: 14750.25 }
 
