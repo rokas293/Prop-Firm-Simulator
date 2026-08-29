@@ -7,10 +7,10 @@
 // imports) so it's unit-testable without mounting a chart, same pattern as
 // chart/tradeBracket.ts.
 import type { OverlayCreate } from 'klinecharts'
-import type { TradeRecord } from '../../api/types'
 import type { ThemeColors } from '../../state/themeStore'
 import { hexToRgba } from '../color'
 import { registerRectOverlay } from './rectOverlay'
+import type { ReplayTradeView } from '../replay'
 
 export const ENTRY_EXIT_GROUP = 'kl-trade-entry-exit'
 export const SL_TP_LINE_GROUP = 'kl-trade-sltp-lines'
@@ -61,8 +61,14 @@ function entryExitAnnotation(
 
 // Entry/exit markers for every visible trade (PriceChart.tsx's marker
 // effect draws one per trade in `trades`, not just the selected one -- same
-// scope here). `simpleAnnotation`'s fixed geometry (confirmed from source:
-// a dashed stem + downward arrow + text, always extending upward from its
+// scope here). Takes ReplayTradeView[] (chart/replay.ts's existing, tested
+// filterTradesForReplay output), not raw TradeRecord[] -- same "reveal at
+// entry, hide the exit until it's happened" contract PriceChart.tsx's own
+// marker effect already implements for lightweight-charts (VIZ_SPEC §0: no
+// look-ahead). In non-replay mode (cursorTime null) filterTradesForReplay
+// itself returns every trade with showExit:true, so this behaves exactly
+// as before. `simpleAnnotation`'s fixed geometry (confirmed from source: a
+// dashed stem + downward arrow + text, always extending upward from its
 // anchor point) doesn't have a mirrored "point up from below" variant the
 // way Lightweight Charts' arrowUp/belowBar marker does, so long and short
 // entries aren't distinguished by arrow direction here -- only by color
@@ -71,13 +77,13 @@ function entryExitAnnotation(
 // above each relevant bar's high so the arrow reads naturally as pointing
 // down onto the bar regardless of side.
 export function buildEntryExitOverlays(
-  trades: TradeRecord[],
+  views: ReplayTradeView[],
   bars: { time: number; high: number }[],
   selectedTradeId: number | null,
   colors: ThemeColors,
 ): OverlayCreate[] {
   const overlays: OverlayCreate[] = []
-  for (const t of trades) {
+  for (const { trade: t, showExit } of views) {
     const emphasize = t.trade_id === selectedTradeId
     const entryBar = findBarAtOrBefore(bars, t.entry_time)
     const entryAnchor = (entryBar?.high ?? t.entry_price) + anchorPad(entryBar?.high ?? t.entry_price)
@@ -91,7 +97,7 @@ export function buildEntryExitOverlays(
         emphasize,
       ),
     )
-    if (t.exit_time > t.entry_time) {
+    if (showExit && t.exit_time > t.entry_time) {
       const win = t.pnl_usd > 0
       const exitBar = findBarAtOrBefore(bars, t.exit_time)
       const exitAnchor = (exitBar?.high ?? t.exit_price) + anchorPad(exitBar?.high ?? t.exit_price)
@@ -128,19 +134,29 @@ function findBarAtOrBefore<T extends { time: number }>(bars: T[], time: number):
 
 // SL/TP price lines + the PnL/SL/TP zones, for the SELECTED trade only --
 // exactly PriceChart.tsx's split (its SL/TP price-line effect is keyed on
-// `selectedTrade`, not `trades`). `priceLine`'s built-in geometry draws
-// from its own anchor point rightward to the pane edge (confirmed from
-// v10.0.3 source), not the full pane width both directions like Lightweight
-// Charts' createPriceLine -- anchoring at `leftEdgeTime` (the earliest
-// loaded bar) makes it span the whole visible chart to match.
+// `selectedTrade`, not `trades`). Takes a ReplayTradeView (or null), same
+// as buildEntryExitOverlays -- SL/TP are the PLANNED levels known from the
+// moment of entry, so their lines/corridors render regardless of whether
+// the trade has exited yet (using `openSpanEnd`, which grows with the
+// cursor while still open), but the PnL zone specifically is skipped
+// until showExit is true: its color and far corner depend on exit_price/
+// win-loss, which is future information while the trade is still open
+// (VIZ_SPEC §0: no look-ahead) -- mirrors tradeBracket.ts's own
+// computeBracketBounds, which likewise omits exit_price for outcome
+// 'open'. `priceLine`'s built-in geometry draws from its own anchor point
+// rightward to the pane edge (confirmed from v10.0.3 source), not the
+// full pane width both directions like Lightweight Charts' createPriceLine
+// -- anchoring at `leftEdgeTime` (the earliest loaded bar) makes it span
+// the whole visible chart to match.
 export function buildSelectedTradeOverlays(
-  trade: TradeRecord | null,
+  view: ReplayTradeView | null,
   leftEdgeTime: number | null,
   colors: ThemeColors,
 ): OverlayCreate[] {
-  if (!trade || leftEdgeTime === null) return []
+  if (!view || leftEdgeTime === null) return []
+  const trade = view.trade
   const overlays: OverlayCreate[] = []
-  const openEnd = trade.exit_time > trade.entry_time ? trade.exit_time : trade.entry_time
+  const openEnd = view.openSpanEnd
   const win = trade.pnl_usd > 0
 
   if (trade.sl_price !== null) {
@@ -172,17 +188,20 @@ export function buildSelectedTradeOverlays(
   // price/time-anchored overlays don't expose. A true full-height version
   // would need its own custom overlay reading pane `bounding` -- noted as
   // a possible follow-up, not required for this phase's stated scope.
-  overlays.push({
-    id: `kl-pnl-zone-${trade.trade_id}`,
-    name: TRADE_ZONE_OVERLAY,
-    groupId: ZONE_GROUP,
-    lock: true,
-    points: [
-      { timestamp: toMs(trade.entry_time), value: trade.entry_price },
-      { timestamp: toMs(openEnd), value: trade.exit_price },
-    ],
-    styles: { rect: { style: 'fill', color: hexToRgba(win ? colors.up : colors.down, 0.18) } },
-  })
+  // Only once the outcome is known (see this function's header comment).
+  if (view.showExit) {
+    overlays.push({
+      id: `kl-pnl-zone-${trade.trade_id}`,
+      name: TRADE_ZONE_OVERLAY,
+      groupId: ZONE_GROUP,
+      lock: true,
+      points: [
+        { timestamp: toMs(trade.entry_time), value: trade.entry_price },
+        { timestamp: toMs(openEnd), value: trade.exit_price },
+      ],
+      styles: { rect: { style: 'fill', color: hexToRgba(win ? colors.up : colors.down, 0.18) } },
+    })
+  }
 
   if (trade.sl_price !== null) {
     overlays.push({

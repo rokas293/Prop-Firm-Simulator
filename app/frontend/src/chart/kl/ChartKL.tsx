@@ -39,6 +39,7 @@ import { useThemeStore } from '../../state/themeStore'
 import type { IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import type { SessionBand } from '../SessionBandsPrimitive'
+import { filterBarsForReplay, filterTradesForReplay } from '../replay'
 
 interface IndicatorData {
   vwap: IndicatorPoint[]
@@ -72,6 +73,12 @@ interface ChartKLProps {
   indicators: IndicatorData
   sessionBands: SessionBand[]
   prefs: IndicatorPrefs
+  // Replay cursor (PART_A_REVISED_klinecharts.md Phase A4, VIZ_SPEC §0: no
+  // look-ahead). null = normal mode, everything visible. When set, bars
+  // and trade overlays are clipped to time <= cursorTime -- same contract
+  // as PriceChart.tsx's own cursorTime prop, same source value (ChartPanel
+  // computes it once, feeds both engines).
+  cursorTime?: number | null
   // Fires whenever the set of user drawings changes (placed, dragged,
   // removed, or restored on load) so the toolbar's manage dropdown can
   // show an up-to-date list without polling the chart instance itself.
@@ -111,14 +118,27 @@ function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart
 // fetch either (see ChartPanel.tsx's withMargin comment). Matching that
 // exact behavior keeps the two engines comparable.
 const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
-  { instrument, timeframe, from, to, trades, selectedTrade, indicators, sessionBands, prefs, onDrawingsChange },
+  { instrument, timeframe, from, to, trades, selectedTrade, indicators, sessionBands, prefs, cursorTime = null, onDrawingsChange },
   ref,
 ) {
   const colors = useThemeStore((s) => s.colors)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
+  // The full, unclipped bars for the current window -- the ground-truth
+  // cache a cursor-triggered reslice reads from instead of hitting the
+  // backend again (see the DataLoader below). `loadedBarsRef` is what's
+  // actually ON the chart right now (replay-clipped when a cursor is
+  // active) -- everything downstream that positions things relative to
+  // "the currently visible bars" (SL/TP price-line left edge, trade-marker
+  // anchor lookups, the measure tool's bar context) reads this one, which
+  // is deliberately also correct no-look-ahead behavior: none of those
+  // should reach past the cursor either.
+  const fullBarsRef = useRef<Bar[]>([])
+  const lastFetchKeyRef = useRef<string | null>(null)
   const loadedBarsRef = useRef<Bar[]>([])
+  const cursorTimeRef = useRef(cursorTime)
+  cursorTimeRef.current = cursorTime
   // The one overlay currently mid-placement (createOverlay was called but
   // the user hasn't finished clicking all its points yet), so Escape can
   // cancel it -- see cancelActiveDrawing below.
@@ -153,17 +173,23 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       chart.removeOverlay({ groupId: ENTRY_EXIT_GROUP })
       chart.removeOverlay({ groupId: SL_TP_LINE_GROUP })
       chart.removeOverlay({ groupId: ZONE_GROUP })
+      // filterTradesForReplay (chart/replay.ts, already tested, already
+      // used by PriceChart.tsx) both hides a trade that hasn't entered yet
+      // as of the cursor and clips a still-open trade's exit -- in normal
+      // mode (cursorTime null) it's a no-op that returns every trade with
+      // showExit:true, so this is the same code path either way.
+      const cursor = cursorTimeRef.current
+      const views = filterTradesForReplay(tradesRef.current, cursor)
+      const selectedView = selectedTradeRef.current
+        ? (filterTradesForReplay([selectedTradeRef.current], cursor)[0] ?? null)
+        : null
       const entryExit = buildEntryExitOverlays(
-        tradesRef.current,
+        views,
         loadedBarsRef.current,
         selectedTradeRef.current?.trade_id ?? null,
         colorsRef.current,
       )
-      const selected = buildSelectedTradeOverlays(
-        selectedTradeRef.current,
-        loadedBarsRef.current[0]?.time ?? null,
-        colorsRef.current,
-      )
+      const selected = buildSelectedTradeOverlays(selectedView, loadedBarsRef.current[0]?.time ?? null, colorsRef.current)
       if (entryExit.length > 0 || selected.length > 0) chart.createOverlay([...entryExit, ...selected])
     })
   }
@@ -314,6 +340,21 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     // shows volume unconditionally (no toggle); matched here the same way.
     chart.createIndicator('VOL', false)
 
+    // Applies the current replay cursor (if any) to whichever bars are
+    // handed in, feeds the chart, and reruns everything downstream of
+    // "what's visible" -- shared by both the real-fetch path and the
+    // cursor-reslice path below, so they can never drift apart.
+    const respond = (bars: Bar[], callback: (data: KLineData[], more: { forward: boolean; backward: boolean }) => void) => {
+      const visible = filterBarsForReplay(bars, cursorTimeRef.current)
+      loadedBarsRef.current = visible
+      setMeasureBarsContext(visible)
+      callback(visible.map(toKLineData), { forward: false, backward: false })
+      rebuildOverlaysRef.current()
+      restoreDrawingsRef.current()
+      rebuildIndicatorsRef.current()
+      rebuildSessionOverlaysRef.current()
+    }
+
     chart.setDataLoader({
       getBars: ({ type, callback }) => {
         const req = requestRef.current
@@ -321,18 +362,28 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           callback([], { forward: false, backward: false })
           return
         }
+        // A replay cursor tick re-triggers this via resetData() (see the
+        // cursorTime effect below) purely to reslice already-fetched data
+        // -- the window (instrument/tf/from/to) hasn't changed, so re-
+        // hitting the backend on every single replay step (multiple times
+        // a second at high speed) would be both wasteful and pointless.
+        // Only a genuine window change (different key) triggers a real
+        // fetch; anything else replays from the cached full set.
+        const key = `${req.instrument}|${req.timeframe}|${req.from}|${req.to}`
+        if (lastFetchKeyRef.current === key && fullBarsRef.current.length > 0) {
+          respond(fullBarsRef.current, callback)
+          return
+        }
         api
           .getBars({ instrument: req.instrument, tf: req.timeframe, from: req.from, to: req.to, max_points: 5000 })
           .then((bars) => {
-            loadedBarsRef.current = bars
-            setMeasureBarsContext(bars)
-            callback(bars.map(toKLineData), { forward: false, backward: false })
-            rebuildOverlaysRef.current()
-            restoreDrawingsRef.current()
-            rebuildIndicatorsRef.current()
-            rebuildSessionOverlaysRef.current()
+            fullBarsRef.current = bars
+            lastFetchKeyRef.current = key
+            respond(bars, callback)
           })
           .catch(() => {
+            fullBarsRef.current = []
+            lastFetchKeyRef.current = null
             loadedBarsRef.current = []
             callback([], { forward: false, backward: false })
           })
@@ -343,6 +394,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       dispose(chart)
       chartRef.current = null
       loadedBarsRef.current = []
+      fullBarsRef.current = []
+      lastFetchKeyRef.current = null
     }
   }, [])
 
@@ -383,6 +436,17 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   useEffect(() => {
     rebuildSessionOverlaysRef.current()
   }, [sessionBands, prefs])
+
+  // Replay cursor moved (Phase A4): reslice the already-fetched bars
+  // rather than treating it as a fresh window -- resetData() is v10's only
+  // way to change what's on the chart (no direct setDataList), but the
+  // DataLoader's own fetch-key cache (see the mount effect) turns this
+  // into a synchronous local reslice, not a new backend round trip.
+  useEffect(() => {
+    withReadyChart(chartRef.current, fullBarsRef.current.length > 0, (chart) => {
+      chart.resetData()
+    })
+  }, [cursorTime])
 
   useImperativeHandle(
     ref,

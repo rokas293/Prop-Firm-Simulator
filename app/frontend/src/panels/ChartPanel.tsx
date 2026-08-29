@@ -601,22 +601,20 @@ export default function ChartPanel() {
         <IndicatorTogglePanel />
       </div>
 
-      {lwcEngine && (
-        <ReplayControls
-          active={replayActive}
-          onToggleActive={toggleReplay}
-          bars={bars ?? []}
-          cursorIndex={cursorIndex}
-          onCursorIndexChange={setCursorIndex}
-          isPlaying={isPlaying}
-          onTogglePlaying={() => setIsPlaying(!isPlaying)}
-          speed={speed}
-          onSpeedChange={setSpeed}
-          runningPnl={replayTotals.pnlUsd}
-          runningR={replayTotals.r}
-          equity={equityAtCursorPoint}
-        />
-      )}
+      <ReplayControls
+        active={replayActive}
+        onToggleActive={toggleReplay}
+        bars={bars ?? []}
+        cursorIndex={cursorIndex}
+        onCursorIndexChange={setCursorIndex}
+        isPlaying={isPlaying}
+        onTogglePlaying={() => setIsPlaying(!isPlaying)}
+        speed={speed}
+        onSpeedChange={setSpeed}
+        runningPnl={replayTotals.pnlUsd}
+        runningR={replayTotals.r}
+        equity={equityAtCursorPoint}
+      />
 
       {lwcEngine ? (
         <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
@@ -672,6 +670,7 @@ export default function ChartPanel() {
               indicators={indicators}
               sessionBands={sessionBands}
               prefs={indicatorPrefs}
+              cursorTime={cursorTime}
               onDrawingsChange={setKlDrawings}
             />
           </div>
