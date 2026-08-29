@@ -83,6 +83,14 @@ interface ChartKLProps {
   // removed, or restored on load) so the toolbar's manage dropdown can
   // show an up-to-date list without polling the chart instance itself.
   onDrawingsChange?: (overlays: PersistedOverlay[]) => void
+  // Multi-chart sync output (Phase A5), fired on every user pan/zoom --
+  // undefined in single-chart mode. klinecharts' own onVisibleRangeChange
+  // action reports DATA-INDEX bounds (confirmed against the v10.0.3
+  // source), not timestamps -- meaningless to hand to a sibling chart at a
+  // DIFFERENT timeframe (index 50 on a 1min chart is a different moment
+  // than index 50 on a 15min chart), so this resolves the indices to this
+  // chart's own loaded bar timestamps first and reports THOSE.
+  onVisibleRangeChange?: (range: { from: number; to: number } | null) => void
 }
 
 function toKLineData(bar: Bar): KLineData {
@@ -104,12 +112,11 @@ function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart
 }
 
 // The KLineCharts-engine counterpart to PriceChart.tsx (PART_A_REVISED_
-// klinecharts.md Phases A1-A2) -- trade-visual parity (A1) plus a full
-// drawing toolbar on klinecharts' own overlay system (A2), replacing the
-// old hand-built drawing engine entirely. Still mounted behind
-// chartEngineStore's feature flag alongside lightweight-charts (which no
-// longer has drawing tools of its own -- see PriceChart.tsx); indicators
-// and replay remain LWC-only until later phases.
+// klinecharts.md Phases A1-A5) -- trade-visual parity (A1), a full drawing
+// toolbar on klinecharts' own overlay system (A2, replacing the old
+// hand-built drawing engine entirely), backend-sourced indicators/session
+// shading (A3), replay (A4), and multi-chart sync (A5). Still mounted
+// behind chartEngineStore's feature flag alongside lightweight-charts.
 //
 // Deliberately a FIXED window, not real forward/backward pan-triggered
 // pagination: ChartPanel already computes `from`/`to` (trade- or
@@ -117,8 +124,29 @@ function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart
 // charts engine, and lightweight-charts itself doesn't do infinite pan-
 // fetch either (see ChartPanel.tsx's withMargin comment). Matching that
 // exact behavior keeps the two engines comparable.
+//
+// Crosshair sync (Phase A5) is NOT implemented, unlike Lightweight
+// Charts' setCrosshairPosition: klinecharts' internal StoreImp does have a
+// setCrosshair method (confirmed from source), but it is not part of the
+// public Chart/Store interface init() returns (absent from the published
+// index.d.ts) -- there is no supported way from outside the library to
+// move a chart's crosshair programmatically. Documented limitation per
+// PART_A_REVISED_klinecharts.md's own "sync crosshair if feasible."
 const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
-  { instrument, timeframe, from, to, trades, selectedTrade, indicators, sessionBands, prefs, cursorTime = null, onDrawingsChange },
+  {
+    instrument,
+    timeframe,
+    from,
+    to,
+    trades,
+    selectedTrade,
+    indicators,
+    sessionBands,
+    prefs,
+    cursorTime = null,
+    onDrawingsChange,
+    onVisibleRangeChange,
+  },
   ref,
 ) {
   const colors = useThemeStore((s) => s.colors)
@@ -145,6 +173,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const activeDrawingIdRef = useRef<string | null>(null)
   const onDrawingsChangeRef = useRef(onDrawingsChange)
   onDrawingsChangeRef.current = onDrawingsChange
+  const onVisibleRangeChangeRef = useRef(onVisibleRangeChange)
+  onVisibleRangeChangeRef.current = onVisibleRangeChange
 
   // The DataLoader's getBars closure and the overlay-rebuild logic are both
   // registered/defined once and must always see the LATEST values, not
@@ -390,7 +420,31 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       },
     })
 
+    // Multi-chart sync output (Phase A5) -- resolves klinecharts' own
+    // index-based visible range to THIS chart's own bar timestamps before
+    // reporting it (see the prop's own comment for why raw indices can't
+    // be hand to a sibling at a different timeframe). Indices aren't
+    // guaranteed to fall inside the loaded data (scrolling past either
+    // edge is normal chart behavior), so they're clamped defensively
+    // rather than trusted as valid array positions.
+    const handleVisibleRangeChange = (data?: unknown) => {
+      const onChange = onVisibleRangeChangeRef.current
+      if (!onChange) return
+      const range = data as { from: number; to: number } | undefined
+      const dataList = chart.getDataList()
+      if (!range || dataList.length === 0) {
+        onChange(null)
+        return
+      }
+      const clamp = (i: number) => Math.max(0, Math.min(i, dataList.length - 1))
+      const fromBar = dataList[clamp(range.from)]
+      const toBar = dataList[clamp(range.to)]
+      onChange({ from: fromBar.timestamp / 1000, to: toBar.timestamp / 1000 })
+    }
+    chart.subscribeAction('onVisibleRangeChange', handleVisibleRangeChange)
+
     return () => {
+      chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChange)
       dispose(chart)
       chartRef.current = null
       loadedBarsRef.current = []

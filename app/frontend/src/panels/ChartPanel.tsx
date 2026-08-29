@@ -102,6 +102,13 @@ export default function ChartPanel() {
   const [klDrawings, setKlDrawings] = useState<PersistedOverlay[]>([])
   const secondaryChartRef = useRef<PriceChartHandle>(null)
   const syncingRef = useRef(false)
+  // Same split-view sync, KL side (PART_A_REVISED_klinecharts.md Phase
+  // A5) -- a separate ref/pair of handlers rather than reusing the LWC
+  // ones above since only one engine's pair is ever actually wired at a
+  // time (splitView/secondaryTimeframe state is shared, the sync plumbing
+  // isn't), keeping each engine's imperative calls unambiguous.
+  const klSecondaryChartRef = useRef<ChartKLHandle>(null)
+  const klSyncingRef = useRef(false)
 
   // On-chart trade bracket density (POLISH_ROADMAP Phase P3): 'auto'
   // simplifies individually-narrow brackets to markers, 'full' always
@@ -447,6 +454,27 @@ export default function ChartPanel() {
     })
   }
 
+  // KL side of the same split-view sync (Phase A5) -- fitRange doubles as
+  // the "set visible range" lever here (see ChartKLHandle's own comment:
+  // klinecharts has no direct setVisibleRange-by-time). No crosshair sync
+  // -- see ChartKL.tsx's header comment for why that's not implemented.
+  const withKLSyncGuard = (fn: () => void) => {
+    if (klSyncingRef.current) return
+    klSyncingRef.current = true
+    fn()
+    queueMicrotask(() => {
+      klSyncingRef.current = false
+    })
+  }
+  const handlePrimaryKLVisibleRangeChange = (range: { from: number; to: number } | null) => {
+    if (!splitView || !range) return
+    withKLSyncGuard(() => klSecondaryChartRef.current?.fitRange(range.from, range.to))
+  }
+  const handleSecondaryKLVisibleRangeChange = (range: { from: number; to: number } | null) => {
+    if (!splitView || !range) return
+    withKLSyncGuard(() => klChartRef.current?.fitRange(range.from, range.to))
+  }
+
   if (!runId) {
     return <EmptyState title="No run selected" hint="Pick a run from the Runs list, or press Ctrl/Cmd+K to open one." />
   }
@@ -511,36 +539,36 @@ export default function ChartPanel() {
           Full day
         </button>
 
+        <div className="mx-1 h-4 w-px bg-neutral-800" />
+
+        <button
+          onClick={() => setSplitView((v) => !v)}
+          className={`rounded px-2 py-1 ${
+            splitView ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+          }`}
+        >
+          Split view
+        </button>
+        {splitView && (
+          <div className="flex gap-1">
+            {TIMEFRAMES.filter((tf) => tf !== timeframe).map((tf) => (
+              <button
+                key={tf}
+                onClick={() => setSecondaryTimeframe(tf)}
+                className={`rounded px-2 py-1 ${
+                  secondaryTimeframe === tf
+                    ? 'bg-accent-blue text-white'
+                    : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+        )}
+
         {lwcEngine && (
           <>
-            <div className="mx-1 h-4 w-px bg-neutral-800" />
-
-            <button
-              onClick={() => setSplitView((v) => !v)}
-              className={`rounded px-2 py-1 ${
-                splitView ? 'bg-accent-blue text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-              }`}
-            >
-              Split view
-            </button>
-            {splitView && (
-              <div className="flex gap-1">
-                {TIMEFRAMES.filter((tf) => tf !== timeframe).map((tf) => (
-                  <button
-                    key={tf}
-                    onClick={() => setSecondaryTimeframe(tf)}
-                    className={`rounded px-2 py-1 ${
-                      secondaryTimeframe === tf
-                        ? 'bg-accent-blue text-white'
-                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-                    }`}
-                  >
-                    {tf}
-                  </button>
-                ))}
-              </div>
-            )}
-
             <div className="mx-1 h-4 w-px bg-neutral-800" />
 
             <span className="text-neutral-500">Brackets</span>
@@ -658,21 +686,42 @@ export default function ChartPanel() {
       ) : (
         <div className="flex min-h-0 flex-1">
           <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} />
-          <div className="min-h-0 flex-1">
-            <ChartKL
-              ref={klChartRef}
-              instrument={run?.instrument ?? null}
-              timeframe={timeframe}
-              from={barsWindow?.from ?? null}
-              to={barsWindow?.to ?? null}
-              trades={visibleTrades}
-              selectedTrade={selectedTrade}
-              indicators={indicators}
-              sessionBands={sessionBands}
-              prefs={indicatorPrefs}
-              cursorTime={cursorTime}
-              onDrawingsChange={setKlDrawings}
-            />
+          <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
+            <div className={splitView ? 'min-h-0 flex-1 border-b border-neutral-800' : 'h-full'}>
+              <ChartKL
+                ref={klChartRef}
+                instrument={run?.instrument ?? null}
+                timeframe={timeframe}
+                from={barsWindow?.from ?? null}
+                to={barsWindow?.to ?? null}
+                trades={visibleTrades}
+                selectedTrade={selectedTrade}
+                indicators={indicators}
+                sessionBands={sessionBands}
+                prefs={indicatorPrefs}
+                cursorTime={cursorTime}
+                onDrawingsChange={setKlDrawings}
+                onVisibleRangeChange={splitView ? handlePrimaryKLVisibleRangeChange : undefined}
+              />
+            </div>
+            {splitView && (
+              <div className="min-h-0 flex-1">
+                <ChartKL
+                  ref={klSecondaryChartRef}
+                  instrument={run?.instrument ?? null}
+                  timeframe={secondaryTimeframe}
+                  from={barsWindow?.from ?? null}
+                  to={barsWindow?.to ?? null}
+                  trades={visibleTrades}
+                  selectedTrade={selectedTrade}
+                  indicators={EMPTY_INDICATORS}
+                  sessionBands={sessionBands}
+                  prefs={INDICATORS_OFF}
+                  cursorTime={cursorTime}
+                  onVisibleRangeChange={handleSecondaryKLVisibleRangeChange}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
