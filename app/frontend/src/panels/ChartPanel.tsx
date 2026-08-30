@@ -18,6 +18,7 @@ import { isShortcut, DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
 import EmptyState from '../components/EmptyState'
 import type { BracketDensity } from '../chart/tradeBracket'
 import type { IndicatorName } from '../api/types'
+import { fmtUsd } from '../format'
 
 const TIMEFRAMES = ['1min', '5min', '15min', '1h'] as const
 type Timeframe = (typeof TIMEFRAMES)[number]
@@ -96,6 +97,12 @@ export default function ChartPanel() {
   // polling the chart instance -- ChartKL calls back via onDrawingsChange
   // whenever the set actually changes (placed, dragged, removed, restored).
   const [klDrawings, setKlDrawings] = useState<PersistedOverlay[]>([])
+  // Owned here (not in KLDrawingToolbar) since both the toolbar's clicks AND
+  // this component's own keydown handler below call startDrawing --
+  // ChartKL's onDrawingArmedChange is the single source of truth for
+  // whether a tool is actually armed right now (DESIGN_AUDIT.md chart-
+  // workspace elevation).
+  const [armedTool, setArmedTool] = useState<string | null>(null)
   const klSecondaryChartRef = useRef<ChartKLHandle>(null)
   const klSyncingRef = useRef(false)
 
@@ -456,7 +463,7 @@ export default function ChartPanel() {
         >
           &larr; Prev trade
         </button>
-        <span className="text-text-muted">
+        <span className="tabular-nums text-text-muted">
           {trades && trades.length > 0 ? `Trade ${tradeIdx + 1} / ${trades.length}` : 'No trades'}
         </span>
         <button
@@ -539,13 +546,15 @@ export default function ChartPanel() {
         {selectedTrade && (
           <span className="ml-auto text-xs text-text-muted">
             #{selectedTrade.trade_id} &middot; {selectedTrade.leg ?? '-'} &middot;{' '}
-            {selectedTrade.session ?? '-'} &middot; {selectedTrade.side} &middot; $
-            {selectedTrade.pnl_usd.toFixed(2)}
+            {selectedTrade.session ?? '-'} &middot; {selectedTrade.side} &middot;{' '}
+            <span className={`tabular-nums ${selectedTrade.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
+              {fmtUsd(selectedTrade.pnl_usd)}
+            </span>
           </span>
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
         <IndicatorTogglePanel />
       </div>
 
@@ -565,7 +574,7 @@ export default function ChartPanel() {
       />
 
       <div className="flex min-h-0 flex-1">
-        <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} />
+        <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} armedTool={armedTool} />
         <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
           <div className={splitView ? 'min-h-0 flex-1 border-b border-border' : 'h-full'}>
             <ChartKL
@@ -583,6 +592,7 @@ export default function ChartPanel() {
               loading={barsFetching}
               cursorTime={cursorTime}
               onDrawingsChange={setKlDrawings}
+              onDrawingArmedChange={setArmedTool}
               onVisibleRangeChange={splitView ? handlePrimaryKLVisibleRangeChange : undefined}
             />
           </div>

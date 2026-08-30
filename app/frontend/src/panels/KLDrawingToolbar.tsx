@@ -20,9 +20,17 @@ const GROUP_LABELS: Record<DrawingGroup, string> = {
 export default function KLDrawingToolbar({
   klChartRef,
   drawings,
+  armedTool,
 }: {
   klChartRef: RefObject<ChartKLHandle | null>
   drawings: PersistedOverlay[]
+  // Currently-armed tool name, or null -- the one accent-colored state in
+  // this sidebar (DESIGN_AUDIT.md chart-workspace elevation: "accent only
+  // on the active tool"), same on/off pattern as ChartPanel's timeframe
+  // buttons. Owned by ChartPanel (see its own comment) since it's the one
+  // place already wiring both the toolbar's clicks and the keyboard
+  // shortcuts' calls into ChartKL's startDrawing/cancelActiveDrawing.
+  armedTool: string | null
 }) {
   const [manageOpen, setManageOpen] = useState(false)
 
@@ -31,15 +39,19 @@ export default function KLDrawingToolbar({
       <div className="flex-1 overflow-y-auto py-2">
         {GROUP_ORDER.map((group) => (
           <div key={group} className="mb-2">
-            <div className="px-2 pb-1 text-[10px] uppercase tracking-wide text-text-muted">{GROUP_LABELS[group]}</div>
+            <div className="micro-label px-2 pb-1">{GROUP_LABELS[group]}</div>
             {DRAWING_TOOLS.filter((t) => t.group === group).map((tool) => {
               const shortcutKey = Object.entries(DRAWING_SHORTCUTS).find(([, name]) => name === tool.name)?.[0]
+              const active = armedTool === tool.name
               return (
                 <button
                   key={tool.name}
                   onClick={() => klChartRef.current?.startDrawing(tool.name)}
                   title={shortcutKey ? `${tool.label} (${shortcutKey.toUpperCase()})` : tool.label}
-                  className="block w-full px-2 py-1 text-left text-text hover:bg-surface-2"
+                  aria-pressed={active}
+                  className={`block w-full px-2 py-1 text-left ${
+                    active ? 'bg-accent text-white' : 'text-text hover:bg-surface-2'
+                  }`}
                 >
                   {tool.label}
                 </button>

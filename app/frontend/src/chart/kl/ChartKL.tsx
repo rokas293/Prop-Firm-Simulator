@@ -44,6 +44,7 @@ import type { IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
 import LoadingBar from '../../components/LoadingBar'
+import Skeleton from '../../components/Skeleton'
 
 interface IndicatorData {
   vwap: IndicatorPoint[]
@@ -95,6 +96,12 @@ interface ChartKLProps {
   // removed, or restored on load) so the toolbar's manage dropdown can
   // show an up-to-date list without polling the chart instance itself.
   onDrawingsChange?: (overlays: PersistedOverlay[]) => void
+  // Fires with the currently-armed tool's name, or null once it's placed/
+  // cancelled -- lets KLDrawingToolbar highlight the active tool the same
+  // way ChartPanel's timeframe buttons already do (DESIGN_AUDIT.md's chart-
+  // workspace elevation: "accent only on the active tool"), without the
+  // toolbar polling chart internals to know when a shape completes.
+  onDrawingArmedChange?: (toolName: string | null) => void
   // Multi-chart sync output (Phase A5), fired on every user pan/zoom --
   // undefined in single-chart mode. klinecharts' own onVisibleRangeChange
   // action reports DATA-INDEX bounds (confirmed against the v10.0.3
@@ -251,6 +258,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     loading = false,
     cursorTime = null,
     onDrawingsChange,
+    onDrawingArmedChange,
     onVisibleRangeChange,
   },
   ref,
@@ -258,6 +266,13 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const colors = useThemeStore((s) => s.colors)
   const base = useThemeBase()
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
+  // First-paint gate for the full-canvas loading skeleton (DESIGN_AUDIT.md
+  // C2): true forever once this ChartKL instance has shown real bars once,
+  // so only the very first render of a freshly-mounted chart gets the full
+  // skeleton -- every later reload (timeframe switch, trade switch) keeps
+  // using the existing subtle LoadingBar sweep instead, which is the right
+  // amount of interruption once the user has already seen the chart.
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
@@ -281,6 +296,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const activeDrawingIdRef = useRef<string | null>(null)
   const onDrawingsChangeRef = useRef(onDrawingsChange)
   onDrawingsChangeRef.current = onDrawingsChange
+  const onDrawingArmedChangeRef = useRef(onDrawingArmedChange)
+  onDrawingArmedChangeRef.current = onDrawingArmedChange
   const onVisibleRangeChangeRef = useRef(onVisibleRangeChange)
   onVisibleRangeChangeRef.current = onVisibleRangeChange
 
@@ -455,6 +472,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const drawingCallbacks = () => ({
     onDrawEnd: () => {
       activeDrawingIdRef.current = null
+      onDrawingArmedChangeRef.current?.(null)
       persistDrawingsRef.current()
     },
     onPressedMoveEnd: () => {
@@ -518,6 +536,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       const visible = filterBarsForReplay(bars, cursorTimeRef.current)
       loadedBarsRef.current = visible
       setMeasureBarsContext(visible)
+      setHasLoadedOnce(true)
       callback(visible.map(toKLineData), { forward: false, backward: false })
       rebuildOverlaysRef.current()
       restoreDrawingsRef.current()
@@ -562,6 +581,9 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
             fullBarsRef.current = []
             lastFetchKeyRef.current = null
             loadedBarsRef.current = []
+            // A definitive (if empty) answer -- don't leave the skeleton
+            // showing forever over a failed fetch.
+            setHasLoadedOnce(true)
             callback([], { forward: false, backward: false })
           })
       },
@@ -743,6 +765,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           }
           const id = `kl-drawing-${crypto.randomUUID()}`
           activeDrawingIdRef.current = id
+          onDrawingArmedChangeRef.current?.(toolName)
           chart.createOverlay({ id, name: toolName, groupId: DRAWING_GROUP_ID, extendData, ...drawingCallbacks() })
         })
       },
@@ -752,6 +775,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         if (!chart || !id) return
         chart.removeOverlay({ id })
         activeDrawingIdRef.current = null
+        onDrawingArmedChangeRef.current?.(null)
         // Explicit, not just relying on onRemoved: verified live that
         // removing a still-incomplete overlay (points placed < totalStep,
         // e.g. Escaping a 2-point Trend line after only the first click)
@@ -778,6 +802,20 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     <div className="relative h-full w-full bg-bg">
       <LoadingBar active={loading} />
       <div ref={containerRef} className="h-full w-full" />
+      {/* First-paint skeleton (DESIGN_AUDIT.md C2): klinecharts needs
+          containerRef mounted from the start to call init() against, so
+          this overlays the (still-blank) canvas rather than replacing it
+          the way a plain "loading ? <Skeleton/> : <content/>" panel would.
+          Shaped roughly like the real layout -- a thin readout-line
+          skeleton, the big candle-pane skeleton, a short volume-pane
+          skeleton -- rather than a bare blank grid or a spinner. */}
+      {!hasLoadedOnce && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col gap-2 bg-bg p-3">
+          <Skeleton className="h-4 w-64" />
+          <Skeleton className="min-h-0 flex-1" />
+          <Skeleton className="h-16" />
+        </div>
+      )}
       {tooltip && (
         <div
           className="pointer-events-none absolute z-20 whitespace-pre rounded border border-border bg-surface/95 px-2 py-1 text-xs text-text shadow-lg"

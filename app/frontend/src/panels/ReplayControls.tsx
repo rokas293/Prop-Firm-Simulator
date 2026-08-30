@@ -81,7 +81,7 @@ export default function ReplayControls({
             <select
               value={speed}
               onChange={(e) => onSpeedChange(Number(e.target.value))}
-              className="rounded bg-surface-2 px-1.5 py-1 text-text"
+              className="rounded bg-surface-2 px-2 py-1 text-text"
             >
               {SPEEDS.map((s) => (
                 <option key={s} value={s}>
@@ -107,22 +107,25 @@ export default function ReplayControls({
       </div>
 
       {active && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-4 text-text-muted">
+        <div className="mt-2 flex flex-wrap items-center gap-4 text-text-muted">
           <span>
-            Running: <span className={runningPnl >= 0 ? 'text-positive' : 'text-negative'}>{fmtUsd(runningPnl)}</span>{' '}
-            <span className="text-text-muted">({runningR.toFixed(2)}R)</span>
+            Running:{' '}
+            <span className={`tabular-nums ${runningPnl >= 0 ? 'text-positive' : 'text-negative'}`}>
+              {fmtUsd(runningPnl)}
+            </span>{' '}
+            <span className="tabular-nums text-text-muted">({runningR.toFixed(2)}R)</span>
           </span>
           {equity ? (
             <>
               <span>
-                Equity: <span className="text-text">{fmtUsd(equity.equity)}</span>
+                Equity: <span className="tabular-nums text-text">{fmtUsd(equity.equity)}</span>
               </span>
               <span>
-                MLL floor: <span className="text-text">{fmtUsd(equity.mll_floor)}</span>
+                MLL floor: <span className="tabular-nums text-text">{fmtUsd(equity.mll_floor)}</span>
               </span>
               <span>
                 Distance to breach:{' '}
-                <span className={equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}>
+                <span className={`tabular-nums ${equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}`}>
                   {fmtUsd(equity.equity - equity.mll_floor)}
                 </span>
               </span>
