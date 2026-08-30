@@ -46,10 +46,14 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
     return <EmptyState title="No run selected" hint="Pick a run from the Runs list, or press Ctrl/Cmd+K to open one." />
   }
 
-  // POLISH_ROADMAP Phase P6: skeleton rather than a blank legend/chart/day-
-  // strip while both fetches are still in flight (see EquityPanel.tsx's
-  // own comment for why this is rare but real).
-  if (equity === undefined && dailyRisk === undefined) {
+  // POLISH_ROADMAP Phase P6 / DESIGN_AUDIT.md P1: skeleton while EITHER
+  // fetch is still in flight, not just while BOTH are -- this was `&&`,
+  // which meant a fast dailyRisk response (small payload) let the panel
+  // fall through to the real render while the much larger equity fetch
+  // (max_points up to 30000) was still pending, showing an empty legend +
+  // blank chart + empty day-strip for several seconds instead of this
+  // skeleton. Confirmed live: the equity fetch alone measured 2-4.6s.
+  if (equity === undefined || dailyRisk === undefined) {
     return (
       <div className="flex h-full w-full flex-col gap-3 p-4">
         <Skeleton className="h-6" />
@@ -76,7 +80,7 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
         <Legend swatch={hexToRgba(colors.negative, 0.35)} label="Distance-to-breach band" />
         {breachDay && (
           <span className="ml-auto text-negative">
-            Breached {breachDay.trading_day} ({fmtUsd(breachDay.min_distance_to_mll_usd)})
+            Breached {breachDay.trading_day} (<span className="tabular-nums">{fmtUsd(breachDay.min_distance_to_mll_usd)}</span>)
           </span>
         )}
       </div>
@@ -86,7 +90,7 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
       </div>
 
       <div className="border-t border-border px-4 py-3">
-        <div className="mb-1.5 flex items-center justify-between text-xs text-text-muted">
+        <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
           <span>Daily risk -- worst distance to MLL each trading day (click a day to jump the chart)</span>
           <div className="flex items-center gap-3">
             <Legend swatch={colors.positive} label="Safe" small />
@@ -132,7 +136,7 @@ function Legend({
   small?: boolean
 }) {
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex items-center gap-1">
       <span
         className={small ? 'inline-block h-2 w-2 rounded-sm' : 'inline-block h-0.5 w-4'}
         style={{

@@ -23,6 +23,20 @@ export interface RiskChartHandle {
   fitContent: () => void
 }
 
+// DESIGN_AUDIT.md P2: equity/MLL-floor/daily-loss-floor all defaulted to
+// lightweight-charts' own lastValueVisible+priceLineVisible, so up to three
+// axis labels plus the Target price-line's own label all competed for the
+// same corner whenever their values were close together -- confirmed live
+// in the original audit as an illegible stacked cluster. Fixed decimals +
+// a thousands separator, chart-wide (all three series carry $ values), so
+// individual digits don't drift between labels of different magnitude --
+// this is the canvas-rendered equivalent of tabular-nums: font-variant-
+// numeric doesn't apply to canvas text at all, so number FORMATTING is the
+// lever that's actually available here.
+function fmtAxisPrice(price: number): string {
+  return `$${price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+}
+
 interface RiskChartProps {
   equity: EquityPoint[]
   dailyRisk: DailyRiskPoint[]
@@ -65,6 +79,7 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
       grid: { vertLines: { color: b.grid }, horzLines: { color: b.grid } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: b.border },
       rightPriceScale: { borderColor: b.border },
+      localization: { priceFormatter: fmtAxisPrice },
       // Part C3 audit gap: only `mode` was ever set here, leaving both
       // crosshair lines and their axis-label backgrounds at lightweight-
       // charts' own fixed default colors (see CrosshairLineOptions in its
@@ -79,15 +94,36 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
       autoSize: true,
     })
 
-    const equitySeries = chart.addSeries(LineSeries, { color: colorsRef.current.accent, lineWidth: 2 }, 0)
+    // Only the equity series keeps its axis label + price line -- it's the
+    // one "where are we right now" readout that matters (DESIGN_AUDIT.md
+    // P2). MLL/daily-loss floors are threshold references already
+    // identified by color + the legend above and by the Target price
+    // line's own always-on label; giving each of them a THIRD competing
+    // last-value label was the actual cause of the overlap, not a display
+    // this chart needs.
+    const equitySeries = chart.addSeries(LineSeries, { color: colorsRef.current.accent, lineWidth: 2, priceLineVisible: false }, 0)
     const mllSeries = chart.addSeries(
       LineSeries,
-      { color: colorsRef.current.negative, lineWidth: 1, lineStyle: LineStyle.Dashed, lineType: LineType.WithSteps },
+      {
+        color: colorsRef.current.negative,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        lineType: LineType.WithSteps,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      },
       0,
     )
     const dailyLossSeries = chart.addSeries(
       LineSeries,
-      { color: b.warning, lineWidth: 1, lineStyle: LineStyle.Dotted, lineType: LineType.WithSteps },
+      {
+        color: b.warning,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        lineType: LineType.WithSteps,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      },
       0,
     )
 

@@ -16,6 +16,7 @@ import EquitySparkline from '../components/EquitySparkline'
 import { KpiRowSkeleton } from '../components/Skeleton'
 import { useThemeStore } from '../state/themeStore'
 import { fmtPct, fmtR, fmtUsd } from '../format'
+import { AXIS_TICK_STYLE, AXIS_LINE_STYLE, TOOLTIP_CONTENT_STYLE } from '../chart/rechartsTheme'
 import type { TradeRecord } from '../api/types'
 
 const SCOPES: { key: StatsScope; label: string }[] = [
@@ -31,26 +32,6 @@ const SCOPES: { key: StatsScope; label: string }[] = [
 // common case, and the label says "of $2k MLL" rather than implying it's
 // read from the run itself.
 const DEFAULT_MLL_USD = 2000
-
-// Shared Recharts chrome (DESIGN_AUDIT.md "quiet Recharts chrome"): Recharts'
-// own defaults for axisLine/tickLine are a hardcoded mid-gray, not tied to
-// the theme at all -- confirmed live (getComputedStyle) brighter than even
-// --color-border, so it stood out against the deliberately muted grid
-// instead of receding with it. Tabular figures on the tick text itself are
-// index.css's .recharts-cartesian-axis-tick-value rule, not set here --
-// Recharts converts this style object to SVG presentation attributes
-// (fill, font-size), silently dropping fontVariantNumeric, confirmed by
-// inspecting the rendered <text>'s own attributes. One set of style
-// objects, reused by every chart below, so every axis/tooltip in this
-// panel reads as the same quiet chrome instead of each chart having
-// drifted slightly from the others.
-const AXIS_TICK_STYLE = { fill: 'var(--color-text-muted)', fontSize: 11 }
-const AXIS_LINE_STYLE = { stroke: 'var(--color-border)' }
-const TOOLTIP_CONTENT_STYLE = {
-  background: 'var(--color-surface)',
-  border: '1px solid var(--color-border)',
-  fontVariantNumeric: 'tabular-nums' as const,
-}
 
 const R_BUCKET_WIDTH = 0.5
 

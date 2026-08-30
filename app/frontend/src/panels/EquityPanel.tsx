@@ -4,11 +4,9 @@ import { useUiStore } from '../state/uiStore'
 import { useThemeStore } from '../state/themeStore'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
-
-function fmtUsd(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '-'
-  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
+import Card from '../components/Card'
+import { fmtUsd } from '../format'
+import { AXIS_TICK_STYLE, AXIS_LINE_STYLE, TOOLTIP_CONTENT_STYLE } from '../chart/rechartsTheme'
 
 // A standalone dockable panel: the full-run equity curve at a glance
 // (Recharts, quick overview). For the interactive, marker-annotated,
@@ -45,19 +43,20 @@ export default function EquityPanel() {
         {run ? `${run.instrument} · ${run.date_from} → ${run.date_to}` : 'Loading…'}
       </div>
 
-      <div className="rounded border border-border bg-surface p-4">
-        <div className="mb-2 text-sm font-medium text-text">Equity & trailing MLL (full run)</div>
+      <Card title="Equity & trailing MLL (full run)">
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={equity ?? []}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
             <XAxis
               dataKey="time"
-              tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+              tick={AXIS_TICK_STYLE}
+              axisLine={AXIS_LINE_STYLE}
+              tickLine={AXIS_LINE_STYLE}
               tickFormatter={(t) => new Date(t * 1000).toISOString().slice(0, 10)}
             />
-            <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} domain={['auto', 'auto']} />
+            <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} domain={['auto', 'auto']} />
             <Tooltip
-              contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+              contentStyle={TOOLTIP_CONTENT_STYLE}
               labelFormatter={(t) => new Date((t as number) * 1000).toISOString()}
               formatter={(v) => fmtUsd(Number(v))}
             />
@@ -65,28 +64,29 @@ export default function EquityPanel() {
             <Line type="stepAfter" dataKey="mll_floor" stroke={colors.negative} dot={false} strokeWidth={1} strokeDasharray="4 3" />
           </LineChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
 
-      <div className="rounded border border-border bg-surface p-4">
-        <div className="mb-2 text-sm font-medium text-text">Drawdown from peak equity (full run)</div>
+      <Card title="Drawdown from peak equity (full run)">
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={equity ?? []}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
             <XAxis
               dataKey="time"
-              tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+              tick={AXIS_TICK_STYLE}
+              axisLine={AXIS_LINE_STYLE}
+              tickLine={AXIS_LINE_STYLE}
               tickFormatter={(t) => new Date(t * 1000).toISOString().slice(0, 10)}
             />
-            <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} reversed />
+            <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} reversed />
             <Tooltip
-              contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+              contentStyle={TOOLTIP_CONTENT_STYLE}
               labelFormatter={(t) => new Date((t as number) * 1000).toISOString()}
               formatter={(v) => fmtUsd(Number(v))}
             />
             <Line type="stepAfter" dataKey="drawdown_usd" stroke={colors.negative} dot={false} strokeWidth={1.5} />
           </LineChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
     </div>
   )
 }
