@@ -15,7 +15,11 @@ import { usePerfStore } from '../state/perfStore'
 
 export type QueryParams = Record<string, string | number | undefined>
 
-function buildQuery<T extends QueryParams>(params?: T): string {
+// Exported for direct unit testing (same "pure helper, testable without
+// mounting anything" pattern as drawingOverlays.ts's measureLabel) -- every
+// API call goes through this, so a query-string bug here would be silent
+// and app-wide.
+export function buildQuery<T extends QueryParams>(params?: T): string {
   if (!params) return ''
   const parts = Object.entries(params)
     .filter(([, v]) => v !== undefined)
