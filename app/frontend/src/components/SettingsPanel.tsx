@@ -31,7 +31,11 @@ const MODES: ThemeMode[] = ['dark', 'light']
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="border-b border-border px-4 py-4 last:border-b-0">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-muted">{title}</h3>
+      {/* .micro-label, not an ad hoc 12px/600/0.025em set -- was a second,
+          slightly-different micro-label convention living next to the
+          shared one (DESIGN_AUDIT.md ST4 flagged this as worth checking;
+          turned out these needed fixing too, not the class to copy from). */}
+      <h3 className="micro-label mb-3">{title}</h3>
       {children}
     </div>
   )
@@ -90,17 +94,20 @@ function TokenPicker({
           className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent"
         />
       </label>
-      <span className={`font-mono text-[10px] ${passes ? 'text-text-muted' : 'text-warning'}`}>{ratio.toFixed(1)}:1</span>
+      <span className={`font-mono text-[11px] tabular-nums ${passes ? 'text-text-muted' : 'text-warning'}`}>{ratio.toFixed(1)}:1</span>
       {!passes && (
         <>
-          <span className="text-[10px] text-warning">low contrast vs {bg}</span>
-          <button onClick={() => onChange(ensureContrast(value, bg, minRatio))} className="text-[10px] text-accent underline">
+          <span className="text-[11px] text-warning">low contrast vs {bg}</span>
+          <button
+            onClick={() => onChange(ensureContrast(value, bg, minRatio))}
+            className="text-[11px] text-accent underline hover:text-text"
+          >
             Fix
           </button>
         </>
       )}
       {!secondaryPasses && secondaryRatio !== null && (
-        <span className="text-[10px] text-warning">
+        <span className="text-[11px] tabular-nums text-warning">
           {secondaryRatio.toFixed(1)}:1 low contrast for {secondaryCheck!.label}
         </span>
       )}
@@ -175,7 +182,9 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
     <div className="propbt-cmdk-overlay" onClick={onClose}>
       <div className="propbt-settings-content" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-text">Settings</h2>
+          {/* 16px/medium -- the same "panel title" scale step as Card
+              (DESIGN_LANGUAGE.md section 3), not a bespoke 14px/semibold. */}
+          <h2 className="text-base font-medium text-text">Settings</h2>
           <button onClick={onClose} className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
             Esc to close
           </button>
@@ -206,13 +215,13 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   key={preset.id}
                   onClick={() => applyPreset(preset.id)}
                   title={`${preset.name} (${preset.mode})`}
-                  className={`flex items-center gap-2 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                  className={`flex items-center gap-2 rounded border px-3 py-1 text-xs transition-colors ${
                     activePresetId === preset.id
                       ? 'border-accent bg-surface-2 text-text'
                       : 'border-border bg-surface text-text-muted hover:border-border-hover'
                   }`}
                 >
-                  <span className="flex gap-0.5">
+                  <span className="flex gap-1">
                     <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.accent }} />
                     <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.positive }} />
                     <span className="h-3 w-3 rounded-full" style={{ background: preset.colors.negative }} />
@@ -221,7 +230,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 </button>
               ))}
               {activePresetId === 'custom' && (
-                <span className="flex items-center rounded border border-dashed border-border px-2.5 py-1.5 text-xs text-text-muted">
+                <span className="flex items-center rounded border border-dashed border-border px-3 py-1 text-xs text-text-muted">
                   Custom
                 </span>
               )}
@@ -279,12 +288,12 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   <button
                     key={p.name}
                     onClick={() => p.apply(workspaceApi)}
-                    className="rounded bg-surface-2 px-2.5 py-1.5 text-xs text-text hover:bg-surface-2-hover"
+                    className="rounded bg-surface-2 px-3 py-1 text-xs text-text hover:bg-surface-2-hover"
                   >
                     {p.name}
                   </button>
                 ))}
-                <button onClick={resetLayout} className="rounded bg-surface-2 px-2.5 py-1.5 text-xs text-text hover:bg-surface-2-hover">
+                <button onClick={resetLayout} className="rounded bg-surface-2 px-3 py-1 text-xs text-text hover:bg-surface-2-hover">
                   Reset layout
                 </button>
               </div>
@@ -294,7 +303,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
           <Section title="Data defaults">
             <div className="flex flex-wrap gap-6 text-xs text-text-muted">
               <div>
-                <div className="mb-1.5 text-text-muted">Default chart timeframe</div>
+                <div className="mb-1 text-text-muted">Default chart timeframe</div>
                 <div className="flex gap-1">
                   {TIMEFRAMES.map((tf) => (
                     <button
@@ -310,7 +319,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 </div>
               </div>
               <div>
-                <div className="mb-1.5 text-text-muted">Default trade bracket density</div>
+                <div className="mb-1 text-text-muted">Default trade bracket density</div>
                 <div className="flex gap-1">
                   {BRACKET_DENSITIES.map((d) => (
                     <button

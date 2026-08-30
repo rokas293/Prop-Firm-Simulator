@@ -8,6 +8,7 @@ import { useWorkspaceApiStore } from '../state/workspaceApiStore'
 import { isShortcut } from '../keyboard/shortcuts'
 import { PRESETS } from './presets'
 import { CHART_PANEL_ID, PANEL_DEFS } from './panelIds'
+import { fmtUsd } from '../format'
 
 // Global fuzzy command palette (POLISH_ROADMAP Phase P1), opened with
 // Cmd/Ctrl-K from anywhere in the app. A flat, single-level list rather
@@ -87,8 +88,8 @@ export default function CommandPalette() {
                 })
               }
             >
-              Jump to trade #{jumpTarget.trade_id} ({jumpTarget.side}, {jumpTarget.leg ?? 'unknown leg'}, $
-              {jumpTarget.pnl_usd.toFixed(2)})
+              Jump to trade #{jumpTarget.trade_id} ({jumpTarget.side}, {jumpTarget.leg ?? 'unknown leg'},{' '}
+              {fmtUsd(jumpTarget.pnl_usd)})
             </CommandItem>
           </CommandGroup>
         )}

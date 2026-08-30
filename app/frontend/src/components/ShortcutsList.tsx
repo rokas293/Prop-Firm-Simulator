@@ -18,12 +18,15 @@ export default function ShortcutsList() {
     <>
       {groups.map(([category, defs]) => (
         <div key={category} className="mb-4 last:mb-0">
-          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-text-muted">{category}</div>
+          {/* .micro-label, not a near-duplicate ad hoc declaration (this one
+              was already close -- 11px/500/uppercase -- but tracking-wide is
+              Tailwind's 0.025em, not the shared 0.04em). */}
+          <div className="micro-label mb-2">{category}</div>
           <div className="space-y-1">
             {defs.map((d) => (
               <div key={d.id} className="flex items-center justify-between gap-4 rounded px-2 py-1 text-sm hover:bg-surface">
                 <span className="text-text">{d.description}</span>
-                <kbd className="whitespace-nowrap rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[11px] text-text-muted">
+                <kbd className="whitespace-nowrap rounded border border-border bg-bg px-1 py-1 font-mono text-[11px] text-text-muted">
                   {d.label}
                 </kbd>
               </div>
