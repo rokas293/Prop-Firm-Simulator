@@ -62,16 +62,16 @@ export default function RunsListPage() {
       </div>
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-border text-left text-text-muted">
-            <th className="py-2 pr-4 font-medium" title="Select up to 2 runs to compare">
+          <tr className="border-b border-border text-left">
+            <th className="micro-label py-2 pr-4 text-left" title="Select up to 2 runs to compare">
               Cmp
             </th>
-            <th className="py-2 pr-4 font-medium">Run</th>
-            <th className="py-2 pr-4 font-medium">Instrument</th>
-            <th className="py-2 pr-4 font-medium">Date range</th>
-            <th className="py-2 pr-4 font-medium">Result</th>
-            <th className="py-2 pr-4 font-medium">Params</th>
-            <th className="py-2 pr-4 font-medium"></th>
+            <th className="micro-label py-2 pr-4 text-left">Run</th>
+            <th className="micro-label py-2 pr-4 text-left">Instrument</th>
+            <th className="micro-label py-2 pr-4 text-left">Date range</th>
+            <th className="micro-label py-2 pr-4 text-left">Result</th>
+            <th className="num micro-label py-2 pr-4">Params</th>
+            <th className="micro-label py-2 pr-4 text-left"></th>
           </tr>
         </thead>
         <tbody>
@@ -111,7 +111,7 @@ export default function RunsListPage() {
                   </span>
                 )}
               </td>
-              <td className="cursor-pointer py-2 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
+              <td className="num cursor-pointer py-2 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
                 {run.params_count}
               </td>
               <td className="py-2 pr-4">

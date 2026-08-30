@@ -137,8 +137,12 @@ function ScoreCard({ score }: { score: CompassScore }) {
         Formula: the plain average of four 0-100 components below (each equally weighted, 25%). This is a
         descriptive summary, not a prop-rule outcome -- it doesn't affect pass/fail.
       </p>
+      {/* 28px = DESIGN_LANGUAGE.md section 3's top hero-KPI step, semibold
+          (600) -- the ONE number on this tab reserved for that weight
+          (section 3: "semibold only for hero numbers"). Was 36px/bold
+          (700), off-scale on both axes (DESIGN_AUDIT.md S1). */}
       <div className="mb-4 flex items-baseline gap-3">
-        <span className="text-4xl font-bold text-text">{score.total}</span>
+        <span className="text-[28px] font-semibold tabular-nums text-text">{score.total}</span>
         <span className="text-sm text-text-muted">/ 100</span>
       </div>
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
@@ -146,8 +150,13 @@ function ScoreCard({ score }: { score: CompassScore }) {
           <div key={c.key}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-text">{c.label}</span>
+              {/* Medium (500), not semibold -- these are secondary
+                  component scores, not the tab's hero number (DESIGN_AUDIT.md
+                  S1/S2: reserve 600 for the total above so there's a real,
+                  deliberate two-tier hierarchy instead of every number on
+                  the tab competing at the same weight). */}
               <span
-                className={`text-sm font-semibold ${
+                className={`text-sm font-medium tabular-nums ${
                   c.score >= 67 ? 'text-positive' : c.score >= 34 ? 'text-warning' : 'text-negative'
                 }`}
               >

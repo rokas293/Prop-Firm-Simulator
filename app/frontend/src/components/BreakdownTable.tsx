@@ -20,12 +20,12 @@ export default function BreakdownTable({
     <Card title={title}>
       <table className="w-full border-collapse text-xs">
         <thead>
-          <tr className="border-b border-border text-left text-text-muted">
-            <th className="py-1.5 pr-3 font-medium"></th>
-            <th className="py-1.5 pr-3 font-medium">Trades</th>
-            <th className="py-1.5 pr-3 font-medium">Win rate</th>
-            <th className="py-1.5 pr-3 font-medium">Expectancy</th>
-            <th className="py-1.5 pr-3 font-medium">Total R</th>
+          <tr className="border-b border-border text-left">
+            <th className="micro-label py-1.5 pr-3 text-left"></th>
+            <th className="num micro-label py-1.5 pr-3">Trades</th>
+            <th className="num micro-label py-1.5 pr-3">Win rate</th>
+            <th className="num micro-label py-1.5 pr-3">Expectancy</th>
+            <th className="num micro-label py-1.5 pr-3">Total R</th>
           </tr>
         </thead>
         <tbody>
@@ -37,12 +37,12 @@ export default function BreakdownTable({
               title={`Filter trade list + chart to ${key}`}
             >
               <td className="py-1.5 pr-3 text-text">{key}</td>
-              <td className="py-1.5 pr-3 text-text">{g.trades}</td>
-              <td className="py-1.5 pr-3 text-text">{fmtPct(g.win_rate)}</td>
-              <td className={`py-1.5 pr-3 ${(g.expectancy_usd ?? 0) >= 0 ? 'text-positive' : 'text-negative'}`}>
+              <td className="num py-1.5 pr-3 text-text">{g.trades}</td>
+              <td className="num py-1.5 pr-3 text-text">{fmtPct(g.win_rate)}</td>
+              <td className={`num py-1.5 pr-3 ${(g.expectancy_usd ?? 0) >= 0 ? 'text-positive' : 'text-negative'}`}>
                 {fmtUsd(g.expectancy_usd)}
               </td>
-              <td className="py-1.5 pr-3 text-text">{g.net_r !== null ? fmtR(g.net_r) : '-'}</td>
+              <td className="num py-1.5 pr-3 text-text">{g.net_r !== null ? fmtR(g.net_r) : '-'}</td>
             </tr>
           ))}
           {entries.length === 0 && (

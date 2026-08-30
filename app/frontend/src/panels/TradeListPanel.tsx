@@ -8,6 +8,7 @@ import { useUiStore } from '../state/uiStore'
 import { applyCompassFilters } from '../compass/breakdowns'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
+import { fmtPoints, fmtPrice, fmtUsd } from '../format'
 
 type SortColumn =
   | 'entry_time'
@@ -28,19 +29,22 @@ type SortColumn =
 // from exactly the same source -- see GRID_TEMPLATE/GRID_TOTAL_WIDTH below
 // (POLISH_ROADMAP Phase P4: row-virtualized table, not a native <table>
 // with content-driven column widths).
-const COLUMNS: { key: SortColumn; label: string; width: number }[] = [
+// `numeric` drives both the header's alignment (right, over its column's
+// numbers -- DESIGN_LANGUAGE.md section 6) and which cells get the `.num`
+// tabular/right-aligned treatment below (DESIGN_AUDIT.md T1/T2).
+const COLUMNS: { key: SortColumn; label: string; width: number; numeric?: boolean }[] = [
   { key: 'entry_time', label: 'Entry time', width: 150 },
   { key: 'leg', label: 'Leg', width: 110 },
   { key: 'session', label: 'Session', width: 90 },
   { key: 'side', label: 'Side', width: 64 },
-  { key: 'size_contracts', label: 'Size', width: 56 },
-  { key: 'entry_price', label: 'Entry', width: 84 },
-  { key: 'exit_price', label: 'Exit', width: 84 },
+  { key: 'size_contracts', label: 'Size', width: 56, numeric: true },
+  { key: 'entry_price', label: 'Entry', width: 84, numeric: true },
+  { key: 'exit_price', label: 'Exit', width: 84, numeric: true },
   { key: 'exit_type', label: 'Exit type', width: 84 },
-  { key: 'pnl_usd', label: 'PnL', width: 84 },
-  { key: 'r_multiple', label: 'R', width: 64 },
-  { key: 'mae_points', label: 'MAE', width: 64 },
-  { key: 'mfe_points', label: 'MFE', width: 64 },
+  { key: 'pnl_usd', label: 'PnL', width: 84, numeric: true },
+  { key: 'r_multiple', label: 'R', width: 64, numeric: true },
+  { key: 'mae_points', label: 'MAE', width: 64, numeric: true },
+  { key: 'mfe_points', label: 'MFE', width: 64, numeric: true },
 ]
 const GRID_TEMPLATE = COLUMNS.map((c) => `${c.width}px`).join(' ')
 const GRID_TOTAL_WIDTH = COLUMNS.reduce((sum, c) => sum + c.width, 0)
@@ -241,14 +245,16 @@ export default function TradeListPanel() {
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
         <div
-          className="sticky top-0 z-10 grid border-b border-border bg-bg text-left text-xs text-text-muted"
+          className="sticky top-0 z-10 grid border-b border-border bg-bg"
           style={{ gridTemplateColumns: GRID_TEMPLATE, minWidth: GRID_TOTAL_WIDTH }}
         >
           {COLUMNS.map((c) => (
             <div
               key={c.key}
               onClick={() => toggleSort(c.key)}
-              className="cursor-pointer whitespace-nowrap px-2 py-1.5 font-medium hover:text-text"
+              className={`micro-label cursor-pointer whitespace-nowrap px-2 py-1.5 hover:text-text ${
+                c.numeric ? 'text-right' : 'text-left'
+              }`}
             >
               {c.label}
               {sortCol === c.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
@@ -296,18 +302,18 @@ export default function TradeListPanel() {
                   <div className="truncate px-2 text-text">{t.leg ?? '-'}</div>
                   <div className="truncate px-2 text-text">{t.session ?? '-'}</div>
                   <div className="truncate px-2 text-text">{t.side}</div>
-                  <div className="truncate px-2 text-text">{t.size_contracts}</div>
-                  <div className="truncate px-2 text-text">{t.entry_price.toFixed(2)}</div>
-                  <div className="truncate px-2 text-text">{t.exit_price.toFixed(2)}</div>
+                  <div className="num truncate px-2 text-text">{t.size_contracts}</div>
+                  <div className="num truncate px-2 text-text">{fmtPrice(t.entry_price, t.instrument)}</div>
+                  <div className="num truncate px-2 text-text">{fmtPrice(t.exit_price, t.instrument)}</div>
                   <div className="truncate px-2 text-text">{t.exit_type}</div>
-                  <div className={`truncate px-2 ${t.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
-                    {t.pnl_usd.toFixed(2)}
+                  <div className={`num truncate px-2 ${t.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
+                    {fmtUsd(t.pnl_usd)}
                   </div>
-                  <div className="truncate px-2 text-text">
+                  <div className="num truncate px-2 text-text">
                     {t.r_multiple !== null ? t.r_multiple.toFixed(2) : '-'}
                   </div>
-                  <div className="truncate px-2 text-text">{t.mae_points.toFixed(2)}</div>
-                  <div className="truncate px-2 text-text">{t.mfe_points.toFixed(2)}</div>
+                  <div className="num truncate px-2 text-text">{fmtPoints(t.mae_points)}</div>
+                  <div className="num truncate px-2 text-text">{fmtPoints(t.mfe_points)}</div>
                 </div>
               )
             })}

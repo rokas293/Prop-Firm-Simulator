@@ -101,6 +101,34 @@
   color-scheme: light;
 }
 
+/* ---- numeric/table-header utilities (DESIGN_AUDIT.md shared-component
+   pass) ---------------------------------------------------------------- */
+/* Tabular/lining figures, right-aligned -- DESIGN_LANGUAGE.md section 3:
+   "Numbers are the product... tabular/lining figures, right-aligned in
+   tables... A column of numbers must align on the decimal." Apply to any
+   numeric TABLE CELL (Trade List, Dashboard breakdowns, Runs list). A
+   standalone stat that isn't in a column (e.g. a KpiTile's value) wants
+   tabular-nums but not forced right-alignment -- use Tailwind's own
+   `tabular-nums` utility directly for those instead of this class. */
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Muted uppercase micro-label -- DESIGN_LANGUAGE.md section 3 ("11px,
+   text-muted, uppercase, ~0.04em letter-spacing, medium weight") and
+   section 6 ("muted uppercase micro-label header" for tables). One class
+   for both table column headers and KPI tile labels so the two can't drift
+   apart again (DESIGN_AUDIT.md items T2/B2/R2/D2 were three tables and one
+   tile label each independently NOT uppercase and/or not medium-weight). */
+.micro-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

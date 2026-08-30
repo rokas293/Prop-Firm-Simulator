@@ -70,7 +70,12 @@ export default function ComparePage() {
 
   if (!compareRunIds) return null
 
-  const rows: { label: string; a: string; b: string }[] = statsA && statsB
+  // `isText` marks the two rows that hold a status word rather than a
+  // number (Result/Fail reason) so the table below can right-align/tabular
+  // every genuinely numeric row (DESIGN_AUDIT.md item 1) without also
+  // right-aligning "passed"/"mll_breach" text -- same per-row-numeric
+  // pattern as TradeListPanel's COLUMNS.
+  const rows: { label: string; a: string; b: string; isText?: boolean }[] = statsA && statsB
     ? [
         { label: 'Net PnL', a: fmtUsd(statsA.overall.net_pnl_usd), b: fmtUsd(statsB.overall.net_pnl_usd) },
         { label: 'Net R', a: fmtR(statsA.overall.net_r), b: fmtR(statsB.overall.net_r) },
@@ -88,11 +93,12 @@ export default function ComparePage() {
           a: statsA.result ? String(statsA.result.trading_days) : '-',
           b: statsB.result ? String(statsB.result.trading_days) : '-',
         },
-        { label: 'Result', a: statsA.result?.status ?? '-', b: statsB.result?.status ?? '-' },
+        { label: 'Result', a: statsA.result?.status ?? '-', b: statsB.result?.status ?? '-', isText: true },
         {
           label: 'Fail reason',
           a: statsA.result?.fail_reason ?? '-',
           b: statsB.result?.fail_reason ?? '-',
+          isText: true,
         },
       ]
     : []
@@ -175,12 +181,12 @@ export default function ComparePage() {
         <div className="mb-2 text-sm font-medium text-text">Side-by-side stats ({scope})</div>
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-border text-left text-text-muted">
-              <th className="py-1.5 pr-3 font-medium"></th>
-              <th className="py-1.5 pr-3 font-medium" style={{ color: colorA }}>
+            <tr className="border-b border-border text-left">
+              <th className="micro-label py-1.5 pr-3 text-left"></th>
+              <th className="micro-label py-1.5 pr-3 text-right" style={{ color: colorA }}>
                 A &middot; {runA?.instrument ?? '...'}
               </th>
-              <th className="py-1.5 pr-3 font-medium" style={{ color: COMPARE_B_COLOR }}>
+              <th className="micro-label py-1.5 pr-3 text-right" style={{ color: COMPARE_B_COLOR }}>
                 B &middot; {runB?.instrument ?? '...'}
               </th>
             </tr>
@@ -189,8 +195,8 @@ export default function ComparePage() {
             {rows.map((r) => (
               <tr key={r.label} className="border-b border-border">
                 <td className="py-1.5 pr-3 text-text-muted">{r.label}</td>
-                <td className="py-1.5 pr-3 text-text">{r.a}</td>
-                <td className="py-1.5 pr-3 text-text">{r.b}</td>
+                <td className={`py-1.5 pr-3 text-text ${r.isText ? 'text-right' : 'num'}`}>{r.a}</td>
+                <td className={`py-1.5 pr-3 text-text ${r.isText ? 'text-right' : 'num'}`}>{r.b}</td>
               </tr>
             ))}
             {rows.length === 0 && (
