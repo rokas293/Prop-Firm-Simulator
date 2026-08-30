@@ -5,9 +5,11 @@ import {
   applyCompassFilters,
   byHoldTime,
   byHourOfDay,
+  bySessionHour,
   byWeekday,
   computeStreakRuns,
   nyHourOfDay,
+  sessionsPresent,
   summarizeStreaks,
   tradesInStreaksOfLength,
 } from './breakdowns'
@@ -82,6 +84,38 @@ describe('byHourOfDay', () => {
     const buckets = byHourOfDay(trades)
     const hours = buckets.map((b) => Number(b.key))
     expect(hours).toEqual([...hours].sort((a, b) => a - b))
+  })
+})
+
+describe('sessionsPresent / bySessionHour', () => {
+  it('derives the distinct session list from the trades, sorted, excluding null', () => {
+    const trades = [
+      makeTrade({ trade_id: 1, session: 'ny' }),
+      makeTrade({ trade_id: 2, session: 'asia' }),
+      makeTrade({ trade_id: 3, session: null }),
+      makeTrade({ trade_id: 4, session: 'asia' }),
+    ]
+    expect(sessionsPresent(trades)).toEqual(['asia', 'ny'])
+  })
+
+  it('facets byHourOfDay to just the given session, reconciling against that session\'s own total', () => {
+    const nyHour16 = makeTrade({ trade_id: 1, entry_time: 1626467460, session: 'ny', pnl_usd: 10 }) // NY hour 16
+    const nyHour15 = makeTrade({ trade_id: 2, entry_time: 1626467460 - 3600, session: 'ny', pnl_usd: -4 }) // NY hour 15
+    const asiaHour16 = makeTrade({ trade_id: 3, entry_time: 1626467460, session: 'asia', pnl_usd: 100 }) // same wall-clock hour, different session
+    const trades = [nyHour16, nyHour15, asiaHour16]
+
+    const nyBuckets = bySessionHour(trades, 'ny')
+    expect(nyBuckets.reduce((s, b) => s + b.trades, 0)).toBe(2)
+    expect(nyBuckets.reduce((s, b) => s + b.netPnlUsd, 0)).toBeCloseTo(6)
+    // The asia trade in the same hour must not leak into the ny facet.
+    expect(nyBuckets.find((b) => b.key === '16')?.netPnlUsd).toBeCloseTo(10)
+
+    const asiaBuckets = bySessionHour(trades, 'asia')
+    expect(asiaBuckets).toEqual([{ key: '16', trades: 1, wins: 1, winRate: 1, netPnlUsd: 100, netR: asiaHour16.r_multiple, expectancyUsd: 100 }])
+  })
+
+  it('returns an empty list for a session with no trades', () => {
+    expect(bySessionHour([makeTrade({ session: 'ny' })], 'london')).toEqual([])
   })
 })
 

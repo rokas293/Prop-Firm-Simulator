@@ -2,7 +2,8 @@
 // VIZ_SPEC section 7). Per-leg and per-session breakdowns already exist
 // server-side (StatsResponse.by_leg/by_session) and are reused as-is
 // elsewhere -- this module only adds the breakdowns that don't already
-// exist in the bundle: time-of-day, weekday, hold-time, and streaks. All of
+// exist in the bundle: time-of-day, session-hour, weekday, hold-time, and
+// streaks. All of
 // it is descriptive aggregation (group/count/sum) over fields the engine
 // already computed on each trade -- no PnL, R, or prop-rule recomputation
 // (VIZ_SPEC section 0: frontend does zero financial math). This mirrors the
@@ -67,6 +68,23 @@ export function nyHourOfDay(unixSeconds: number): number {
 export function byHourOfDay(trades: TradeRecord[]): BucketStats[] {
   const groups = aggregateBy(trades, (t) => String(nyHourOfDay(t.entry_time)).padStart(2, '0'))
   return [...groups.values()].sort((a, b) => Number(a.key) - Number(b.key))
+}
+
+// Distinct from byHourOfDay: that one pools every trade regardless of which
+// session opened it, so a strong/weak hour specific to one session (e.g.
+// "the 2nd hour after the London open underperforms") is invisible in the
+// pooled view once it's averaged against Asia/NY hours. This facets
+// byHourOfDay per session instead of building a new aggregation -- same
+// hour derivation, just pre-filtered to one session's trades. Sessions are
+// read from the trades themselves (not hardcoded), matching
+// TradeListPanel's own sessionOptions derivation, since real runs tag
+// sessions the spec's prose doesn't enumerate (e.g. "globex_reopen").
+export function sessionsPresent(trades: TradeRecord[]): string[] {
+  return [...new Set(trades.map((t) => t.session).filter((s): s is string => s !== null))].sort()
+}
+
+export function bySessionHour(trades: TradeRecord[], session: string): BucketStats[] {
+  return byHourOfDay(trades.filter((t) => t.session === session))
 }
 
 const WEEKDAY_FORMATTER = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' })

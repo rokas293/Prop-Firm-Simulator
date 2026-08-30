@@ -5,7 +5,7 @@ import { useAiStatus, useRun, useStats, useSummarizeRun, useTrades, type StatsSc
 import { useUiStore } from '../state/uiStore'
 import { scopeTradeParams, useTradeStore, type TradeFilters } from '../state/tradeStore'
 import { CHART_PANEL_ID, PROP_RISK_PANEL_ID } from '../workspace/panelIds'
-import { byHoldTime, byHourOfDay, byWeekday, summarizeStreaks, type BucketStats, type StreakSummary } from '../compass/breakdowns'
+import { bySessionHour, byHoldTime, byHourOfDay, byWeekday, sessionsPresent, summarizeStreaks, type BucketStats, type StreakSummary } from '../compass/breakdowns'
 import { computeMaeMfeRegime, isClippedStop } from '../compass/regime'
 import { computeCompassScore, type CompassScore } from '../compass/score'
 import KpiTile from '../components/KpiTile'
@@ -162,10 +162,16 @@ function ScoreCard({ score }: { score: CompassScore }) {
   )
 }
 
-// Short human-readable label for whichever single dimension crossFilter()
-// last set -- crossFilter always clears everything else first, so at most
-// one of these is ever non-null in practice.
+// Short human-readable label for whatever crossFilter() last set --
+// crossFilter always clears everything else first, so normally only one of
+// these is non-null. The one exception is the session-hour facet, which
+// sets session + entryHourNy together (a single bar there means a specific
+// hour within a specific session, not either alone), so that combination is
+// checked before the single-dimension cases below.
 function describeFilters(filters: TradeFilters): string {
+  if (filters.session !== null && filters.entryHourNy !== null) {
+    return `session = ${filters.session}, hour = ${String(filters.entryHourNy).padStart(2, '0')}:00 NY`
+  }
   if (filters.leg !== null) return `leg = ${filters.leg}`
   if (filters.session !== null) return `session = ${filters.session}`
   if (filters.side !== null) return `side = ${filters.side}`
@@ -212,6 +218,11 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
 
   const histogram = useMemo(() => buildRHistogram(trades), [trades])
   const hourBuckets = useMemo(() => byHourOfDay(trades), [trades])
+  const sessions = useMemo(() => sessionsPresent(trades), [trades])
+  const sessionHourBuckets = useMemo(
+    () => sessions.map((session) => ({ session, buckets: bySessionHour(trades, session) })),
+    [trades, sessions],
+  )
   const weekdayBuckets = useMemo(() => byWeekday(trades), [trades])
   const holdTimeBuckets = useMemo(() => byHoldTime(trades), [trades])
   const streaks = useMemo(() => summarizeStreaks(trades), [trades])
@@ -250,9 +261,14 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
   const revealChart = () => containerApi.getPanel(CHART_PANEL_ID)?.api.setActive()
   const revealPropRisk = () => containerApi.getPanel(PROP_RISK_PANEL_ID)?.api.setActive()
 
-  function crossFilter<K extends keyof TradeFilters>(key: K, value: TradeFilters[K]) {
+  // Accepts a patch of one or more filter dimensions at once -- most call
+  // sites set a single key, but the session-hour facet needs to set session
+  // + entryHourNy together (see describeFilters).
+  function crossFilter(patch: Partial<TradeFilters>) {
     clearFilters()
-    setFilter(key, value)
+    for (const key of Object.keys(patch) as (keyof TradeFilters)[]) {
+      setFilter(key, patch[key] as never)
+    }
     revealChart()
   }
 
@@ -367,8 +383,8 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
 
       {activeTab === 'breakdowns' && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <BreakdownTable title="By leg" rows={by_leg} onRowClick={(k) => crossFilter('leg', k)} />
-          <BreakdownTable title="By session" rows={by_session} onRowClick={(k) => crossFilter('session', k)} />
+          <BreakdownTable title="By leg" rows={by_leg} onRowClick={(k) => crossFilter({ leg: k })} />
+          <BreakdownTable title="By session" rows={by_session} onRowClick={(k) => crossFilter({ session: k })} />
         </div>
       )}
 
@@ -440,19 +456,44 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card title="Net PnL by hour of day (America/New_York)">
-              <BucketBarChart data={hourBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('entryHourNy', Number(k))} winColor={colors.positive} lossColor={colors.negative} />
+              <BucketBarChart data={hourBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ entryHourNy: Number(k) })} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
             <Card title="Net PnL by weekday">
-              <BucketBarChart data={weekdayBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('weekday', k)} winColor={colors.positive} lossColor={colors.negative} />
+              <BucketBarChart data={weekdayBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ weekday: k })} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
           </div>
 
+          <Card title="Net PnL by hour within session (America/New_York)">
+            <p className="mb-2 text-xs text-text-muted">
+              The hour-of-day chart above pools every session together, which can hide an hour that's only strong or
+              weak within one specific session. This facets the same hour breakdown per session instead.
+            </p>
+            {sessionHourBuckets.length === 0 ? (
+              <p className="text-xs text-text-muted">No session-tagged trades in this scope.</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {sessionHourBuckets.map(({ session, buckets }) => (
+                  <div key={session}>
+                    <div className="mb-1 text-xs font-medium text-text">{session}</div>
+                    <BucketBarChart
+                      data={buckets}
+                      valueLabel="Net PnL"
+                      onSelect={(k) => crossFilter({ session, entryHourNy: Number(k) })}
+                      winColor={colors.positive}
+                      lossColor={colors.negative}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card title="Net PnL by hold time (bars_held)">
-              <BucketBarChart data={holdTimeBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter('holdTimeBucket', k)} winColor={colors.positive} lossColor={colors.negative} />
+              <BucketBarChart data={holdTimeBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ holdTimeBucket: k })} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
             <Card title="Win/loss streak distribution">
-              <StreakChart streaks={streaks} onSelect={(type, length) => crossFilter('streakSelector', { type, length })} winColor={colors.positive} lossColor={colors.negative} />
+              <StreakChart streaks={streaks} onSelect={(type, length) => crossFilter({ streakSelector: { type, length } })} winColor={colors.positive} lossColor={colors.negative} />
               <div className="mt-2 flex items-center gap-4 text-[11px] text-text-muted">
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.positive }} /> Win streaks
