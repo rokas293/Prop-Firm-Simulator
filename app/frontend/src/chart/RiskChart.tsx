@@ -65,7 +65,17 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
       grid: { vertLines: { color: b.grid }, horzLines: { color: b.grid } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: b.border },
       rightPriceScale: { borderColor: b.border },
-      crosshair: { mode: CrosshairMode.Normal },
+      // Part C3 audit gap: only `mode` was ever set here, leaving both
+      // crosshair lines and their axis-label backgrounds at lightweight-
+      // charts' own fixed default colors (see CrosshairLineOptions in its
+      // own typings) in every theme -- matches ChartKL.tsx's own crosshair
+      // theming (textMuted line, surface label background) for cross-
+      // engine consistency.
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: b.textMuted, labelBackgroundColor: b.surface },
+        horzLine: { color: b.textMuted, labelBackgroundColor: b.surface },
+      },
       autoSize: true,
     })
 
@@ -115,6 +125,10 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
       grid: { vertLines: { color: base.grid }, horzLines: { color: base.grid } },
       timeScale: { borderColor: base.border },
       rightPriceScale: { borderColor: base.border },
+      crosshair: {
+        vertLine: { color: base.textMuted, labelBackgroundColor: base.surface },
+        horzLine: { color: base.textMuted, labelBackgroundColor: base.surface },
+      },
     })
     dailyLossSeriesRef.current?.applyOptions({ color: base.warning })
   }, [base])

@@ -12,6 +12,7 @@ import {
   ensureTradeZoneOverlayRegistered,
 } from './tradeOverlays'
 import { findBracketAt, formatBracketTooltip, type BracketDensity } from '../tradeBracket'
+import { hexToRgba } from '../color'
 import {
   DRAWING_GROUP_ID,
   ensureDrawingOverlaysRegistered,
@@ -156,6 +157,30 @@ function themeStyles(colors: ThemeColors, base: ThemeBase) {
     crosshair: {
       horizontal: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface } },
       vertical: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface } },
+    },
+    // The pane-divider line between the candle pane and VOL/ATR sub-panes.
+    separator: { color: base.border },
+    // Every user-drawn tool's DEFAULT appearance (Part A2's left toolbar --
+    // trendlines, shapes, the measure tool, Fibonacci, annotations) --
+    // confirmed none of them pass their own explicit `styles` at creation
+    // (drawingOverlays.ts/ChartKL.tsx's startDrawing), so they all render
+    // from this one global default. Previously never set at all, meaning
+    // every drawing rendered in klinecharts' own unthemed built-in colors
+    // regardless of theme (Part C3 audit gap #1) -- accent for strokes/
+    // points (a legible, theme-following "pen" color, the same role accent
+    // already plays as the trade entry-marker color in tradeOverlays.ts),
+    // translucent accent for shape fills, body text color for labels.
+    // Setting this is also what makes EXISTING un-styled drawings recolor
+    // on a later theme change, not just new ones -- they have no per-
+    // instance styles of their own to override this default with.
+    overlay: {
+      point: { color: colors.accent, borderColor: base.surface },
+      line: { color: colors.accent },
+      rect: { color: hexToRgba(colors.accent, 0.15), borderColor: colors.accent },
+      polygon: { color: hexToRgba(colors.accent, 0.15), borderColor: colors.accent },
+      circle: { color: hexToRgba(colors.accent, 0.15), borderColor: colors.accent },
+      arc: { color: colors.accent },
+      text: { color: base.text, backgroundColor: base.surface, borderColor: colors.accent },
     },
   }
 }
