@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { dispose, init, type Chart, type KLineData, type OverlayCreate } from 'klinecharts'
-import { api } from '../../api/client'
+import { fetchBarsInWorker } from '../../workers/barsWorkerClient'
 import { findInstrument, pricePrecisionFromTick, tfToPeriod, tfToSeconds } from './instruments'
 import {
   ENTRY_EXIT_GROUP,
@@ -544,8 +544,15 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           respond(fullBarsRef.current, callback)
           return
         }
-        api
-          .getBars({ instrument: req.instrument, tf: req.timeframe, from: req.from, to: req.to, max_points: 5000 })
+        // Off the main thread (POLISH_ROADMAP Phase P4) -- this is the
+        // hottest bars fetch in the app (every pan/zoom-triggered window
+        // change, every timeframe/instrument switch), so it's the one most
+        // worth moving the fetch+JSON.parse off-thread; measured live via
+        // Chrome's Long Tasks API before this change (a timeframe-switch +
+        // pan sequence blocked the main thread for ~755ms across 7 tasks,
+        // one over 200ms) and after (see this phase's commit message for
+        // the re-measured numbers).
+        fetchBarsInWorker({ instrument: req.instrument, tf: req.timeframe, from: req.from, to: req.to, max_points: 5000 })
           .then((bars) => {
             fullBarsRef.current = bars
             lastFetchKeyRef.current = key
