@@ -7,6 +7,7 @@ import { useChartViewStore } from '../state/chartViewStore'
 import { useUiStore } from '../state/uiStore'
 import { applyCompassFilters } from '../compass/breakdowns'
 import EmptyState from '../components/EmptyState'
+import Skeleton from '../components/Skeleton'
 
 type SortColumn =
   | 'entry_time'
@@ -136,6 +137,19 @@ export default function TradeListPanel() {
     return <EmptyState title="No run selected" hint="Pick a run from the Runs list, or press Ctrl/Cmd+K to open one." />
   }
 
+  // POLISH_ROADMAP Phase P6: a skeleton of row-shaped bars instead of a
+  // blank list while the first fetch is in flight (see EquityPanel.tsx's
+  // own comment for why this is rare but real, post Part P4's prefetch).
+  if (rawTrades === undefined) {
+    return (
+      <div className="flex h-full w-full flex-col gap-2 p-3">
+        {Array.from({ length: 10 }, (_, i) => (
+          <Skeleton key={i} className="h-[26px]" />
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full w-full flex-col">
       <div className="space-y-2 border-b border-border p-3 text-xs">
@@ -243,14 +257,16 @@ export default function TradeListPanel() {
         </div>
 
         {sorted.length === 0 ? (
-          <div className="px-2 py-8 text-center text-xs text-text-muted">
-            <div>No trades match the current filters.</div>
+          <EmptyState
+            title="No trades match the current filters."
+            hint={hasFilters ? undefined : 'This run has no trades.'}
+          >
             {hasFilters && (
-              <button onClick={clearFilters} className="mt-2 rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
+              <button onClick={clearFilters} className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
                 Clear filters
               </button>
             )}
-          </div>
+          </EmptyState>
         ) : (
           <div
             style={{ height: rowVirtualizer.getTotalSize(), minWidth: GRID_TOTAL_WIDTH, position: 'relative' }}

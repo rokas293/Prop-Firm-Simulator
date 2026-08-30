@@ -5,6 +5,7 @@ import { useDailyRisk, useEquity } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { CHART_PANEL_ID } from '../workspace/panelIds'
 import EmptyState from '../components/EmptyState'
+import Skeleton from '../components/Skeleton'
 import { useThemeStore, useThemeBase } from '../state/themeStore'
 import { hexToRgba } from '../chart/color'
 import type { DailyRiskPoint } from '../api/types'
@@ -43,6 +44,19 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
 
   if (!runId) {
     return <EmptyState title="No run selected" hint="Pick a run from the Runs list, or press Ctrl/Cmd+K to open one." />
+  }
+
+  // POLISH_ROADMAP Phase P6: skeleton rather than a blank legend/chart/day-
+  // strip while both fetches are still in flight (see EquityPanel.tsx's
+  // own comment for why this is rare but real).
+  if (equity === undefined && dailyRisk === undefined) {
+    return (
+      <div className="flex h-full w-full flex-col gap-3 p-4">
+        <Skeleton className="h-6" />
+        <Skeleton className="min-h-0 flex-1" />
+        <Skeleton className="h-10" />
+      </div>
+    )
   }
 
   const breachDay = dailyRisk?.find((d) => d.breached) ?? null

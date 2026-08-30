@@ -4,7 +4,7 @@
 // registry into rows, not two that could drift in presentation.
 import { SHORTCUTS, type ShortcutDef } from '../keyboard/shortcuts'
 
-const CATEGORY_ORDER: ShortcutDef['category'][] = ['Global', 'Chart', 'Panels']
+const CATEGORY_ORDER: ShortcutDef['category'][] = ['Global', 'Chart', 'Drawing', 'Panels']
 
 function groupByCategory(defs: ShortcutDef[]): [ShortcutDef['category'], ShortcutDef[]][] {
   return CATEGORY_ORDER.map((cat): [ShortcutDef['category'], ShortcutDef[]] => [cat, defs.filter((d) => d.category === cat)]).filter(

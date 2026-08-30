@@ -8,6 +8,7 @@
 // easing math: the logic is here, tested here, and every call site just
 // asks "does this event match shortcut X."
 import { PANEL_DEFS } from '../workspace/panelIds'
+import { DRAWING_TOOLS } from '../chart/kl/drawingOverlays'
 
 export interface Combo {
   key?: string // matched case-insensitively against KeyboardEvent.key
@@ -21,7 +22,7 @@ export interface ShortcutDef {
   combos: Combo[]
   label: string
   description: string
-  category: 'Chart' | 'Panels' | 'Global'
+  category: 'Chart' | 'Panels' | 'Global' | 'Drawing'
 }
 
 export function matchesCombo(e: KeyboardEvent, combo: Combo): boolean {
@@ -55,6 +56,32 @@ const PANEL_TOGGLE_SHORTCUTS: ShortcutDef[] = PANEL_DEFS.map((def, i) => ({
   category: 'Panels' as const,
 }))
 
+// KL drawing-tool shortcuts (PART_A_REVISED_klinecharts.md Phase A2:
+// "keyboard shortcuts for common tools") -- picked to avoid every key
+// already bound above (r=replay, f=fitTrade, n/p=trade nav). The single
+// source of truth for the key->tool mapping lives HERE (not in
+// KLDrawingToolbar.tsx, which only consumes it) specifically so it can
+// feed both the real dispatch (ChartPanel.tsx's keydown handler) and this
+// registry -- previously it lived only in the toolbar component, wired to
+// dispatch but invisible to the "?" overlay/Settings' shortcuts list
+// (POLISH_ROADMAP Phase P6 audit: a working shortcut that isn't
+// discoverable might as well not exist).
+export const DRAWING_SHORTCUTS: Record<string, string> = {
+  h: 'horizontalStraightLine',
+  t: 'segment',
+  z: 'klZone',
+  m: 'klMeasure',
+  b: 'brush',
+}
+
+const DRAWING_TOOL_SHORTCUTS: ShortcutDef[] = Object.entries(DRAWING_SHORTCUTS).map(([key, toolName]) => ({
+  id: `draw-${toolName}`,
+  combos: [{ key }],
+  label: key.toUpperCase(),
+  description: `Draw: ${DRAWING_TOOLS.find((t) => t.name === toolName)?.label ?? toolName}`,
+  category: 'Drawing' as const,
+}))
+
 export const SHORTCUTS: ShortcutDef[] = [
   {
     id: 'nextTrade',
@@ -86,6 +113,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
   ...TIMEFRAME_SHORTCUTS,
   ...PANEL_TOGGLE_SHORTCUTS,
+  ...DRAWING_TOOL_SHORTCUTS,
   {
     id: 'openPalette',
     combos: [{ key: 'k', ctrlOrMeta: true }],

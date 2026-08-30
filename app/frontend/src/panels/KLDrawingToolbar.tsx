@@ -2,6 +2,7 @@ import { useState, type RefObject } from 'react'
 import { DRAWING_TOOLS, type DrawingGroup } from '../chart/kl/drawingOverlays'
 import type { ChartKLHandle } from '../chart/kl/ChartKL'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
+import { DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
 
 const GROUP_ORDER: DrawingGroup[] = ['lines', 'fibonacci', 'shapes', 'annotations']
 const GROUP_LABELS: Record<DrawingGroup, string> = {
@@ -9,18 +10,6 @@ const GROUP_LABELS: Record<DrawingGroup, string> = {
   fibonacci: 'Fibonacci',
   shapes: 'Shapes',
   annotations: 'Notes',
-}
-
-// A subset get keyboard shortcuts (PART_A_REVISED_klinecharts.md Phase A2:
-// "keyboard shortcuts for common tools") -- the spiritual equivalents of
-// the old 5-tool set, picked to avoid every key already bound elsewhere
-// (see keyboard/shortcuts.ts: r=replay, f=fitTrade, n/p=trade nav).
-export const DRAWING_SHORTCUTS: Record<string, string> = {
-  h: 'horizontalStraightLine',
-  t: 'segment',
-  z: 'klZone',
-  m: 'klMeasure',
-  b: 'brush',
 }
 
 // The TradeSea/Topstep-style left drawing toolbar (Phase A2), docked to
@@ -66,37 +55,45 @@ export default function KLDrawingToolbar({
         <div className="relative px-2">
           <button
             onClick={() => setManageOpen((o) => !o)}
-            disabled={drawings.length === 0}
-            className="w-full rounded bg-surface-2 px-2 py-1 text-left text-text hover:bg-surface-2-hover disabled:opacity-40"
+            className="w-full rounded bg-surface-2 px-2 py-1 text-left text-text hover:bg-surface-2-hover"
           >
             Drawings ({drawings.length})
           </button>
-          {manageOpen && drawings.length > 0 && (
+          {manageOpen && (
             <div className="absolute bottom-full left-2 z-10 mb-1 w-48 rounded border border-border bg-surface py-1 shadow-lg">
-              {drawings.map((d) => (
-                <div key={d.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-surface-2">
-                  <span className="truncate text-text">
-                    {DRAWING_TOOLS.find((t) => t.name === d.name)?.label ?? d.name}
-                  </span>
-                  <button
-                    onClick={() => klChartRef.current?.removeDrawing(d.id)}
-                    className="ml-2 shrink-0 text-text-muted hover:text-negative"
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
-              <div className="mt-1 border-t border-border px-3 pt-1.5">
-                <button
-                  onClick={() => {
-                    klChartRef.current?.clearDrawings()
-                    setManageOpen(false)
-                  }}
-                  className="text-text-muted hover:text-negative"
-                >
-                  Clear all
-                </button>
-              </div>
+              {drawings.length === 0 ? (
+                // POLISH_ROADMAP Phase P6: a helpful empty state rather than
+                // an empty dropdown (previously this button was just
+                // `disabled` at 0, so there was nothing to open at all).
+                <div className="px-3 py-2 text-text-muted">No drawings yet -- pick a tool above to start.</div>
+              ) : (
+                <>
+                  {drawings.map((d) => (
+                    <div key={d.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-surface-2">
+                      <span className="truncate text-text">
+                        {DRAWING_TOOLS.find((t) => t.name === d.name)?.label ?? d.name}
+                      </span>
+                      <button
+                        onClick={() => klChartRef.current?.removeDrawing(d.id)}
+                        className="ml-2 shrink-0 text-text-muted hover:text-negative"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+                  <div className="mt-1 border-t border-border px-3 pt-1.5">
+                    <button
+                      onClick={() => {
+                        klChartRef.current?.clearDrawings()
+                        setManageOpen(false)
+                      }}
+                      className="text-text-muted hover:text-negative"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

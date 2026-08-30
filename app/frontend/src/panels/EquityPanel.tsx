@@ -3,6 +3,7 @@ import { useEquity, useRun } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { useThemeStore } from '../state/themeStore'
 import EmptyState from '../components/EmptyState'
+import Skeleton from '../components/Skeleton'
 
 function fmtUsd(v: number | null | undefined): string {
   if (v === null || v === undefined) return '-'
@@ -21,6 +22,21 @@ export default function EquityPanel() {
 
   if (!runId) {
     return <EmptyState title="No run selected" hint="Pick a run from the Runs list, or press Ctrl/Cmd+K to open one." />
+  }
+
+  // POLISH_ROADMAP Phase P6: a consistent skeleton instead of two blank
+  // charts flashing empty (`equity ?? []`) while the fetch is in flight --
+  // rare in practice since Part P4's prefetch-on-hover usually already has
+  // this warm by the time the panel mounts, but a real gap on a genuinely
+  // cold load (e.g. jumping straight to a run via the command palette).
+  if (equity === undefined) {
+    return (
+      <div className="flex h-full w-full flex-col gap-4 overflow-auto p-4">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-[260px]" />
+        <Skeleton className="h-[220px]" />
+      </div>
+    )
   }
 
   return (

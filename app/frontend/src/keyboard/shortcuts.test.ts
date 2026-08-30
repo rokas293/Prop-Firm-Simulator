@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SHORTCUTS, isShortcut, matchesCombo } from './shortcuts'
+import { DRAWING_SHORTCUTS, SHORTCUTS, isShortcut, matchesCombo } from './shortcuts'
 
 function keyEvent(init: Partial<KeyboardEventInit> & { key: string }): KeyboardEvent {
   return new KeyboardEvent('keydown', init)
@@ -89,5 +89,20 @@ describe('SHORTCUTS registry integrity', () => {
   it('includes one toggle-panel shortcut per registered panel', () => {
     const toggles = SHORTCUTS.filter((s) => s.id.startsWith('toggle-panel-'))
     expect(toggles.length).toBeGreaterThanOrEqual(5)
+  })
+
+  // POLISH_ROADMAP Phase P6 audit: the drawing toolbar's own key->tool
+  // mapping (DRAWING_SHORTCUTS, dispatched by ChartPanel.tsx) must be
+  // fully represented in the discoverable registry -- a shortcut that
+  // works but never shows up in the "?" overlay defeats the point of a
+  // *discoverable* shortcuts list.
+  it('has one Drawing-category entry per DRAWING_SHORTCUTS key, and each fires via isShortcut', () => {
+    const drawingDefs = SHORTCUTS.filter((s) => s.category === 'Drawing')
+    expect(drawingDefs.length).toBe(Object.keys(DRAWING_SHORTCUTS).length)
+    for (const [key] of Object.entries(DRAWING_SHORTCUTS)) {
+      const def = drawingDefs.find((d) => d.combos.some((c) => c.key === key))
+      expect(def, `no Drawing shortcut registered for key "${key}"`).toBeDefined()
+      expect(isShortcut(new KeyboardEvent('keydown', { key }), def!.id)).toBe(true)
+    }
   })
 })

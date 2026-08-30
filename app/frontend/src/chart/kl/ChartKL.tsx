@@ -714,8 +714,16 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           const width = chart.getSize()?.width
           if (!seconds || !width) return
           const barCount = Math.max(1, (to - from) / seconds)
+          // setBarSpace (the zoom step) has no animation/duration parameter
+          // in klinecharts' public API -- confirmed against the v10.0.3
+          // type declarations, so only the pan (scrollToTimestamp) half of
+          // "fit trade" can ease. Still a real improvement over the
+          // previous duration:0 (an instant snap on both axes) -- matches
+          // scrollToTrade's own 200ms below, so a trade-list click and an
+          // "F" fit-trade press feel like the same motion (POLISH_ROADMAP
+          // Phase P6: "subtle easing on fit trade/scroll-to-trade").
           chart.setBarSpace(width / barCount)
-          chart.scrollToTimestamp(((from + to) / 2) * 1000, 0)
+          chart.scrollToTimestamp(((from + to) / 2) * 1000, 200)
         })
       },
       scrollToTrade: (time) => {
