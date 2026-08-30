@@ -94,6 +94,19 @@ export default function RunsListPage() {
             <tr
               key={run.run_id}
               onMouseEnter={() => prefetchRun(run.run_id)}
+              // Accessibility audit: the individual <td onClick> cells below
+              // had no keyboard equivalent at all -- a plain <td> isn't
+              // focusable and Enter/Space on it does nothing. One tab stop
+              // for the whole row (matching TradeListPanel/BreakdownTable's
+              // own row convention) rather than trying to make five separate
+              // cells independently focusable for the same action.
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  selectRun(run.run_id)
+                }
+              }}
               className={`border-b border-border hover:bg-surface ${
                 selectedRunId === run.run_id ? 'bg-surface' : ''
               }`}

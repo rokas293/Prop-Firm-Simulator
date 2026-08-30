@@ -161,6 +161,7 @@ export default function TradeListPanel() {
           <select
             value={filters.leg ?? ''}
             onChange={(e) => setFilter('leg', e.target.value || null)}
+            aria-label="Filter by leg"
             className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Leg: all</option>
@@ -173,6 +174,7 @@ export default function TradeListPanel() {
           <select
             value={filters.session ?? ''}
             onChange={(e) => setFilter('session', e.target.value || null)}
+            aria-label="Filter by session"
             className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Session: all</option>
@@ -185,6 +187,7 @@ export default function TradeListPanel() {
           <select
             value={filters.side ?? ''}
             onChange={(e) => setFilter('side', e.target.value || null)}
+            aria-label="Filter by side"
             className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Side: all</option>
@@ -197,6 +200,7 @@ export default function TradeListPanel() {
           <select
             value={filters.result ?? ''}
             onChange={(e) => setFilter('result', (e.target.value || null) as ResultFilter)}
+            aria-label="Filter by result"
             className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Result: all</option>
@@ -206,6 +210,7 @@ export default function TradeListPanel() {
           <select
             value={filters.exitType ?? ''}
             onChange={(e) => setFilter('exitType', e.target.value || null)}
+            aria-label="Filter by exit type"
             className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Exit: all</option>
@@ -217,15 +222,26 @@ export default function TradeListPanel() {
           </select>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-text-muted">From</label>
+          {/* Accessibility audit: these labels sat next to their inputs with
+              no htmlFor/id pairing -- confirmed live (input.labels.length
+              was 0), so a screen reader announced the date field with no
+              name at all despite the visible "From"/"To" text right next
+              to it. */}
+          <label htmlFor="trade-list-date-from" className="text-text-muted">
+            From
+          </label>
           <input
+            id="trade-list-date-from"
             type="date"
             value={filters.dateFrom ?? ''}
             onChange={(e) => setFilter('dateFrom', e.target.value || null)}
             className="rounded bg-surface-2 px-2 py-1 text-text"
           />
-          <label className="text-text-muted">To</label>
+          <label htmlFor="trade-list-date-to" className="text-text-muted">
+            To
+          </label>
           <input
+            id="trade-list-date-to"
             type="date"
             value={filters.dateTo ?? ''}
             onChange={(e) => setFilter('dateTo', e.target.value || null)}

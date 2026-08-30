@@ -4,17 +4,28 @@
 // via isShortcut() -- so this can never drift from what actually works.
 // App.tsx's global '?'/Escape listener owns `open`; real dispatch for each
 // shortcut lives in ChartPanel, CommandPalette, and KeyboardShortcuts.tsx.
+import { useRef } from 'react'
 import ShortcutsList from './ShortcutsList'
+import { useModalFocus } from './useModalFocus'
 
 export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+  // Same fix as SettingsPanel (accessibility audit): this hand-rolled
+  // dialog had no focus management at all, confirmed live to leak Tab
+  // through to the workspace behind it. Called unconditionally (rules of
+  // hooks); no-ops internally while `open` is false.
+  const contentRef = useRef<HTMLDivElement>(null)
+  useModalFocus(contentRef, open)
+
   if (!open) return null
 
   return (
     <div className="propbt-cmdk-overlay" onClick={onClose}>
       <div
+        ref={contentRef}
         className="propbt-shortcuts-content"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
+        aria-modal="true"
         aria-label="Keyboard shortcuts"
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">

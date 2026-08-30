@@ -33,6 +33,15 @@ export default function BreakdownTable({
             <tr
               key={key}
               onClick={() => onRowClick(key)}
+              // Accessibility audit: a plain onClick <tr> has no keyboard
+              // equivalent -- same fix as TradeListPanel's rows.
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onRowClick(key)
+                }
+              }}
               className="cursor-pointer border-b border-border hover:bg-surface-2"
               title={`Filter trade list + chart to ${key}`}
             >

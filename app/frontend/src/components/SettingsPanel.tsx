@@ -22,6 +22,7 @@ import { useUiStore, type Timeframe } from '../state/uiStore'
 import { useChartDefaultsStore } from '../state/chartDefaultsStore'
 import { PRESETS, applyAnalysisLayout } from '../workspace/presets'
 import ShortcutsList from './ShortcutsList'
+import { useModalFocus } from './useModalFocus'
 import type { BracketDensity } from '../chart/tradeBracket'
 
 const TIMEFRAMES: Timeframe[] = ['1min', '5min', '15min', '1h']
@@ -138,6 +139,13 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
 
   const [importError, setImportError] = useState<string | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
+  // Accessibility audit: confirmed live that opening this dialog left focus
+  // on the trigger button behind it, and Tab walked straight through into
+  // the workspace behind the overlay -- see useModalFocus's own comment.
+  // Called unconditionally (rules of hooks); it no-ops internally while
+  // `open` is false.
+  const contentRef = useRef<HTMLDivElement>(null)
+  useModalFocus(contentRef, open)
 
   if (!open) return null
 
@@ -180,7 +188,14 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
 
   return (
     <div className="propbt-cmdk-overlay" onClick={onClose}>
-      <div className="propbt-settings-content" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
+      <div
+        ref={contentRef}
+        className="propbt-settings-content"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+      >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           {/* 16px/medium -- the same "panel title" scale step as Card
               (DESIGN_LANGUAGE.md section 3), not a bespoke 14px/semibold. */}

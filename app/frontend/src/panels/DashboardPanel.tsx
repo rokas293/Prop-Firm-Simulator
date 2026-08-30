@@ -376,10 +376,18 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
         {overall.trades} trades · {result ? result.trading_days : '-'} trading days
       </div>
 
-      <div className="mb-4 flex gap-1 border-b border-border">
+      {/* Accessibility audit: this is semantically a tablist (one panel
+          visible at a time, exactly one active) but had no ARIA roles at
+          all -- a screen reader announced four plain buttons with no
+          indication which one was selected or that they were a group. */}
+      <div role="tablist" aria-label="Dashboard sections" className="mb-4 flex gap-1 border-b border-border">
         {TABS.map((t) => (
           <button
             key={t.key}
+            id={`dashboard-tab-${t.key}`}
+            role="tab"
+            aria-selected={activeTab === t.key}
+            aria-controls={`dashboard-tabpanel-${t.key}`}
             onClick={() => setActiveTab(t.key)}
             className={`px-3 py-1 text-sm ${
               activeTab === t.key
@@ -393,7 +401,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
       </div>
 
       {activeTab === 'overview' && (
-        <div className="space-y-4">
+        <div id="dashboard-tabpanel-overview" role="tabpanel" aria-labelledby="dashboard-tab-overview" className="space-y-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <KpiTile label="Win rate" value={fmtPct(overall.win_rate)} />
             {run?.result.days_to_fail != null && <KpiTile label="Days to fail" value={String(run.result.days_to_fail)} accent={false} />}
@@ -412,14 +420,19 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
       )}
 
       {activeTab === 'breakdowns' && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div
+          id="dashboard-tabpanel-breakdowns"
+          role="tabpanel"
+          aria-labelledby="dashboard-tab-breakdowns"
+          className="grid grid-cols-1 gap-4 lg:grid-cols-2"
+        >
           <BreakdownTable title="By leg" rows={by_leg} onRowClick={(k) => crossFilter({ leg: k })} />
           <BreakdownTable title="By session" rows={by_session} onRowClick={(k) => crossFilter({ session: k })} />
         </div>
       )}
 
       {activeTab === 'distributions' && (
-        <div className="space-y-4">
+        <div id="dashboard-tabpanel-distributions" role="tabpanel" aria-labelledby="dashboard-tab-distributions" className="space-y-4">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card title="R-multiple distribution">
               <ResponsiveContainer width="100%" height={220}>
@@ -552,7 +565,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
       )}
 
       {activeTab === 'score' && (
-        <div className="space-y-4">
+        <div id="dashboard-tabpanel-score" role="tabpanel" aria-labelledby="dashboard-tab-score" className="space-y-4">
           <ScoreCard score={score} />
           <Card>
             <div className="mb-2 flex items-center justify-between">

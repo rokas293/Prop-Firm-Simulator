@@ -443,6 +443,7 @@ export default function ChartPanel() {
             <button
               key={tf}
               onClick={() => setTimeframe(tf)}
+              aria-pressed={timeframe === tf}
               className={`rounded px-2 py-1 ${
                 timeframe === tf
                   ? 'bg-accent text-white'
