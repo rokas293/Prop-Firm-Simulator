@@ -129,6 +129,19 @@
   color: var(--color-text-muted);
 }
 
+/* Recharts' axis-tick `tick={{...}}` style object is converted to SVG
+   presentation attributes (fill, font-size), not an inline `style` --
+   confirmed live: an unrecognized key like fontVariantNumeric is silently
+   dropped from the rendered <text> (its outerHTML has font-size/fill
+   attributes but no font-variant-numeric). A plain CSS rule against
+   Recharts' own generated class applies directly regardless of that
+   internal attribute-mapping (DESIGN_AUDIT.md: "tabular numbers on
+   axes/tooltips" -- the Tooltip's contentStyle works fine since it's a
+   plain HTML div; only the SVG-rendered axis text needed this). */
+.recharts-cartesian-axis-tick-value {
+  font-variant-numeric: tabular-nums;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

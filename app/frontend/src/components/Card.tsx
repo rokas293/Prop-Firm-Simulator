@@ -11,7 +11,11 @@ import type { ReactNode } from 'react'
 export default function Card({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <div className="rounded border border-border bg-surface p-4">
-      {title && <div className="mb-2 text-sm font-medium text-text">{title}</div>}
+      {/* 16px = DESIGN_LANGUAGE.md section 3's own scale mapping ("16 =
+          panel titles") -- was 14px (DESIGN_AUDIT.md S3). Only consumers
+          are BreakdownTable and DashboardPanel (both the Dashboard
+          surface), so this ripples nowhere else in the app. */}
+      {title && <div className="mb-2 text-base font-medium text-text">{title}</div>}
       {children}
     </div>
   )

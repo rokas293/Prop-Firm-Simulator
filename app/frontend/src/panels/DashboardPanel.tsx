@@ -32,6 +32,26 @@ const SCOPES: { key: StatsScope; label: string }[] = [
 // read from the run itself.
 const DEFAULT_MLL_USD = 2000
 
+// Shared Recharts chrome (DESIGN_AUDIT.md "quiet Recharts chrome"): Recharts'
+// own defaults for axisLine/tickLine are a hardcoded mid-gray, not tied to
+// the theme at all -- confirmed live (getComputedStyle) brighter than even
+// --color-border, so it stood out against the deliberately muted grid
+// instead of receding with it. Tabular figures on the tick text itself are
+// index.css's .recharts-cartesian-axis-tick-value rule, not set here --
+// Recharts converts this style object to SVG presentation attributes
+// (fill, font-size), silently dropping fontVariantNumeric, confirmed by
+// inspecting the rendered <text>'s own attributes. One set of style
+// objects, reused by every chart below, so every axis/tooltip in this
+// panel reads as the same quiet chrome instead of each chart having
+// drifted slightly from the others.
+const AXIS_TICK_STYLE = { fill: 'var(--color-text-muted)', fontSize: 11 }
+const AXIS_LINE_STYLE = { stroke: 'var(--color-border)' }
+const TOOLTIP_CONTENT_STYLE = {
+  background: 'var(--color-surface)',
+  border: '1px solid var(--color-border)',
+  fontVariantNumeric: 'tabular-nums' as const,
+}
+
 const R_BUCKET_WIDTH = 0.5
 
 function buildRHistogram(trades: TradeRecord[]): { r: number; count: number }[] {
@@ -69,10 +89,10 @@ function BucketBarChart({
     <ResponsiveContainer width="100%" height={180}>
       <BarChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
-        <XAxis dataKey="key" tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} />
-        <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} />
+        <XAxis dataKey="key" tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} />
+        <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} />
         <Tooltip
-          contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+          contentStyle={TOOLTIP_CONTENT_STYLE}
           formatter={(v) => [fmtUsd(Number(v)), valueLabel]}
           labelFormatter={(k) => `${k}`}
         />
@@ -83,6 +103,24 @@ function BucketBarChart({
         </Bar>
       </BarChart>
     </ResponsiveContainer>
+  )
+}
+
+// A borderless label+value pair for secondary stats that sit INSIDE an
+// already-bordered Card (DESIGN_AUDIT.md: flatten nesting -- a stat next to
+// three siblings inside a card that's already framed doesn't need its own
+// KpiTile border on top of that, per DESIGN_LANGUAGE.md section 5: "a KPI
+// doesn't need a bordered card if whitespace + a muted label already
+// separate it"). Distinct from KpiTile, which is reserved for the
+// hero/section-KPI rows that stand on their own.
+function MiniStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div>
+      <div className="micro-label">{label}</div>
+      <div className={`tabular-nums text-sm font-medium ${accent === undefined ? 'text-text' : accent ? 'text-positive' : 'text-negative'}`}>
+        {value}
+      </div>
+    </div>
   )
 }
 
@@ -103,11 +141,13 @@ function StreakChart({
         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
         <XAxis
           dataKey="length"
-          tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+          tick={AXIS_TICK_STYLE}
+          axisLine={AXIS_LINE_STYLE}
+          tickLine={AXIS_LINE_STYLE}
           label={{ value: 'Streak length', position: 'insideBottom', offset: -5, fill: 'var(--color-text-muted)', fontSize: 11 }}
         />
-        <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} allowDecimals={false} />
-        <Tooltip contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }} />
+        <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} allowDecimals={false} />
+        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
         <Bar
           dataKey="winCount"
           name="Win streaks"
@@ -312,14 +352,14 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             }`}
           >
             {s.label}
-            {s.key === 'oos' && <span className="ml-1 text-[10px] opacity-70">(headline)</span>}
+            {s.key === 'oos' && <span className="ml-1 text-[11px] opacity-70">(headline)</span>}
           </button>
         ))}
         {!run?.is_oos_split_date && (
           <span className="text-xs text-text-muted">this run has no IS/OOS split date -- scope has no effect</span>
         )}
         {hasActiveFilter && (
-          <span className="flex items-center gap-1.5 rounded bg-accent/15 px-2 py-1 text-xs text-accent">
+          <span className="flex items-center gap-1 rounded bg-accent/15 px-2 py-1 text-xs text-accent">
             Trade List + Chart filtered by {activeFilterDescription}
             <button onClick={clearFilters} className="text-accent hover:text-text">
               &times;
@@ -360,7 +400,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
-            className={`rounded-t px-3 py-1.5 text-sm ${
+            className={`px-3 py-1 text-sm ${
               activeTab === t.key
                 ? 'border-b-2 border-accent text-text'
                 : 'text-text-muted hover:text-text'
@@ -404,9 +444,9 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={histogram}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
-                  <XAxis dataKey="r" tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} tickFormatter={(v) => `${v}R`} />
-                  <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} allowDecimals={false} />
-                  <Tooltip contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }} labelFormatter={(v) => `${v}R bucket`} />
+                  <XAxis dataKey="r" tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} tickFormatter={(v) => `${v}R`} />
+                  <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} allowDecimals={false} />
+                  <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} labelFormatter={(v) => `${v}R bucket`} />
                   <ReferenceLine x={0} stroke="var(--color-border)" />
                   <Bar dataKey="count">
                     {histogram.map((h, i) => (
@@ -429,20 +469,24 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
                     type="number"
                     dataKey="mae_points"
                     name="MAE"
-                    tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+                    tick={AXIS_TICK_STYLE}
+                    axisLine={AXIS_LINE_STYLE}
+                    tickLine={AXIS_LINE_STYLE}
                     label={{ value: 'MAE (pts)', position: 'insideBottom', offset: -5, fill: 'var(--color-text-muted)', fontSize: 11 }}
                   />
                   <YAxis
                     type="number"
                     dataKey="mfe_points"
                     name="MFE"
-                    tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+                    tick={AXIS_TICK_STYLE}
+                    axisLine={AXIS_LINE_STYLE}
+                    tickLine={AXIS_LINE_STYLE}
                     label={{ value: 'MFE (pts)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-muted)', fontSize: 11 }}
                   />
                   <ZAxis range={[24, 24]} />
                   <Tooltip
                     cursor={{ strokeDasharray: '3 3' }}
-                    contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+                    contentStyle={TOOLTIP_CONTENT_STYLE}
                     formatter={(v, name) => [Number(v).toFixed(2), String(name)]}
                   />
                   <Scatter data={wins} fill={colors.positive} fillOpacity={0.6} />
@@ -450,32 +494,35 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
                   <Scatter data={clippedStops} fill="var(--color-warning)" fillOpacity={0.9} />
                 </ScatterChart>
               </ResponsiveContainer>
-              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border pt-3 sm:grid-cols-4">
-                <KpiTile label="Losses" value={String(regime.losses)} />
-                <KpiTile label="Clipped stops" value={String(regime.clippedStops)} accent={regime.clippedStops === 0} />
-                <KpiTile
+              {/* Flattened, borderless substats (DESIGN_AUDIT.md: flatten
+                  nesting) -- these used to be 4 individually-bordered
+                  KpiTiles inside this already-bordered Card, plus a
+                  border-t divider on top of that. Whitespace (the grid gap
+                  + the surrounding Card padding) does the separating now. */}
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <MiniStat label="Losses" value={String(regime.losses)} />
+                <MiniStat label="Clipped stops" value={String(regime.clippedStops)} accent={regime.clippedStops === 0} />
+                <MiniStat
                   label="Clipped share"
                   value={regime.clippedStopsShare !== null ? fmtPct(regime.clippedStopsShare) : '-'}
                   accent={regime.clippedStopsShare !== null ? regime.clippedStopsShare < 0.2 : undefined}
                 />
-                <KpiTile label="Avg MAE / SL" value={regime.avgMaeToSlRatio !== null ? regime.avgMaeToSlRatio.toFixed(2) : '-'} />
+                <MiniStat label="Avg MAE / SL" value={regime.avgMaeToSlRatio !== null ? regime.avgMaeToSlRatio.toFixed(2) : '-'} />
               </div>
             </Card>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card title="Net PnL by hour of day (America/New_York)">
-              <BucketBarChart data={hourBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ entryHourNy: Number(k) })} winColor={colors.positive} lossColor={colors.negative} />
-            </Card>
-            <Card title="Net PnL by weekday">
-              <BucketBarChart data={weekdayBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ weekday: k })} winColor={colors.positive} lossColor={colors.negative} />
-            </Card>
-          </div>
-
-          <Card title="Net PnL by hour within session (America/New_York)">
+          {/* Merged (DESIGN_AUDIT.md DI3): pooled hour-of-day and the
+              per-session hour facet used to be two full Card borders for
+              the same underlying dimension. One card now, with a muted
+              subheading instead of a second border to separate the two
+              views. */}
+          <Card title="Net PnL by hour (America/New_York)">
+            <BucketBarChart data={hourBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ entryHourNy: Number(k) })} winColor={colors.positive} lossColor={colors.negative} />
+            <div className="mb-2 mt-4 micro-label">By session</div>
             <p className="mb-2 text-xs text-text-muted">
-              The hour-of-day chart above pools every session together, which can hide an hour that's only strong or
-              weak within one specific session. This facets the same hour breakdown per session instead.
+              The chart above pools every session together, which can hide an hour that's only strong or weak within
+              one specific session.
             </p>
             {sessionHourBuckets.length === 0 ? (
               <p className="text-xs text-text-muted">No session-tagged trades in this scope.</p>
@@ -498,24 +545,28 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           </Card>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Card title="Net PnL by weekday">
+              <BucketBarChart data={weekdayBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ weekday: k })} winColor={colors.positive} lossColor={colors.negative} />
+            </Card>
             <Card title="Net PnL by hold time (bars_held)">
               <BucketBarChart data={holdTimeBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ holdTimeBucket: k })} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
-            <Card title="Win/loss streak distribution">
-              <StreakChart streaks={streaks} onSelect={(type, length) => crossFilter({ streakSelector: { type, length } })} winColor={colors.positive} lossColor={colors.negative} />
-              <div className="mt-2 flex items-center gap-4 text-[11px] text-text-muted">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.positive }} /> Win streaks
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.negative }} /> Loss streaks
-                </span>
-                <span className="ml-auto">
-                  Longest win {streaks.longestWin} &middot; longest loss {streaks.longestLoss}
-                </span>
-              </div>
-            </Card>
           </div>
+
+          <Card title="Win/loss streak distribution">
+            <StreakChart streaks={streaks} onSelect={(type, length) => crossFilter({ streakSelector: { type, length } })} winColor={colors.positive} lossColor={colors.negative} />
+            <div className="mt-2 flex items-center gap-4 text-[11px] text-text-muted">
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.positive }} /> Win streaks
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.negative }} /> Loss streaks
+              </span>
+              <span className="ml-auto">
+                Longest win {streaks.longestWin} &middot; longest loss {streaks.longestLoss}
+              </span>
+            </div>
+          </Card>
         </div>
       )}
 
