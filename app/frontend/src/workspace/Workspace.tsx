@@ -134,7 +134,7 @@ export default function Workspace() {
 
   return (
     <div className="flex h-[calc(100vh-49px)] flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-1.5 text-xs">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs">
         <span className="text-text-muted">Layout:</span>
         {PRESETS.map((p) => (
           <button
@@ -162,13 +162,13 @@ export default function Workspace() {
           {addMenuOpen && (
             <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded border border-border bg-surface py-1 shadow-lg">
               {closedPanels.length === 0 ? (
-                <div className="px-3 py-1.5 text-text-muted">All panels open</div>
+                <div className="px-3 py-1 text-text-muted">All panels open</div>
               ) : (
                 closedPanels.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => addPanel(p.id)}
-                    className="block w-full px-3 py-1.5 text-left text-text hover:bg-surface-2"
+                    className="block w-full px-3 py-1 text-left text-text hover:bg-surface-2"
                   >
                     {p.title}
                   </button>

@@ -23,10 +23,10 @@ export default function PerfHud() {
   const renderMs = renderSamples.map((s) => s.ms)
 
   return (
-    <div className="fixed bottom-3 right-3 z-[200] w-72 rounded border border-border bg-bg/95 p-3 font-mono text-[10px] leading-relaxed text-text shadow-lg">
-      <div className="mb-1.5 text-text-muted">PERF HUD</div>
+    <div className="fixed bottom-3 right-3 z-[200] w-72 rounded border border-border bg-bg/95 p-3 font-mono text-[11px] leading-relaxed text-text shadow-lg">
+      <div className="mb-2 text-text-muted">PERF HUD</div>
 
-      <div className="mb-0.5 text-text-muted">
+      <div className="mb-1 text-text-muted">
         Fetches n={fetchMs.length} avg {avg(fetchMs).toFixed(1)}ms max {max(fetchMs).toFixed(1)}ms
       </div>
       {fetchSamples
@@ -40,7 +40,7 @@ export default function PerfHud() {
           </div>
         ))}
 
-      <div className="mb-0.5 mt-2 text-text-muted">
+      <div className="mb-1 mt-2 text-text-muted">
         Renders n={renderMs.length} avg {avg(renderMs).toFixed(1)}ms max {max(renderMs).toFixed(1)}ms
       </div>
       {renderSamples

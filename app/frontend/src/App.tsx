@@ -88,8 +88,12 @@ export default function App() {
           Settings
         </button>
         <span className="text-xs text-text-muted">
-          <kbd className="rounded border border-border px-1.5 py-0.5">Ctrl/Cmd K</kbd> commands &middot;{' '}
-          <button onClick={() => setShortcutsOpen(true)} className="rounded border border-border px-1.5 py-0.5 hover:border-border-hover hover:text-text">
+          {/* Same kbd treatment as ShortcutsList's keycaps (px-1 py-1, not
+              this surface's own px-1.5 py-0.5) -- this was a third,
+              independent keycap styling, flagged in the Settings/palette
+              pass as out of scope there (global-sweep territory). */}
+          <kbd className="rounded border border-border px-1 py-1">Ctrl/Cmd K</kbd> commands &middot;{' '}
+          <button onClick={() => setShortcutsOpen(true)} className="rounded border border-border px-1 py-1 hover:border-border-hover hover:text-text">
             ?
           </button>{' '}
           shortcuts

@@ -81,7 +81,7 @@ export default function KLDrawingToolbar({
               ) : (
                 <>
                   {drawings.map((d) => (
-                    <div key={d.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-surface-2">
+                    <div key={d.id} className="flex items-center justify-between px-3 py-1 hover:bg-surface-2">
                       <span className="truncate text-text">
                         {DRAWING_TOOLS.find((t) => t.name === d.name)?.label ?? d.name}
                       </span>
@@ -93,7 +93,7 @@ export default function KLDrawingToolbar({
                       </button>
                     </div>
                   ))}
-                  <div className="mt-1 border-t border-border px-3 pt-1.5">
+                  <div className="mt-1 border-t border-border px-3 pt-2">
                     <button
                       onClick={() => {
                         klChartRef.current?.clearDrawings()

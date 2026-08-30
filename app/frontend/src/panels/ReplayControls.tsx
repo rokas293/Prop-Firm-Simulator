@@ -1,14 +1,10 @@
 import type { Bar, EquityPoint } from '../api/types'
+import { fmtUsd } from '../format'
 
 const SPEEDS = [0.5, 1, 2, 4, 8, 16] as const
 
 function fmtTime(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toISOString().slice(0, 19).replace('T', ' ')
-}
-
-function fmtUsd(v: number): string {
-  const sign = v >= 0 ? '' : '-'
-  return `${sign}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 interface ReplayControlsProps {

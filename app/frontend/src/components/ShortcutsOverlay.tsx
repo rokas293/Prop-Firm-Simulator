@@ -18,7 +18,11 @@ export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onC
         aria-label="Keyboard shortcuts"
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-text">Keyboard shortcuts</h2>
+          {/* Same 16px/medium as SettingsPanel's title -- was 14px/600
+              here, the exact "same thing, second convention" gap the
+              global sweep is for (Settings' matching title was already
+              fixed in that surface's own pass). */}
+          <h2 className="text-base font-medium text-text">Keyboard shortcuts</h2>
           <button onClick={onClose} className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
             Esc to close
           </button>

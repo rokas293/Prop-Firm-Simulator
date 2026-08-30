@@ -3,26 +3,15 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { useEquity, useRun, useStats, type StatsScope } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { useThemeStore, COMPARE_B_COLOR } from '../state/themeStore'
+import Card from '../components/Card'
+import { fmtPct, fmtR, fmtUsd } from '../format'
+import { AXIS_TICK_STYLE, AXIS_LINE_STYLE, TOOLTIP_CONTENT_STYLE } from '../chart/rechartsTheme'
 
 const SCOPES: { key: StatsScope; label: string }[] = [
   { key: 'oos', label: 'Out-of-sample' },
   { key: 'is', label: 'In-sample' },
   { key: 'all', label: 'All' },
 ]
-
-function fmtUsd(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '-'
-  const sign = v >= 0 ? '' : '-'
-  return `${sign}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-function fmtPct(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '-'
-  return `${(v * 100).toFixed(1)}%`
-}
-function fmtR(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '-'
-  return `${v.toFixed(2)}R`
-}
 
 interface MergedPoint {
   elapsedDays: number
@@ -135,26 +124,21 @@ export default function ComparePage() {
         ))}
       </div>
 
-      <div className="mb-6 rounded border border-border bg-surface p-4">
-        <div className="mb-2 text-sm font-medium text-text">
-          Equity vs elapsed trading time (each run re-based to day 0 at its own start)
-        </div>
+      <Card title="Equity vs elapsed trading time (each run re-based to day 0 at its own start)">
         <ResponsiveContainer width="100%" height={320}>
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
             <XAxis
               dataKey="elapsedDays"
               type="number"
-              tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+              tick={AXIS_TICK_STYLE}
+              axisLine={AXIS_LINE_STYLE}
+              tickLine={AXIS_LINE_STYLE}
               label={{ value: 'Elapsed days', position: 'insideBottom', offset: -5, fill: 'var(--color-text-muted)', fontSize: 11 }}
             />
-            <YAxis tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} domain={['auto', 'auto']} />
-            <Tooltip
-              contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-              formatter={(v) => fmtUsd(Number(v))}
-              labelFormatter={(v) => `day ${v}`}
-            />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} domain={['auto', 'auto']} />
+            <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} formatter={(v) => fmtUsd(Number(v))} labelFormatter={(v) => `day ${v}`} />
+            <Legend wrapperStyle={{ fontSize: 12, color: 'var(--color-text-muted)' }} />
             <Line
               type="stepAfter"
               dataKey="equityA"
@@ -175,18 +159,17 @@ export default function ComparePage() {
             />
           </LineChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
 
-      <div className="rounded border border-border bg-surface p-4">
-        <div className="mb-2 text-sm font-medium text-text">Side-by-side stats ({scope})</div>
+      <Card title={`Side-by-side stats (${scope})`}>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-border text-left">
-              <th className="micro-label py-1.5 pr-3 text-left"></th>
-              <th className="micro-label py-1.5 pr-3 text-right" style={{ color: colorA }}>
+              <th className="micro-label py-1 pr-3 text-left"></th>
+              <th className="micro-label py-1 pr-3 text-right" style={{ color: colorA }}>
                 A &middot; {runA?.instrument ?? '...'}
               </th>
-              <th className="micro-label py-1.5 pr-3 text-right" style={{ color: COMPARE_B_COLOR }}>
+              <th className="micro-label py-1 pr-3 text-right" style={{ color: COMPARE_B_COLOR }}>
                 B &middot; {runB?.instrument ?? '...'}
               </th>
             </tr>
@@ -194,9 +177,9 @@ export default function ComparePage() {
           <tbody>
             {rows.map((r) => (
               <tr key={r.label} className="border-b border-border">
-                <td className="py-1.5 pr-3 text-text-muted">{r.label}</td>
-                <td className={`py-1.5 pr-3 text-text ${r.isText ? 'text-right' : 'num'}`}>{r.a}</td>
-                <td className={`py-1.5 pr-3 text-text ${r.isText ? 'text-right' : 'num'}`}>{r.b}</td>
+                <td className="py-1 pr-3 text-text-muted">{r.label}</td>
+                <td className={`py-1 pr-3 text-text ${r.isText ? 'text-right' : 'num'}`}>{r.a}</td>
+                <td className={`py-1 pr-3 text-text ${r.isText ? 'text-right' : 'num'}`}>{r.b}</td>
               </tr>
             ))}
             {rows.length === 0 && (
@@ -208,14 +191,14 @@ export default function ComparePage() {
             )}
           </tbody>
         </table>
-      </div>
+      </Card>
     </div>
   )
 }
 
 function RunHeader({ color, label, run }: { color: string; label: string; run: { run_id: string; instrument: string; date_from: string; date_to: string } | undefined }) {
   return (
-    <div className="rounded border border-border bg-surface p-3">
+    <Card>
       <div className="flex items-center gap-2">
         <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
         <span className="font-semibold text-text">Run {label}</span>
@@ -230,6 +213,6 @@ function RunHeader({ color, label, run }: { color: string; label: string; run: {
       ) : (
         <div className="mt-1 text-xs text-text-muted">Loading…</div>
       )}
-    </div>
+    </Card>
   )
 }

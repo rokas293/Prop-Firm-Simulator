@@ -556,7 +556,12 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           <ScoreCard score={score} />
           <Card>
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-medium text-text">AI insight (optional)</div>
+              {/* 16px/medium, matching Card's own title prop exactly -- this
+                  is a compound title+button header (Card's documented
+                  escape hatch for that case), but it sits directly under
+                  ScoreCard's 16px title above and should read as the same
+                  weight class, not a smaller one. */}
+              <div className="text-base font-medium text-text">AI insight (optional)</div>
               <button
                 onClick={() => runId && summarizeMutation.mutate({ runId, scope })}
                 disabled={!aiStatusQuery.data?.available || summarizeMutation.isPending}

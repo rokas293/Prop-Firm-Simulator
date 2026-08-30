@@ -10,10 +10,10 @@ import type { ReactNode } from 'react'
 // whenever the empty state needs to DO something, not just say something.
 export default function EmptyState({ title, hint, children }: { title: string; hint?: string; children?: ReactNode }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center">
+    <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
       <div className="text-sm text-text-muted">{title}</div>
       {hint && <div className="max-w-xs text-xs text-text-muted">{hint}</div>}
-      {children && <div className="mt-1.5">{children}</div>}
+      {children && <div className="mt-2">{children}</div>}
     </div>
   )
 }

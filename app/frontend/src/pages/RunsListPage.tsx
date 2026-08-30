@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { usePrefetchRun, useRuns } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
+import Skeleton from '../components/Skeleton'
 
 export default function RunsListPage() {
   const { data: runs, isLoading, isError, error } = useRuns()
@@ -19,8 +20,22 @@ export default function RunsListPage() {
     })
   }
 
+  // DESIGN_AUDIT.md global sweep: this is the app's actual entry screen
+  // (the first thing rendered on load), so a bare "Loading runs…" line was
+  // the least-shaped loading state in the app -- shaped like the table
+  // that's about to replace it instead, matching Trade List's own skeleton
+  // pattern.
   if (isLoading) {
-    return <div className="p-6 text-text-muted">Loading runs…</div>
+    return (
+      <div className="p-6">
+        <Skeleton className="mb-4 h-6 w-24" />
+        <div className="flex flex-col gap-2">
+          {Array.from({ length: 6 }, (_, i) => (
+            <Skeleton key={i} className="h-8" />
+          ))}
+        </div>
+      </div>
+    )
   }
   if (isError) {
     return <div className="p-6 text-negative">Failed to load runs: {(error as Error).message}</div>
@@ -29,7 +44,7 @@ export default function RunsListPage() {
     return (
       <div className="p-6 text-text-muted">
         No runs yet. Generate one with{' '}
-        <code className="rounded bg-surface-2 px-1.5 py-0.5 text-text">
+        <code className="rounded bg-surface-2 px-1 py-1 text-text">
           python run.py review --config propbt/config/strategy.yaml
         </code>
         .
