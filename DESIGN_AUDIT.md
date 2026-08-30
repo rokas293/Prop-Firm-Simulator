@@ -160,3 +160,16 @@ Screenshots: `00-runs-list-empty`.
 ## Suggested elevation order
 
 Per DESIGN_LANGUAGE.md's own stated order (chart workspace → trade list → dashboard → prop risk/equity → settings/palette → global sweep), but given how much of this audit's *count* of findings is really 2–3 shared-component fixes (tabular numbers, KpiTile size, table headers, micro-label weight), consider doing a **global shared-component pass first** (tabular-nums utility, KpiTile size/weight, table header style) before the surface-by-surface loop — it would silently resolve roughly half the items listed above (T1, T2, B1, B2, D1, D2, DI2, R2, S3 partially) in one commit, and the remaining surface-specific items (C1 drawing-tool color, P1/P2 Prop Risk loading+label clutter, C2 chart skeleton) are the ones that actually need per-surface attention.
+
+---
+
+## Follow-up re-audit (record only, no fixes applied this pass)
+
+All six elevation passes above (shared components, chart workspace, trade list, dashboard, prop risk/equity, settings/palette) plus the global consistency sweep have since landed. This is a fresh, independent re-run of the audit against the *current* code — a grep across the whole frontend for off-grid spacing (`p/m/gap` classes ending in `.5`), off-scale text sizes (`text-[Npx]` outside {11,12,13,14,16,20,24-28}, and Tailwind's own `text-lg`/`text-3xl`/`text-4xl`), and a re-check of a handful of surfaces not central to any single elevation pass (the Runs-list error/empty states, `IndicatorTogglePanel`, `KeyboardShortcuts.tsx`, `PerfProfiler.tsx`).
+
+**Result: the grep sweep came back clean** — no off-grid spacing and no off-scale text remain anywhere in `app/frontend/src`. That's a real signal the six passes were thorough, not a claim that nothing is left; two small, genuine items surfaced from re-reading actual render output rather than grepping for patterns:
+
+- **R3 still open.** The original audit's item R3 (Runs-list "FAILED (mll_breach)" cell colors the whole string — status word *and* the parenthetical fail-reason detail — in `text-negative`) was never picked up by any of the six passes; confirmed still present at `pages/RunsListPage.tsx`. DESIGN_LANGUAGE §9: "positive/negative color on the number only, not its label" — the same principle applies to a status word vs. its trailing detail. Low severity, unchanged since the original audit.
+- **New, same-shaped issue: the Runs-list error state.** `if (isError) return <div className="p-6 text-negative">Failed to load runs: {error.message}</div>` colors the *entire* line — including the raw exception text — in negative-red, rather than reserving the color for "Failed to load runs" and letting the technical detail sit in muted secondary text. Same root cause as R3 (a whole message colored instead of just its status word), on a surface (the error path of the app's own entry screen) that's rarely exercised in normal use, which is likely why it wasn't caught earlier. Low severity.
+
+No other findings. Everything else checked in this pass — `IndicatorTogglePanel` (clean: 12px muted labels, native-checkbox accent-color already token-driven), `KeyboardShortcuts.tsx`/`PerfProfiler.tsx` (both render no UI, nothing to audit) — was already compliant.
