@@ -161,7 +161,7 @@ export default function TradeListPanel() {
           <select
             value={filters.leg ?? ''}
             onChange={(e) => setFilter('leg', e.target.value || null)}
-            className="rounded bg-surface-2 px-1.5 py-1 text-text"
+            className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Leg: all</option>
             {legOptions.map((v) => (
@@ -173,7 +173,7 @@ export default function TradeListPanel() {
           <select
             value={filters.session ?? ''}
             onChange={(e) => setFilter('session', e.target.value || null)}
-            className="rounded bg-surface-2 px-1.5 py-1 text-text"
+            className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Session: all</option>
             {sessionOptions.map((v) => (
@@ -185,7 +185,7 @@ export default function TradeListPanel() {
           <select
             value={filters.side ?? ''}
             onChange={(e) => setFilter('side', e.target.value || null)}
-            className="rounded bg-surface-2 px-1.5 py-1 text-text"
+            className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Side: all</option>
             {SIDE_OPTIONS.map((v) => (
@@ -197,7 +197,7 @@ export default function TradeListPanel() {
           <select
             value={filters.result ?? ''}
             onChange={(e) => setFilter('result', (e.target.value || null) as ResultFilter)}
-            className="rounded bg-surface-2 px-1.5 py-1 text-text"
+            className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Result: all</option>
             <option value="win">Win</option>
@@ -206,7 +206,7 @@ export default function TradeListPanel() {
           <select
             value={filters.exitType ?? ''}
             onChange={(e) => setFilter('exitType', e.target.value || null)}
-            className="rounded bg-surface-2 px-1.5 py-1 text-text"
+            className="rounded bg-surface-2 px-2 py-1 text-text"
           >
             <option value="">Exit: all</option>
             {EXIT_TYPE_OPTIONS.map((v) => (
@@ -222,14 +222,14 @@ export default function TradeListPanel() {
             type="date"
             value={filters.dateFrom ?? ''}
             onChange={(e) => setFilter('dateFrom', e.target.value || null)}
-            className="rounded bg-surface-2 px-1.5 py-1 text-text"
+            className="rounded bg-surface-2 px-2 py-1 text-text"
           />
           <label className="text-text-muted">To</label>
           <input
             type="date"
             value={filters.dateTo ?? ''}
             onChange={(e) => setFilter('dateTo', e.target.value || null)}
-            className="rounded bg-surface-2 px-1.5 py-1 text-text"
+            className="rounded bg-surface-2 px-2 py-1 text-text"
           />
           {hasFilters && (
             <button
@@ -248,18 +248,28 @@ export default function TradeListPanel() {
           className="sticky top-0 z-10 grid border-b border-border bg-bg"
           style={{ gridTemplateColumns: GRID_TEMPLATE, minWidth: GRID_TOTAL_WIDTH }}
         >
-          {COLUMNS.map((c) => (
-            <div
-              key={c.key}
-              onClick={() => toggleSort(c.key)}
-              className={`micro-label cursor-pointer whitespace-nowrap px-2 py-1.5 hover:text-text ${
-                c.numeric ? 'text-right' : 'text-left'
-              }`}
-            >
-              {c.label}
-              {sortCol === c.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-            </div>
-          ))}
+          {COLUMNS.map((c) => {
+            const active = sortCol === c.key
+            return (
+              <div
+                key={c.key}
+                onClick={() => toggleSort(c.key)}
+                className={`group micro-label cursor-pointer select-none whitespace-nowrap px-2 py-1 hover:text-text ${
+                  c.numeric ? 'text-right' : 'text-left'
+                }`}
+              >
+                {c.label}
+                {/* Sort affordance (DESIGN_LANGUAGE.md section 6: "sortable
+                    affordance appears on hover") -- the active column's own
+                    direction arrow is always visible; every other column
+                    shows a neutral hint only on hover, at reduced opacity so
+                    it reads as a hint, not a second active indicator. */}
+                <span className={active ? 'ml-1' : 'ml-1 opacity-0 group-hover:opacity-50'}>
+                  {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                </span>
+              </div>
+            )
+          })}
         </div>
 
         {sorted.length === 0 ? (
@@ -279,10 +289,26 @@ export default function TradeListPanel() {
           >
             {rowVirtualizer.getVirtualItems().map((vRow) => {
               const t = sorted[vRow.index]
+              const selected = selectedTradeId === t.trade_id
               return (
                 <div
                   key={t.trade_id}
                   onClick={() => onSelect(t.trade_id)}
+                  // Keyboard-focusable + Enter/Space-activatable (DESIGN_LANGUAGE.md
+                  // section 6: every interactive element needs a complete
+                  // state set, focus included) -- a plain onClick div was
+                  // otherwise unreachable by keyboard, so it could never
+                  // show a focus-visible ring at all. Same onSelect the
+                  // click already calls, so the chart cross-link is
+                  // identical either way.
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelect(t.trade_id)
+                    }
+                  }}
+                  aria-selected={selected}
                   style={{
                     position: 'absolute',
                     top: 0,
@@ -292,8 +318,12 @@ export default function TradeListPanel() {
                     transform: `translateY(${vRow.start}px)`,
                     gridTemplateColumns: GRID_TEMPLATE,
                   }}
-                  className={`grid cursor-pointer items-center border-b border-border text-xs hover:bg-surface ${
-                    selectedTradeId === t.trade_id ? 'bg-surface-2' : ''
+                  // No row border (DESIGN_LANGUAGE.md section 6: "zebra-free
+                  // (use hover)... hover is a subtle background step, not a
+                  // border") -- rows are told apart by row height + hover/
+                  // selected background only.
+                  className={`grid cursor-pointer items-center text-xs hover:bg-surface ${
+                    selected ? 'bg-surface-2' : ''
                   }`}
                 >
                   <div className="truncate whitespace-nowrap px-2 font-mono text-text">
