@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   DRAWING_TOOLS,
+  LINE_HIT_TOLERANCE_PX,
+  distanceToSegment,
   ensureDrawingOverlaysRegistered,
   hydrateOverlay,
   measureLabel,
   serializeOverlay,
   setMeasureBarsContext,
   toolByName,
+  wideLineCheckEventOn,
 } from './drawingOverlays'
 import type { Bar } from '../../api/types'
 
@@ -97,5 +100,94 @@ describe('serializeOverlay / hydrateOverlay round trip', () => {
       extendData: () => 'computed live',
     })
     expect(persisted.extendDataText).toBeUndefined()
+  })
+
+  // REPLICA_ROADMAP.md Batch 1's "Lock" context-menu action: without this,
+  // a locked drawing silently un-locked itself on the next reload, since
+  // hydrateOverlay had no field to carry the prior lock state through.
+  it('round-trips lock:true through serialize/hydrate', () => {
+    const persisted = serializeOverlay({
+      id: 'kl-drawing-3',
+      name: 'segment',
+      points: [{ timestamp: 1000, value: 1 }],
+      styles: undefined,
+      extendData: undefined,
+      lock: true,
+    })
+    expect(persisted.lock).toBe(true)
+    const hydrated = hydrateOverlay(persisted, {})
+    expect(hydrated.lock).toBe(true)
+  })
+
+  it('hydrates an unlocked (or never-locked) drawing as lock:false, not undefined', () => {
+    const persisted = serializeOverlay({
+      id: 'kl-drawing-4',
+      name: 'segment',
+      points: [],
+      styles: undefined,
+      extendData: undefined,
+    })
+    expect(hydrateOverlay(persisted, {}).lock).toBe(false)
+  })
+
+  it('re-attaches every interaction callback the caller passes -- onRightClick/onMouseEnter/onMouseLeave, not just the persistence hooks', () => {
+    const onRightClick = () => {}
+    const onMouseEnter = () => {}
+    const onMouseLeave = () => {}
+    const hydrated = hydrateOverlay(serializeOverlay({ id: 'kl-drawing-5', name: 'segment', points: [], styles: undefined, extendData: undefined }), {
+      onRightClick,
+      onMouseEnter,
+      onMouseLeave,
+    })
+    expect(hydrated.onRightClick).toBe(onRightClick)
+    expect(hydrated.onMouseEnter).toBe(onMouseEnter)
+    expect(hydrated.onMouseLeave).toBe(onMouseLeave)
+  })
+})
+
+describe('distanceToSegment', () => {
+  it('is 0 for a point exactly on the segment', () => {
+    expect(distanceToSegment(50, 0, 0, 0, 100, 0)).toBe(0)
+  })
+
+  it('measures perpendicular distance to a point beside the segment', () => {
+    expect(distanceToSegment(50, 5, 0, 0, 100, 0)).toBe(5)
+  })
+
+  it('measures distance to the nearest ENDPOINT once past the segment\'s ends, not the infinite line', () => {
+    // 10px left of (0,0), off the start of a segment running rightward --
+    // the infinite-line distance would be 0, but the true nearest point is
+    // the (0,0) endpoint itself.
+    expect(distanceToSegment(-10, 0, 0, 0, 100, 0)).toBe(10)
+  })
+
+  it('falls back to point-to-point distance for a zero-length segment', () => {
+    expect(distanceToSegment(3, 4, 0, 0, 0, 0)).toBe(5)
+  })
+})
+
+describe('wideLineCheckEventOn (REPLICA_ROADMAP.md Batch 1: "verify a click a few px off the line still selects it")', () => {
+  const horizontalLine = { coordinates: [{ x: 0, y: 100 }, { x: 200, y: 100 }] }
+
+  it('hits exactly on the line', () => {
+    expect(wideLineCheckEventOn({ x: 100, y: 100 }, horizontalLine)).toBe(true)
+  })
+
+  it(`hits a click ${LINE_HIT_TOLERANCE_PX}px off the line (the widened tolerance)`, () => {
+    expect(wideLineCheckEventOn({ x: 100, y: 100 + LINE_HIT_TOLERANCE_PX }, horizontalLine)).toBe(true)
+  })
+
+  it('misses a click well beyond the widened tolerance', () => {
+    expect(wideLineCheckEventOn({ x: 100, y: 100 + LINE_HIT_TOLERANCE_PX + 5 }, horizontalLine)).toBe(false)
+  })
+
+  it('hits a click 4px off -- outside klinecharts\' own hardcoded 2px tolerance, but within this widened one', () => {
+    expect(wideLineCheckEventOn({ x: 100, y: 104 }, horizontalLine)).toBe(true)
+  })
+
+  it('accepts an array of line segments (klinecharts passes multi-segment attrs this way, e.g. parallel/price channels)', () => {
+    const secondLine = { coordinates: [{ x: 0, y: 300 }, { x: 200, y: 300 }] }
+    expect(wideLineCheckEventOn({ x: 100, y: 300 }, [horizontalLine, secondLine])).toBe(true)
+    expect(wideLineCheckEventOn({ x: 100, y: 200 }, [horizontalLine, secondLine])).toBe(false)
   })
 })

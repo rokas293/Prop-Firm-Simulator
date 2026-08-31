@@ -46,6 +46,8 @@ import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
 import LoadingBar from '../../components/LoadingBar'
 import Skeleton from '../../components/Skeleton'
+import ContextMenu from '../../components/ContextMenu'
+import DrawingStylePopover from './DrawingStylePopover'
 
 interface IndicatorData {
   vwap: IndicatorPoint[]
@@ -267,6 +269,27 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const colors = useThemeStore((s) => s.colors)
   const base = useThemeBase()
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
+  // Right-click menus (REPLICA_ROADMAP.md Batch 1). `contextMenu` covers
+  // both the empty-chart-area menu and a specific drawing's menu; `styleEditor`
+  // is the color/width popover "Edit style" opens (a separate small state
+  // rather than nesting it inside contextMenu, since picking a color
+  // outlives the menu itself being open).
+  const [contextMenu, setContextMenu] = useState<
+    { kind: 'empty'; x: number; y: number } | { kind: 'drawing'; x: number; y: number; id: string; name: string; locked: boolean } | null
+  >(null)
+  const [styleEditor, setStyleEditor] = useState<{ id: string; x: number; y: number } | null>(null)
+  // Set synchronously inside a drawing overlay's onRightClick (fired from
+  // klinecharts' own mousedown handling) -- read and cleared by the
+  // native 'contextmenu' listener below, which fires slightly later (on
+  // mouseup) for the SAME right-click. Lets one native listener tell
+  // "this click hit a drawing, which already opened its own menu" apart
+  // from "this click hit nothing, open the empty-area menu" without
+  // threading chart hit-testing through two separate code paths.
+  const rightClickHandledRef = useRef(false)
+  // Captured original per-drawing style right before the hover-highlight
+  // override touches it, so onMouseLeave can put back the EXACT value
+  // (klinecharts' overrideOverlay deep-merges, so there's no "unset").
+  const hoverSnapshotRef = useRef(new Map<string, OverlayCreate['styles']>())
   // First-paint gate for the full-canvas loading skeleton (DESIGN_AUDIT.md
   // C2): true forever once this ChartKL instance has shown real bars once,
   // so only the very first render of a freshly-mounted chart gets the full
@@ -459,10 +482,69 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     if (!chart || !inst) return
     const overlays = chart.getOverlays({ groupId: DRAWING_GROUP_ID })
     const persisted = overlays.map((o) =>
-      serializeOverlay({ id: o.id, name: o.name, points: o.points, styles: o.styles ?? undefined, extendData: o.extendData }),
+      serializeOverlay({
+        id: o.id,
+        name: o.name,
+        points: o.points,
+        // If this overlay is CURRENTLY showing the hover-highlight override
+        // (REPLICA_ROADMAP.md Batch 1's own hover cue), save the style it
+        // had BEFORE that, not the transient highlight -- otherwise any
+        // persist that happens to land while still hovering (right-
+        // clicking it to open this very menu, or ending a drag with the
+        // mouse still over the now-moved line, which is the common case)
+        // would permanently bake the highlight color/width in.
+        styles: hoverSnapshotRef.current.has(o.id) ? hoverSnapshotRef.current.get(o.id) : (o.styles ?? undefined),
+        extendData: o.extendData,
+        lock: o.lock,
+      }),
     )
     useKLDrawingStore.getState().setOverlaysForInstrument(inst, persisted)
     onDrawingsChangeRef.current?.(persisted)
+  }
+
+  // The hover-highlight override below (REPLICA_ROADMAP.md Batch 1: "add a
+  // hover-highlight so it's clear what will be selected") -- a restrained
+  // cue reusing the theme accent (DESIGN_LANGUAGE.md §1: "one accent"),
+  // not a new color, plus a 1px thicker stroke/border so it reads even for
+  // colorblind users. Shared by onMouseEnter below and DrawingStylePopover's
+  // callers never need it directly.
+  const hoverOverrideStyles = () => {
+    const accent = colorsRef.current.accent
+    return {
+      line: { color: accent, size: 3 },
+      point: { color: accent },
+      rect: { borderColor: accent, borderSize: 2 },
+      polygon: { borderColor: accent, borderSize: 2 },
+      circle: { borderColor: accent, borderSize: 2 },
+    }
+  }
+
+  // Reverts a drawing's live style back to whatever it was BEFORE the
+  // hover-highlight override, if it's currently showing one -- shared by
+  // onMouseLeave (the normal path) and onRightClick (opening this
+  // drawing's menu is an implicit "the mouse is leaving it," since the
+  // menu itself then sits on top of the canvas and swallows further
+  // mousemove, so klinecharts would otherwise never see a real leave).
+  // No-ops cleanly if this overlay isn't currently hover-highlighted.
+  const clearHoverOverride = (id: string) => {
+    const chart = chartRef.current
+    if (!chart || !hoverSnapshotRef.current.has(id)) return
+    const snapshot = hoverSnapshotRef.current.get(id)
+    hoverSnapshotRef.current.delete(id)
+    const accent = colorsRef.current.accent
+    const s = snapshot as
+      | { line?: { color?: string; size?: number }; point?: { color?: string }; rect?: { borderColor?: string; borderSize?: number }; polygon?: { borderColor?: string; borderSize?: number }; circle?: { borderColor?: string; borderSize?: number } }
+      | undefined
+    chart.overrideOverlay({
+      id,
+      styles: {
+        line: { color: s?.line?.color ?? accent, size: s?.line?.size ?? 1 },
+        point: { color: s?.point?.color ?? accent },
+        rect: { borderColor: s?.rect?.borderColor ?? accent, borderSize: s?.rect?.borderSize ?? 1 },
+        polygon: { borderColor: s?.polygon?.borderColor ?? accent, borderSize: s?.polygon?.borderSize ?? 1 },
+        circle: { borderColor: s?.circle?.borderColor ?? accent, borderSize: s?.circle?.borderSize ?? 1 },
+      },
+    })
   }
 
   const drawingCallbacks = () => ({
@@ -477,6 +559,45 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     onRemoved: () => {
       persistDrawingsRef.current()
     },
+    // klinecharts' DEFAULT right-click behavior is to delete the overlay
+    // outright unless prevented (confirmed against the v10.0.3 source --
+    // undocumented) -- without this, right-clicking any drawing silently
+    // deleted it. Prevented here, then opens this drawing's own menu
+    // (REPLICA_ROADMAP.md Batch 1) using the SAME state the empty-area
+    // menu uses, so only one menu is ever on screen.
+    onRightClick: (event: { preventDefault?: () => void; pageX?: number; pageY?: number; overlay: { id: string; name: string; lock: boolean } }) => {
+      event.preventDefault?.()
+      rightClickHandledRef.current = true
+      clearHoverOverride(event.overlay.id)
+      setContextMenu({
+        kind: 'drawing',
+        x: event.pageX ?? 0,
+        y: event.pageY ?? 0,
+        id: event.overlay.id,
+        name: event.overlay.name,
+        locked: event.overlay.lock,
+      })
+    },
+    onMouseEnter: (event: { overlay: { id: string } }) => {
+      const chart = chartRef.current
+      const id = event.overlay.id
+      if (!chart || hoverSnapshotRef.current.has(id)) return
+      const [current] = chart.getOverlays({ id })
+      if (!current) return
+      // structuredClone, not a bare reference: klinecharts' overrideOverlay
+      // deep-merges INTO the overlay's existing styles object in place
+      // (confirmed against the v10.0.3 source) -- storing the reference
+      // itself meant the very next hover-override call (below) silently
+      // corrupted this "before" snapshot too, since it was the same object.
+      // Verified live: this produced a snapshot that was ALREADY the
+      // hover-highlighted style, so "leaving" a drawing (or right-clicking
+      // it to open its menu) restored the highlight instead of clearing
+      // it, permanently baking the accent color/thicker stroke into
+      // storage on the next persist.
+      hoverSnapshotRef.current.set(id, current.styles ? structuredClone(current.styles) : undefined)
+      chart.overrideOverlay({ id, styles: hoverOverrideStyles() })
+    },
+    onMouseLeave: (event: { overlay: { id: string } }) => clearHoverOverride(event.overlay.id),
   })
 
   // Clears whatever user-drawing overlays are on screen and recreates
@@ -650,10 +771,32 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     }
     chart.subscribeAction('onCrosshairChange', handleCrosshairChange)
 
+    // Right-click empty chart area -> "Reset chart view" / "Remove all
+    // drawings" (REPLICA_ROADMAP.md Batch 1). klinecharts already calls
+    // preventDefault on 'contextmenu' for its OWN target internally (so the
+    // native browser menu never shows over the chart), but that's a
+    // separate native event from the drawing-hit onRightClick above --
+    // both fire for the SAME right-click (mousedown, then this, on
+    // mouseup), in that order, which is what makes the ref-flag handoff
+    // below reliable: if a drawing's onRightClick already ran (and opened
+    // ITS menu), skip; otherwise this click hit nothing, so open the
+    // empty-area menu here.
+    const container = containerRef.current
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+      if (rightClickHandledRef.current) {
+        rightClickHandledRef.current = false
+        return
+      }
+      setContextMenu({ kind: 'empty', x: e.clientX, y: e.clientY })
+    }
+    container?.addEventListener('contextmenu', handleContextMenu)
+
     return () => {
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChange)
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChangeForBrackets)
       chart.unsubscribeAction('onCrosshairChange', handleCrosshairChange)
+      container?.removeEventListener('contextmenu', handleContextMenu)
       dispose(chart)
       chartRef.current = null
       loadedBarsRef.current = []
@@ -724,27 +867,103 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     })
   }, [cursorTime])
 
+  // Shared by the imperative fitRange handle AND the empty-area menu's
+  // "Reset chart view" (which calls it with the full loaded window).
+  const fitRangeImpl = (from: number, to: number) => {
+    withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
+      const seconds = tfToSeconds(requestRef.current.timeframe)
+      const width = chart.getSize()?.width
+      if (!seconds || !width) return
+      const barCount = Math.max(1, (to - from) / seconds)
+      // setBarSpace (the zoom step) has no animation/duration parameter in
+      // klinecharts' public API -- confirmed against the v10.0.3 type
+      // declarations, so only the pan (scrollToTimestamp) half of "fit
+      // trade" can ease. Still a real improvement over the previous
+      // duration:0 (an instant snap on both axes) -- matches
+      // scrollToTrade's own 200ms below, so a trade-list click and an "F"
+      // fit-trade press feel like the same motion (POLISH_ROADMAP Phase
+      // P6: "subtle easing on fit trade/scroll-to-trade").
+      chart.setBarSpace(width / barCount)
+      chart.scrollToTimestamp(((from + to) / 2) * 1000, 200)
+    })
+  }
+
+  // Empty-area context menu actions (REPLICA_ROADMAP.md Batch 1).
+  const resetView = () => {
+    const bars = loadedBarsRef.current
+    if (bars.length === 0) return
+    fitRangeImpl(bars[0].time, bars[bars.length - 1].time)
+  }
+  const drawingCount = () => chartRef.current?.getOverlays({ groupId: DRAWING_GROUP_ID }).length ?? 0
+  const removeAllDrawings = () => {
+    const count = drawingCount()
+    if (count === 0) return
+    // "confirm if there are many" -- a handful of accidental single-
+    // drawing deletes are a Ctrl/Cmd+Z away from painless (well, not
+    // undoable here, but cheap to redraw); wiping out a dozen isn't.
+    if (count > 5 && !window.confirm(`Remove all ${count} drawings? This can't be undone.`)) return
+    chartRef.current?.removeOverlay({ groupId: DRAWING_GROUP_ID })
+    persistDrawingsRef.current()
+  }
+
+  // Per-drawing context menu actions.
+  const deleteDrawing = (id: string) => {
+    chartRef.current?.removeOverlay({ id })
+    persistDrawingsRef.current()
+  }
+  const cloneDrawing = (id: string) => {
+    const chart = chartRef.current
+    if (!chart) return
+    const [orig] = chart.getOverlays({ id })
+    if (!orig) return
+    // Offset every point's PRICE by a small % of its own value (scale-safe
+    // across instruments, same trick tradeOverlays.ts used to use for
+    // marker padding) so the clone doesn't render exactly on top of the
+    // original -- TIME can't shift this generically without knowing the
+    // chart's current bar spacing.
+    const offsetPoints = orig.points.map((p) =>
+      typeof p.value === 'number' ? { ...p, value: p.value + (Math.abs(p.value) * 0.004 || 0.01) } : { ...p },
+    )
+    chart.createOverlay({
+      id: `kl-drawing-${crypto.randomUUID()}`,
+      name: orig.name,
+      groupId: DRAWING_GROUP_ID,
+      points: offsetPoints,
+      styles: orig.styles ?? undefined,
+      extendData: orig.extendData,
+      lock: orig.lock,
+      ...drawingCallbacks(),
+    })
+    persistDrawingsRef.current()
+  }
+  const toggleDrawingLock = (id: string) => {
+    const chart = chartRef.current
+    if (!chart) return
+    const [orig] = chart.getOverlays({ id })
+    if (!orig) return
+    chart.overrideOverlay({ id, lock: !orig.lock })
+    persistDrawingsRef.current()
+  }
+  const updateDrawingColor = (id: string, hex: string) => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.overrideOverlay({
+      id,
+      styles: { line: { color: hex }, point: { color: hex }, rect: { borderColor: hex }, polygon: { borderColor: hex }, circle: { borderColor: hex }, text: { color: hex } },
+    })
+    persistDrawingsRef.current()
+  }
+  const updateDrawingWidth = (id: string, size: number) => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.overrideOverlay({ id, styles: { line: { size } } })
+    persistDrawingsRef.current()
+  }
+
   useImperativeHandle(
     ref,
     () => ({
-      fitRange: (from, to) => {
-        withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
-          const seconds = tfToSeconds(requestRef.current.timeframe)
-          const width = chart.getSize()?.width
-          if (!seconds || !width) return
-          const barCount = Math.max(1, (to - from) / seconds)
-          // setBarSpace (the zoom step) has no animation/duration parameter
-          // in klinecharts' public API -- confirmed against the v10.0.3
-          // type declarations, so only the pan (scrollToTimestamp) half of
-          // "fit trade" can ease. Still a real improvement over the
-          // previous duration:0 (an instant snap on both axes) -- matches
-          // scrollToTrade's own 200ms below, so a trade-list click and an
-          // "F" fit-trade press feel like the same motion (POLISH_ROADMAP
-          // Phase P6: "subtle easing on fit trade/scroll-to-trade").
-          chart.setBarSpace(width / barCount)
-          chart.scrollToTimestamp(((from + to) / 2) * 1000, 200)
-        })
-      },
+      fitRange: fitRangeImpl,
       scrollToTrade: (time) => {
         withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
           chart.scrollToTimestamp(time * 1000, 200)
@@ -781,10 +1000,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         // the chart itself no longer showed it.
         persistDrawingsRef.current()
       },
-      removeDrawing: (id) => {
-        chartRef.current?.removeOverlay({ id })
-        persistDrawingsRef.current()
-      },
+      removeDrawing: deleteDrawing,
       clearDrawings: () => {
         const chart = chartRef.current
         if (!chart) return
@@ -820,6 +1036,47 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         >
           {tooltip.text}
         </div>
+      )}
+      {contextMenu?.kind === 'empty' && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label="Chart"
+          onClose={() => setContextMenu(null)}
+          items={[
+            { label: 'Reset chart view', onSelect: resetView },
+            { separator: true },
+            { label: 'Remove all drawings', onSelect: removeAllDrawings, disabled: drawingCount() === 0, destructive: true },
+          ]}
+        />
+      )}
+      {contextMenu?.kind === 'drawing' && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={toolByName(contextMenu.name)?.label ?? contextMenu.name}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: 'Edit style',
+              onSelect: () => setStyleEditor({ id: contextMenu.id, x: contextMenu.x, y: contextMenu.y }),
+            },
+            { label: 'Clone', onSelect: () => cloneDrawing(contextMenu.id) },
+            { label: contextMenu.locked ? 'Unlock' : 'Lock', onSelect: () => toggleDrawingLock(contextMenu.id) },
+            { separator: true },
+            { label: 'Delete', onSelect: () => deleteDrawing(contextMenu.id), destructive: true },
+          ]}
+        />
+      )}
+      {styleEditor && (
+        <DrawingStylePopover
+          x={styleEditor.x}
+          y={styleEditor.y}
+          colors={colors}
+          onPickColor={(hex) => updateDrawingColor(styleEditor.id, hex)}
+          onPickWidth={(size) => updateDrawingWidth(styleEditor.id, size)}
+          onClose={() => setStyleEditor(null)}
+        />
       )}
     </div>
   )

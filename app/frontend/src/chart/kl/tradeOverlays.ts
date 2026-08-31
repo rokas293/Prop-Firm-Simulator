@@ -25,6 +25,19 @@ export const ENTRY_EXIT_GROUP = 'kl-trade-entry-exit'
 export const SL_TP_LINE_GROUP = 'kl-trade-sltp-lines'
 export const ZONE_GROUP = 'kl-trade-zones'
 
+// klinecharts' DEFAULT behavior for ANY right-click that hits a figure
+// without ignoreEvent is to DELETE the overlay outright, unless its
+// onRightClick handler calls this preventDefault (confirmed against the
+// v10.0.3 source -- not documented, and genuinely surprising). Every
+// figure this file draws itself (the trade markers, the bracket zones) is
+// already ignoreEvent:true and immune, but the SL/TP lines below ride the
+// BUILT-IN `horizontalSegment` overlay, whose built-in `line` figure is
+// interactive by klinecharts' own design -- without this, right-clicking
+// a stop-loss line would silently delete it.
+function suppressRightClickDelete(event: { preventDefault?: () => void }): void {
+  event.preventDefault?.()
+}
+
 // TradeRecord/Bar times are unix SECONDS (VIZ_SPEC §6); klinecharts' own
 // KLineData.timestamp -- and therefore every OverlayCreate point's own
 // `timestamp` -- is MILLISECONDS. Missing this conversion doesn't error;
@@ -217,6 +230,7 @@ export function buildSelectedTradeOverlays(view: ReplayTradeView | null, colors:
         { timestamp: toMs(bounds.timeTo), value: trade.sl_price },
       ],
       styles: { line: { color: colors.negative, style: 'dashed', size: 1 } },
+      onRightClick: suppressRightClickDelete,
     })
   }
   if (trade.tp_price !== null) {
@@ -230,6 +244,7 @@ export function buildSelectedTradeOverlays(view: ReplayTradeView | null, colors:
         { timestamp: toMs(bounds.timeTo), value: trade.tp_price },
       ],
       styles: { line: { color: colors.positive, style: 'dashed', size: 1 } },
+      onRightClick: suppressRightClickDelete,
     })
   }
 

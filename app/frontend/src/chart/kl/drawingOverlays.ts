@@ -8,7 +8,7 @@
 // are filled here per PART_A_REVISED_klinecharts.md's own guidance ("If
 // any built-in overlay is missing... registerOverlay lets you add it...
 // note gaps rather than reintroducing a fragile parallel drawing engine").
-import { registerOverlay, type Coordinate, type OverlayCreate } from 'klinecharts'
+import { getFigureClass, registerFigure, registerOverlay, type Coordinate, type LineAttrs, type LineStyle, type OverlayCreate } from 'klinecharts'
 import { computeMeasure, formatDuration } from '../measure'
 import type { Bar } from '../../api/types'
 import { registerRectOverlay } from './rectOverlay'
@@ -88,11 +88,69 @@ export function measureLabel(
   return `${sign}${result.points.toFixed(2)} (${sign}${result.percent.toFixed(2)}%)  ${result.bars} bars  ${formatDuration(result.seconds)}`
 }
 
+// klinecharts hardcodes a 2px hit-tolerance for its built-in 'line' figure
+// (confirmed against the v10.0.3 source's DEVIATION constant -- not exposed
+// via any public style/option), which is exactly why a thin trendline/ray/
+// Fibonacci level is hard to grab with the mouse (REPLICA_ROADMAP.md Batch
+// 1: "widen the interactive hit-tolerance for lines/segments/rays/fibs").
+// Re-registering the figure under the SAME name applies globally to every
+// overlay built on it -- every "Lines" tool, Fibonacci retracement, the
+// measure tool's own line, and the SL/TP levels -- via one change, instead
+// of reimplementing each of those overlay types from scratch (exactly the
+// "fragile parallel drawing engine" this file's own header comment warns
+// against). The visual draw is untouched: re-delegated to klinecharts' OWN
+// existing 'line' figure class (captured via getFigureClass before the
+// override), so rendering stays pixel-identical -- only the invisible hit
+// radius grows.
+export const LINE_HIT_TOLERANCE_PX = 6
+
+export function distanceToSegment(x: number, y: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const lengthSq = dx * dx + dy * dy
+  if (lengthSq === 0) return Math.hypot(x - x1, y - y1)
+  const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / lengthSq))
+  return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy))
+}
+
+// Exported standalone (not just inlined in registerFigure below) so the
+// hit-tolerance itself is unit-testable without mounting a chart --
+// REPLICA_ROADMAP.md Batch 1's own acceptance bar: "verify a click a few
+// px off the line still selects it."
+export function wideLineCheckEventOn(coordinate: Coordinate, attrs: LineAttrs | LineAttrs[]): boolean {
+  const lines: LineAttrs[] = Array.isArray(attrs) ? attrs : [attrs]
+  for (const line of lines) {
+    const pts = line.coordinates
+    for (let i = 1; i < pts.length; i++) {
+      if (distanceToSegment(coordinate.x, coordinate.y, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y) <= LINE_HIT_TOLERANCE_PX) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+let lineHitAreaRegistered = false
+function ensureWideLineHitAreaRegistered(): void {
+  if (lineHitAreaRegistered) return
+  lineHitAreaRegistered = true
+  const OriginalLine = getFigureClass<LineAttrs | LineAttrs[], LineStyle>('line')
+  if (!OriginalLine) return // defensive only -- 'line' always ships built in
+  registerFigure<LineAttrs | LineAttrs[], LineStyle>({
+    name: 'line',
+    checkEventOn: wideLineCheckEventOn,
+    draw: (ctx, attrs, styles) => {
+      new OriginalLine({ name: 'line', attrs, styles }).draw(ctx)
+    },
+  })
+}
+
 let customOverlaysRegistered = false
 export function ensureDrawingOverlaysRegistered(): void {
   if (customOverlaysRegistered) return
   customOverlaysRegistered = true
 
+  ensureWideLineHitAreaRegistered()
   registerRectOverlay(KL_ZONE, true)
 
   registerOverlay({
@@ -157,6 +215,11 @@ export interface PersistedOverlay {
   points: OverlayCreate['points']
   styles?: OverlayCreate['styles']
   extendDataText?: string
+  // Per-drawing context menu's "Lock" (REPLICA_ROADMAP.md Batch 1) -- not
+  // persisting this meant a locked drawing silently UN-locked itself on
+  // the next reload/instrument switch, since hydrateOverlay had nothing to
+  // pass klinecharts and it defaults every new overlay to lock: false.
+  lock?: boolean
 }
 
 export function serializeOverlay(overlay: {
@@ -165,6 +228,7 @@ export function serializeOverlay(overlay: {
   points: OverlayCreate['points']
   styles: OverlayCreate['styles']
   extendData: unknown
+  lock?: boolean
 }): PersistedOverlay {
   return {
     id: overlay.id,
@@ -172,6 +236,7 @@ export function serializeOverlay(overlay: {
     points: overlay.points,
     styles: overlay.styles ?? undefined,
     extendDataText: typeof overlay.extendData === 'string' ? overlay.extendData : undefined,
+    lock: overlay.lock,
   }
 }
 
@@ -181,7 +246,7 @@ export function serializeOverlay(overlay: {
 // overlay is just as editable/persistable as one drawn this session.
 export function hydrateOverlay(
   persisted: PersistedOverlay,
-  callbacks: Pick<OverlayCreate, 'onDrawEnd' | 'onRemoved' | 'onPressedMoveEnd'>,
+  callbacks: Pick<OverlayCreate, 'onDrawEnd' | 'onRemoved' | 'onPressedMoveEnd' | 'onRightClick' | 'onMouseEnter' | 'onMouseLeave'>,
 ): OverlayCreate {
   return {
     id: persisted.id,
@@ -190,6 +255,7 @@ export function hydrateOverlay(
     points: persisted.points,
     styles: persisted.styles,
     extendData: persisted.extendDataText,
+    lock: persisted.lock ?? false,
     ...callbacks,
   }
 }

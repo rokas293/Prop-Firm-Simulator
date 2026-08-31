@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ENTRY_EXIT_GROUP,
   SL_TP_LINE_GROUP,
@@ -171,6 +171,20 @@ describe('buildSelectedTradeOverlays', () => {
   it('omits SL/TP lines when the trade has no stop or target', () => {
     const overlays = buildSelectedTradeOverlays(makeView({ sl_price: null, tp_price: null }), colors)
     expect(overlays).toHaveLength(0)
+  })
+
+  // klinecharts' built-in horizontalSegment uses the interactive `line`
+  // figure, whose DEFAULT right-click behavior is to delete the overlay
+  // outright unless onRightClick calls preventDefault -- without this, a
+  // stray right-click on a stop/target line would silently delete it.
+  it('suppresses klinecharts\' default right-click-deletes-the-overlay behavior on both SL and TP lines', () => {
+    const [slLine, tpLine] = buildSelectedTradeOverlays(makeView(), colors)
+    const preventDefaultSl = vi.fn()
+    const preventDefaultTp = vi.fn()
+    slLine.onRightClick?.({ preventDefault: preventDefaultSl } as never)
+    tpLine.onRightClick?.({ preventDefault: preventDefaultTp } as never)
+    expect(preventDefaultSl).toHaveBeenCalledOnce()
+    expect(preventDefaultTp).toHaveBeenCalledOnce()
   })
 })
 

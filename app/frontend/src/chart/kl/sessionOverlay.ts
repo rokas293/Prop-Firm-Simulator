@@ -112,5 +112,11 @@ export function buildFairValueOverlay(band: SessionBand): OverlayCreate | null {
       { timestamp: band.end * 1000, value: band.fairValue },
     ],
     styles: { line: { color: FAIR_VALUE_COLOR, style: 'dashed', size: 1 } },
+    // klinecharts' built-in `horizontalSegment` uses the interactive
+    // `line` figure (no ignoreEvent), and its DEFAULT right-click behavior
+    // is to delete the overlay outright unless prevented -- this is a
+    // derived, read-only visual (like the trade markers), not a user
+    // drawing, so it must survive a stray right-click.
+    onRightClick: (event) => event.preventDefault?.(),
   }
 }

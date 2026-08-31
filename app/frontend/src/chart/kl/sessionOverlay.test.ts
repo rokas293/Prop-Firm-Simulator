@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   FAIR_VALUE_GROUP,
   SESSION_BAND_GROUP,
@@ -44,6 +44,17 @@ describe('buildFairValueOverlay', () => {
 
   it('returns null when the session has no fair value', () => {
     expect(buildFairValueOverlay({ ...band, fairValue: null })).toBeNull()
+  })
+
+  // klinecharts' built-in horizontalSegment uses the interactive `line`
+  // figure, whose DEFAULT right-click behavior is to delete the overlay
+  // outright unless onRightClick calls preventDefault -- without this, a
+  // stray right-click on the fair-value line would silently delete it.
+  it('suppresses klinecharts\' default right-click-deletes-the-overlay behavior', () => {
+    const overlay = buildFairValueOverlay(band)!
+    const preventDefault = vi.fn()
+    overlay.onRightClick?.({ preventDefault } as never)
+    expect(preventDefault).toHaveBeenCalledOnce()
   })
 })
 
