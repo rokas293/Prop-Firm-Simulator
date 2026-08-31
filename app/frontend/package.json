@@ -16,6 +16,7 @@
     "dockview-react": "^8.1.0",
     "klinecharts": "^10.0.3",
     "lightweight-charts": "^5.2.0",
+    "lucide-react": "^1.38.0",
     "propbt-viz": "file:../..",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
