@@ -9,6 +9,7 @@ import {
   buildEntryExitOverlays,
   buildSelectedTradeOverlays,
   buildTradeBracketOverlays,
+  ensureTradeMarkerOverlayRegistered,
   ensureTradeZoneOverlayRegistered,
 } from './tradeOverlays'
 import { findBracketAt, formatBracketTooltip, type BracketDensity } from '../tradeBracket'
@@ -342,13 +343,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       const selectedView = selectedTradeRef.current
         ? (filterTradesForReplay([selectedTradeRef.current], cursor)[0] ?? null)
         : null
-      const entryExit = buildEntryExitOverlays(
-        views,
-        loadedBarsRef.current,
-        selectedTradeRef.current?.trade_id ?? null,
-        colorsRef.current,
-      )
-      const selected = buildSelectedTradeOverlays(selectedView, loadedBarsRef.current[0]?.time ?? null, colorsRef.current)
+      const entryExit = buildEntryExitOverlays(views, selectedTradeRef.current?.trade_id ?? null, colorsRef.current)
+      const selected = buildSelectedTradeOverlays(selectedView, colorsRef.current)
       // Per-trade on-screen width, for the density collapse threshold
       // (tradeBracket.ts's shouldSimplify) -- resolved here, not inside the
       // framework-free tradeOverlays.ts, since only the mounted chart
@@ -515,6 +511,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // fast-trade-switch crash fixes (see PriceChart.tsx).
   useEffect(() => {
     ensureTradeZoneOverlayRegistered()
+    ensureTradeMarkerOverlayRegistered()
     ensureDrawingOverlaysRegistered()
     ensureIndicatorsRegistered()
     ensureSessionBandOverlayRegistered()

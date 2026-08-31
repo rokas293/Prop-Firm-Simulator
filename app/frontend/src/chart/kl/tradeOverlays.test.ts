@@ -52,48 +52,76 @@ function makeView(overrides: Partial<TradeRecord> = {}): ReplayTradeView {
   return { trade, showExit: true, openSpanEnd: trade.exit_time }
 }
 
-const bars = [
-  { time: 900, high: 101 },
-  { time: 1000, high: 102 },
-  { time: 1900, high: 108 },
-]
+interface MarkerExtendData {
+  direction: 'up' | 'down'
+  color: string
+  label?: string
+}
+
+function markerData(overlay: { extendData?: unknown }): MarkerExtendData {
+  return overlay.extendData as MarkerExtendData
+}
 
 describe('buildEntryExitOverlays', () => {
-  it('creates one entry + one exit annotation per closed trade', () => {
-    const overlays = buildEntryExitOverlays([makeView()], bars, null, colors)
+  it('creates one entry + one exit marker per closed trade, each a single point at the ACTUAL fill price', () => {
+    const overlays = buildEntryExitOverlays([makeView()], null, colors)
     expect(overlays).toHaveLength(2)
-    expect(overlays.every((o) => o.name === 'simpleAnnotation')).toBe(true)
+    expect(overlays.every((o) => o.name === 'klTradeMarker')).toBe(true)
     expect(overlays.every((o) => o.groupId === ENTRY_EXIT_GROUP)).toBe(true)
+    const [entry, exit] = overlays
+    expect(entry.points).toEqual([{ timestamp: 1000_000, value: 100 }]) // entry_price, not a padded bar high
+    expect(exit.points).toEqual([{ timestamp: 1900_000, value: 105 }]) // exit_price
   })
 
-  it('colors the entry with the accent color and a winning exit with the up color', () => {
-    const [entry, exit] = buildEntryExitOverlays([makeView()], bars, null, colors)
-    expect((entry.styles as { line: { color: string } }).line.color).toBe(colors.accent)
-    expect((exit.styles as { line: { color: string } }).line.color).toBe(colors.positive)
+  it('points a long entry up (buy) and colors it with the accent color', () => {
+    const [entry] = buildEntryExitOverlays([makeView({ side: 'long' })], null, colors)
+    const data = markerData(entry)
+    expect(data.direction).toBe('up')
+    expect(data.color).toBe(colors.accent)
   })
 
-  it('colors a losing exit with the down color', () => {
-    const [, exit] = buildEntryExitOverlays([makeView({ pnl_usd: -10 })], bars, null, colors)
-    expect((exit.styles as { line: { color: string } }).line.color).toBe(colors.negative)
+  it('points a short entry down (sell), still colored with the accent color', () => {
+    const [entry] = buildEntryExitOverlays([makeView({ side: 'short' })], null, colors)
+    expect(markerData(entry).direction).toBe('down')
+    expect(markerData(entry).color).toBe(colors.accent)
   })
 
-  it('emphasizes only the selected trade', () => {
-    const views = [makeView({ trade_id: 1 }), makeView({ trade_id: 2, entry_time: 2000, exit_time: 2900 })]
-    const overlays = buildEntryExitOverlays(views, bars, 2, colors)
-    const t1Entry = overlays.find((o) => o.id === 'kl-entry-1')!
-    const t2Entry = overlays.find((o) => o.id === 'kl-entry-2')!
-    expect((t1Entry.styles as { line: { size: number } }).line.size).toBe(1)
-    expect((t2Entry.styles as { line: { size: number } }).line.size).toBe(2)
+  it('points a long exit down (sell-to-close) -- the opposite action of its up entry', () => {
+    const [, exit] = buildEntryExitOverlays([makeView({ side: 'long' })], null, colors)
+    expect(markerData(exit).direction).toBe('down')
   })
 
-  it('anchors above the bar high at or before the trade time, not the raw entry price', () => {
-    const [entry] = buildEntryExitOverlays([makeView({ entry_price: 100 })], bars, null, colors)
-    const anchor = entry.points![0].value as number
-    expect(anchor).toBeGreaterThan(102) // bar at time 1000 has high 102
+  it('points a short exit up (buy-to-cover) -- the opposite action of its down entry', () => {
+    const [, exit] = buildEntryExitOverlays([makeView({ side: 'short' })], null, colors)
+    expect(markerData(exit).direction).toBe('up')
+  })
+
+  it('colors a winning exit with the positive color and a losing exit with the negative color', () => {
+    const [, winExit] = buildEntryExitOverlays([makeView({ pnl_usd: 25 })], null, colors)
+    expect(markerData(winExit).color).toBe(colors.positive)
+    const [, lossExit] = buildEntryExitOverlays([makeView({ pnl_usd: -10 })], null, colors)
+    expect(markerData(lossExit).color).toBe(colors.negative)
+  })
+
+  it('gives no inline label to a non-selected trade\'s markers', () => {
+    const [entry, exit] = buildEntryExitOverlays([makeView()], 999, colors)
+    expect(markerData(entry).label).toBeUndefined()
+    expect(markerData(exit).label).toBeUndefined()
+  })
+
+  it('gives the selected trade a compact inline label: entry price on entry, R multiple on exit', () => {
+    const [entry, exit] = buildEntryExitOverlays([makeView({ trade_id: 7, entry_price: 4523.25, r_multiple: 1.5 })], 7, colors)
+    expect(markerData(entry).label).toBe('4523.25')
+    expect(markerData(exit).label).toBe('+1.50R')
+  })
+
+  it('falls back to a dollar PnL label when r_multiple is unavailable', () => {
+    const [, exit] = buildEntryExitOverlays([makeView({ trade_id: 7, r_multiple: null, pnl_usd: -42 })], 7, colors)
+    expect(markerData(exit).label).toBe('-$42')
   })
 
   it('converts point timestamps to milliseconds -- klinecharts data is ms, TradeRecord is seconds', () => {
-    const [entry, exit] = buildEntryExitOverlays([makeView({ entry_time: 1000, exit_time: 1900 })], bars, null, colors)
+    const [entry, exit] = buildEntryExitOverlays([makeView({ entry_time: 1000, exit_time: 1900 })], null, colors)
     expect(entry.points![0].timestamp).toBe(1000_000)
     expect(exit.points![0].timestamp).toBe(1900_000)
   })
@@ -104,31 +132,44 @@ describe('buildEntryExitOverlays', () => {
   // point of filterTradesForReplay's showExit flag.
   it('omits the exit marker while the trade is still open as of the cursor (showExit: false)', () => {
     const view: ReplayTradeView = { trade: makeTrade(), showExit: false, openSpanEnd: 1500 }
-    const overlays = buildEntryExitOverlays([view], bars, null, colors)
+    const overlays = buildEntryExitOverlays([view], null, colors)
     expect(overlays).toHaveLength(1)
     expect(overlays[0].id).toBe('kl-entry-1')
   })
 })
 
 describe('buildSelectedTradeOverlays', () => {
-  it('returns nothing when there is no selected trade or no left edge', () => {
-    expect(buildSelectedTradeOverlays(null, 900, colors)).toEqual([])
-    expect(buildSelectedTradeOverlays(makeView(), null, colors)).toEqual([])
+  it('returns nothing when there is no selected trade', () => {
+    expect(buildSelectedTradeOverlays(null, colors)).toEqual([])
   })
 
-  it('builds SL/TP price lines anchored at the left edge', () => {
-    const overlays = buildSelectedTradeOverlays(makeView(), 900, colors)
+  it('builds SL/TP levels spanning only the trade\'s own time range (entry_time -> its own close), not the whole chart', () => {
+    const overlays = buildSelectedTradeOverlays(makeView(), colors)
     const slLine = overlays.find((o) => o.id === 'kl-sl-line-1')!
     const tpLine = overlays.find((o) => o.id === 'kl-tp-line-1')!
+    expect(slLine.name).toBe('horizontalSegment')
     expect(slLine.groupId).toBe(SL_TP_LINE_GROUP)
-    expect(slLine.points![0]).toEqual({ timestamp: 900000, value: 95 })
-    expect(tpLine.points![0]).toEqual({ timestamp: 900000, value: 110 })
+    expect(slLine.points).toEqual([
+      { timestamp: 1000_000, value: 95 },
+      { timestamp: 1900_000, value: 95 }, // openSpanEnd -- the trade's own close, not an infinite line
+    ])
+    expect(tpLine.points).toEqual([
+      { timestamp: 1000_000, value: 110 },
+      { timestamp: 1900_000, value: 110 },
+    ])
     // Zones live in buildTradeBracketOverlays now, not here.
     expect(overlays.some((o) => o.groupId === ZONE_GROUP)).toBe(false)
   })
 
+  it('grows the SL/TP span to openSpanEnd (the replay cursor), not the real future exit, while still open', () => {
+    const view: ReplayTradeView = { trade: makeTrade(), showExit: false, openSpanEnd: 1500 }
+    const overlays = buildSelectedTradeOverlays(view, colors)
+    const slLine = overlays.find((o) => o.id === 'kl-sl-line-1')!
+    expect(slLine.points![1].timestamp).toBe(1500_000)
+  })
+
   it('omits SL/TP lines when the trade has no stop or target', () => {
-    const overlays = buildSelectedTradeOverlays(makeView({ sl_price: null, tp_price: null }), 900, colors)
+    const overlays = buildSelectedTradeOverlays(makeView({ sl_price: null, tp_price: null }), colors)
     expect(overlays).toHaveLength(0)
   })
 })
@@ -172,6 +213,16 @@ describe('buildTradeBracketOverlays', () => {
     )!
     expect((pnlSelected.styles as { rect: { borderSize: number } }).rect.borderSize).toBe(2)
     expect((pnlUnselected.styles as { rect: { borderSize: number } }).rect.borderSize).toBe(1)
+  })
+
+  it('keeps the PnL zone quiet (a low fill alpha) so the entry/exit markers read as the primary signal', () => {
+    const pnl = buildTradeBracketOverlays([makeView()], null, 'full', wide, colors).find(
+      (o) => o.id === 'kl-bracket-pnl-1',
+    )!
+    const rectStyle = (pnl.styles as { rect: { color: string; borderColor: string } }).rect
+    // hexToRgba(colors.positive, 0.1) / (colors.positive, 0.55)
+    expect(rectStyle.color).toContain('0.1)')
+    expect(rectStyle.borderColor).toContain('0.55)')
   })
 
   // Replay/no-look-ahead (Phase A4): while a trade is still open as of the

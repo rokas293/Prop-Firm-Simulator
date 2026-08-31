@@ -94,6 +94,7 @@ export function formatBracketTooltip(t: TradeRecord): string {
     `#${t.trade_id}  ${t.side}  ·  ${t.leg ?? '-'}  ·  ${t.session ?? '-'}`,
     `Entry ${t.entry_price.toFixed(2)} @ ${formatClock(t.entry_time)}`,
     `Exit  ${t.exit_price.toFixed(2)} @ ${formatClock(t.exit_time)}  (${t.exit_type})`,
+    `SL ${t.sl_price !== null ? t.sl_price.toFixed(2) : '-'}  ·  TP ${t.tp_price !== null ? t.tp_price.toFixed(2) : '-'}`,
     `PnL ${pnlSign}$${Math.abs(t.pnl_usd).toFixed(2)}${rText}`,
     `MAE ${t.mae_points.toFixed(2)} pts  ·  MFE ${t.mfe_points.toFixed(2)} pts`,
     `Bars held: ${t.bars_held}`,
