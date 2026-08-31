@@ -3,7 +3,7 @@ import { MIN_TEXT_CONTRAST, MIN_UI_CONTRAST, passesContrast } from './contrast'
 import { THEME_PRESETS, exportTheme, importTheme, matchingPresetId, resolveBase, useThemeStore } from './themeStore'
 
 beforeEach(() => {
-  useThemeStore.setState({ colors: THEME_PRESETS[0].colors, mode: THEME_PRESETS[0].mode })
+  useThemeStore.setState({ colors: THEME_PRESETS[0].colors, mode: THEME_PRESETS[0].mode, baseOverride: { bg: null, surface: null } })
 })
 
 describe('matchingPresetId', () => {
@@ -112,10 +112,21 @@ describe('exportTheme / importTheme', () => {
   const colors = THEME_PRESETS[2].colors
   const mode = THEME_PRESETS[2].mode
 
-  it('round-trips colors and mode through JSON', () => {
+  it('round-trips colors and mode through JSON, with no override by default', () => {
     const json = exportTheme(colors, mode)
     const result = importTheme(json)
-    expect(result).toEqual({ colors, mode })
+    expect(result).toEqual({ colors, mode, baseOverride: { bg: null, surface: null } })
+  })
+
+  it('round-trips a background/surface override through JSON', () => {
+    const json = exportTheme(colors, mode, { bg: '#010203', surface: null })
+    const result = importTheme(json)
+    expect(result).toEqual({ colors, mode, baseOverride: { bg: '#010203', surface: null } })
+  })
+
+  it('defaults baseOverride to {bg: null, surface: null} when the field is absent (pre-v2 export)', () => {
+    const json = JSON.stringify({ version: 1, mode, colors })
+    expect(importTheme(json)).toEqual({ colors, mode, baseOverride: { bg: null, surface: null } })
   })
 
   it('rejects invalid JSON', () => {
@@ -142,5 +153,51 @@ describe('exportTheme / importTheme', () => {
   it('rejects a color missing the # prefix or wrong length', () => {
     const bad = { ...colors, negative: '58a6ff' }
     expect(importTheme(JSON.stringify({ mode: 'dark', colors: bad }))).toMatch(/"colors\.negative"/)
+  })
+
+  it('rejects a non-hex, non-null baseOverride value', () => {
+    const json = JSON.stringify({ mode: 'dark', colors, baseOverride: { bg: 'blue', surface: null } })
+    expect(importTheme(json)).toMatch(/"baseOverride\.bg"/)
+  })
+
+  it('rejects a non-object baseOverride', () => {
+    const json = JSON.stringify({ mode: 'dark', colors, baseOverride: 'nope' })
+    expect(importTheme(json)).toBe('"baseOverride" must be an object.')
+  })
+})
+
+describe('baseOverride', () => {
+  it('resolveBase returns the mode default when no override is set', () => {
+    expect(resolveBase('dark', { bg: null, surface: null })).toEqual(resolveBase('dark'))
+  })
+
+  it('resolveBase applies bg/surface overrides on top of the mode default, leaving other base tokens untouched', () => {
+    const dark = resolveBase('dark')
+    const overridden = resolveBase('dark', { bg: '#010203', surface: '#040506' })
+    expect(overridden.bg).toBe('#010203')
+    expect(overridden.surface).toBe('#040506')
+    expect(overridden.text).toBe(dark.text)
+    expect(overridden.border).toBe(dark.border)
+  })
+
+  it('setBgOverride/setSurfaceOverride patch the store independently, and null reverts to the mode default', () => {
+    useThemeStore.getState().setBgOverride('#111111')
+    expect(useThemeStore.getState().baseOverride).toEqual({ bg: '#111111', surface: null })
+    useThemeStore.getState().setSurfaceOverride('#222222')
+    expect(useThemeStore.getState().baseOverride).toEqual({ bg: '#111111', surface: '#222222' })
+    useThemeStore.getState().setBgOverride(null)
+    expect(useThemeStore.getState().baseOverride).toEqual({ bg: null, surface: '#222222' })
+  })
+
+  it('reset clears any active override back to {bg: null, surface: null}', () => {
+    useThemeStore.getState().setBgOverride('#111111')
+    useThemeStore.getState().reset()
+    expect(useThemeStore.getState().baseOverride).toEqual({ bg: null, surface: null })
+  })
+
+  it('matchingPresetId returns "custom" once a background/surface override is active, even if colors+mode still match a preset exactly', () => {
+    const preset = THEME_PRESETS[0]
+    expect(matchingPresetId(preset.colors, preset.mode, { bg: '#010203', surface: null })).toBe('custom')
+    expect(matchingPresetId(preset.colors, preset.mode, { bg: null, surface: null })).toBe(preset.id)
   })
 })

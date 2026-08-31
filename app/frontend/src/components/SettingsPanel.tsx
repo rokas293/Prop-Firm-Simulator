@@ -119,12 +119,15 @@ function TokenPicker({
 export default function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const colors = useThemeStore((s) => s.colors)
   const mode = useThemeStore((s) => s.mode)
+  const baseOverride = useThemeStore((s) => s.baseOverride)
   const applyPreset = useThemeStore((s) => s.applyPreset)
   const setAccent = useThemeStore((s) => s.setAccent)
   const setPositive = useThemeStore((s) => s.setPositive)
   const setNegative = useThemeStore((s) => s.setNegative)
   const setUpCandle = useThemeStore((s) => s.setUpCandle)
   const setDownCandle = useThemeStore((s) => s.setDownCandle)
+  const setBgOverride = useThemeStore((s) => s.setBgOverride)
+  const setSurfaceOverride = useThemeStore((s) => s.setSurfaceOverride)
   const setMode = useThemeStore((s) => s.setMode)
   const resetTheme = useThemeStore((s) => s.reset)
   const base = useThemeBase()
@@ -149,7 +152,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
 
   if (!open) return null
 
-  const activePresetId = matchingPresetId(colors, mode)
+  const activePresetId = matchingPresetId(colors, mode, baseOverride)
 
   const resetLayout = () => {
     if (!workspaceApi) return
@@ -162,7 +165,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   // not a sandboxed artifact viewer, so <a download> and <input type=file>
   // both work exactly as they would on any site.
   const handleExport = () => {
-    const blob = new Blob([exportTheme(colors, mode)], { type: 'application/json' })
+    const blob = new Blob([exportTheme(colors, mode, baseOverride)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -179,7 +182,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
         setImportError(result)
       } else {
         setImportError(null)
-        useThemeStore.setState({ colors: result.colors, mode: result.mode })
+        useThemeStore.setState({ colors: result.colors, mode: result.mode, baseOverride: result.baseOverride })
       }
     }
     reader.onerror = () => setImportError('Could not read that file.')
@@ -266,6 +269,34 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
               <TokenPicker label="Negative" value={colors.negative} onChange={setNegative} bg={base.surface} minRatio={MIN_TEXT_CONTRAST} />
               <TokenPicker label="Up candle" value={colors.upCandle} onChange={setUpCandle} bg={base.bg} minRatio={MIN_UI_CONTRAST} />
               <TokenPicker label="Down candle" value={colors.downCandle} onChange={setDownCandle} bg={base.bg} minRatio={MIN_UI_CONTRAST} />
+            </div>
+
+            {/* Background/Surface overrides sit on top of mode/presets, not
+                instead of them (themeStore.ts's own comment) -- checked
+                against `base.text` since that's what actually renders on
+                top of them everywhere (panel body copy, chart axis/crosshair
+                text), the same "check it against what it really renders
+                with" rule the picks above already follow. `base` already
+                reflects any active override (useThemeBase()), so the swatch
+                shown here, and the Up/Down candle checks above (bg=base.bg),
+                both stay live against a custom background automatically. */}
+            <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <TokenPicker label="Background" value={base.bg} onChange={setBgOverride} bg={base.text} minRatio={MIN_TEXT_CONTRAST} />
+                {baseOverride.bg !== null && (
+                  <button onClick={() => setBgOverride(null)} className="text-[11px] text-accent underline hover:text-text">
+                    Use {mode} default
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <TokenPicker label="Surface" value={base.surface} onChange={setSurfaceOverride} bg={base.text} minRatio={MIN_TEXT_CONTRAST} />
+                {baseOverride.surface !== null && (
+                  <button onClick={() => setSurfaceOverride(null)} className="text-[11px] text-accent underline hover:text-text">
+                    Use {mode} default
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">

@@ -153,8 +153,11 @@ const DEFAULT_PRESET = THEME_PRESETS[0]
 
 // Which preset (if any) the current colors+mode exactly match -- 'custom'
 // once the user tweaks a single picker (or the mode toggle) away from a
-// preset's own combination.
-export function matchingPresetId(colors: ThemeColors, mode: ThemeMode): string {
+// preset's own combination. A background/surface override also counts as
+// "custom" -- a preset name shouldn't keep claiming to describe the theme
+// once its own base colors have been overridden.
+export function matchingPresetId(colors: ThemeColors, mode: ThemeMode, baseOverride?: BaseOverride): string {
+  if (baseOverride && (baseOverride.bg !== null || baseOverride.surface !== null)) return 'custom'
   const match = THEME_PRESETS.find(
     (p) =>
       p.mode === mode &&
@@ -167,15 +170,31 @@ export function matchingPresetId(colors: ThemeColors, mode: ThemeMode): string {
   return match?.id ?? 'custom'
 }
 
+export interface BaseOverride {
+  bg: string | null
+  surface: string | null
+}
+
+const NO_OVERRIDE: BaseOverride = { bg: null, surface: null }
+
 interface ThemeState {
   colors: ThemeColors
   mode: ThemeMode
+  // Free-form override of the mode's own --color-bg/--color-surface
+  // (REDESIGN_APPROACH.md Part C2 follow-up: "let the user set the chart
+  // background and core colors, not just accent/candles"). null means "use
+  // the current mode's own default" -- these sit ALONGSIDE mode/presets,
+  // not instead of them, so switching dark/light or picking a curated
+  // preset never silently clears a deliberate background override.
+  baseOverride: BaseOverride
   applyPreset: (id: string) => void
   setAccent: (hex: string) => void
   setPositive: (hex: string) => void
   setNegative: (hex: string) => void
   setUpCandle: (hex: string) => void
   setDownCandle: (hex: string) => void
+  setBgOverride: (hex: string | null) => void
+  setSurfaceOverride: (hex: string | null) => void
   setMode: (mode: ThemeMode) => void
   reset: () => void
 }
@@ -185,6 +204,7 @@ export const useThemeStore = create<ThemeState>()(
     (set) => ({
       colors: DEFAULT_PRESET.colors,
       mode: DEFAULT_PRESET.mode,
+      baseOverride: NO_OVERRIDE,
       applyPreset: (id) => {
         const preset = THEME_PRESETS.find((p) => p.id === id)
         if (preset) set({ colors: preset.colors, mode: preset.mode })
@@ -194,8 +214,10 @@ export const useThemeStore = create<ThemeState>()(
       setNegative: (hex) => set((s) => ({ colors: { ...s.colors, negative: hex } })),
       setUpCandle: (hex) => set((s) => ({ colors: { ...s.colors, upCandle: hex } })),
       setDownCandle: (hex) => set((s) => ({ colors: { ...s.colors, downCandle: hex } })),
+      setBgOverride: (hex) => set((s) => ({ baseOverride: { ...s.baseOverride, bg: hex } })),
+      setSurfaceOverride: (hex) => set((s) => ({ baseOverride: { ...s.baseOverride, surface: hex } })),
       setMode: (mode) => set({ mode }),
-      reset: () => set({ colors: DEFAULT_PRESET.colors, mode: DEFAULT_PRESET.mode }),
+      reset: () => set({ colors: DEFAULT_PRESET.colors, mode: DEFAULT_PRESET.mode, baseOverride: NO_OVERRIDE }),
     }),
     {
       name: 'propbt-viz:theme',
@@ -212,6 +234,7 @@ export const useThemeStore = create<ThemeState>()(
           ...current,
           ...p,
           colors: { ...current.colors, ...p?.colors },
+          baseOverride: { ...current.baseOverride, ...p?.baseOverride },
         }
       },
     },
@@ -223,18 +246,28 @@ export const useThemeStore = create<ThemeState>()(
 // can call exportTheme() to build a downloadable Blob and importTheme() on
 // a FileReader result without needing React context -- same "pure
 // function alongside the store" pattern as matchingPresetId/resolveBase.
-const THEME_FILE_VERSION = 1
+// v2 adds baseOverride (bg/surface) -- not version-gated on import (an
+// unversioned or v1 file simply has no "baseOverride" key, which the
+// optional-field handling below already treats as "no override").
+const THEME_FILE_VERSION = 2
 
-export function exportTheme(colors: ThemeColors, mode: ThemeMode): string {
-  return JSON.stringify({ version: THEME_FILE_VERSION, mode, colors }, null, 2)
+export function exportTheme(colors: ThemeColors, mode: ThemeMode, baseOverride: BaseOverride = NO_OVERRIDE): string {
+  return JSON.stringify({ version: THEME_FILE_VERSION, mode, colors, baseOverride }, null, 2)
 }
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
 
-// Returns the parsed {colors, mode} on success, or an error string on any
-// shape/value problem -- never throws, so the caller (a file-picker
-// handler) can show the message directly without its own try/catch.
-export function importTheme(json: string): { colors: ThemeColors; mode: ThemeMode } | string {
+function isNullableHex(v: unknown): v is string | null {
+  return v === null || (typeof v === 'string' && HEX_RE.test(v))
+}
+
+// Returns the parsed {colors, mode, baseOverride} on success, or an error
+// string on any shape/value problem -- never throws, so the caller (a
+// file-picker handler) can show the message directly without its own
+// try/catch. `baseOverride` is optional in the incoming JSON (absent
+// entirely in a pre-v2 export, or in anything hand-written) -- defaults to
+// "no override" rather than rejecting the file.
+export function importTheme(json: string): { colors: ThemeColors; mode: ThemeMode; baseOverride: BaseOverride } | string {
   let parsed: unknown
   try {
     parsed = JSON.parse(json)
@@ -252,6 +285,15 @@ export function importTheme(json: string): { colors: ThemeColors; mode: ThemeMod
     const v = colorsObj[key]
     if (typeof v !== 'string' || !HEX_RE.test(v)) return `"colors.${key}" must be a 6-digit hex color like "#58a6ff".`
   }
+  let baseOverride: BaseOverride = NO_OVERRIDE
+  if (obj.baseOverride !== undefined) {
+    const bo = obj.baseOverride
+    if (typeof bo !== 'object' || bo === null) return '"baseOverride" must be an object.'
+    const boObj = bo as Record<string, unknown>
+    if (!isNullableHex(boObj.bg)) return '"baseOverride.bg" must be a 6-digit hex color or null.'
+    if (!isNullableHex(boObj.surface)) return '"baseOverride.surface" must be a 6-digit hex color or null.'
+    baseOverride = { bg: boObj.bg, surface: boObj.surface }
+  }
   return {
     mode: obj.mode,
     colors: {
@@ -261,19 +303,27 @@ export function importTheme(json: string): { colors: ThemeColors; mode: ThemeMod
       upCandle: colorsObj.upCandle as string,
       downCandle: colorsObj.downCandle as string,
     },
+    baseOverride,
   }
 }
 
-// Resolves the current mode's base tokens -- a plain function (not a hook)
-// since callers that already subscribe to `mode` (or don't need to react to
-// it) can call this directly; components needing live updates should
-// select `mode` themselves and pass it here, or use useThemeBase() below.
-export function resolveBase(mode: ThemeMode): ThemeBase {
-  return BASE_TOKENS[mode]
+// Resolves the current mode's base tokens, with any bg/surface override
+// applied on top -- a plain function (not a hook) since callers that
+// already subscribe to `mode`/`baseOverride` (or don't need to react to
+// them) can call this directly; components needing live updates should
+// select them themselves and pass them here, or use useThemeBase() below.
+export function resolveBase(mode: ThemeMode, baseOverride: BaseOverride = NO_OVERRIDE): ThemeBase {
+  const base = BASE_TOKENS[mode]
+  if (baseOverride.bg === null && baseOverride.surface === null) return base
+  return {
+    ...base,
+    bg: baseOverride.bg ?? base.bg,
+    surface: baseOverride.surface ?? base.surface,
+  }
 }
 
 export function useThemeBase(): ThemeBase {
-  return useThemeStore((s) => resolveBase(s.mode))
+  return useThemeStore((s) => resolveBase(s.mode, s.baseOverride))
 }
 
 // Pushes the live theme onto :root as CSS custom properties. Every Tailwind
@@ -285,8 +335,15 @@ export function useThemeBase(): ThemeBase {
 // cascades to every native checkbox/radio/range input in the app. `mode` is
 // pushed as a `data-theme` attribute (not a CSS variable) since it selects
 // which *block* of variables applies (index.css's `[data-theme='light']`),
-// not a single value.
-export function applyThemeToDocument(colors: ThemeColors, mode: ThemeMode): void {
+// not a single value. `--color-bg`/`--color-surface` are ALWAYS pushed
+// (not only when a baseOverride is active) from the already-resolved
+// `base` -- an inline style always wins over the `[data-theme]` block
+// regardless of override state, so this is what makes klinecharts' pane
+// background (a plain `bg-bg` div -- klinecharts itself has no pane-
+// background style option, see ChartKL.tsx's themeStyles comment) and
+// every other bg-bg/bg-surface consumer in the app follow a background
+// override live, with no per-consumer wiring.
+export function applyThemeToDocument(colors: ThemeColors, mode: ThemeMode, base: ThemeBase): void {
   const root = document.documentElement
   root.setAttribute('data-theme', mode)
   const style = root.style
@@ -295,5 +352,7 @@ export function applyThemeToDocument(colors: ThemeColors, mode: ThemeMode): void
   style.setProperty('--color-negative', colors.negative)
   style.setProperty('--color-up-candle', colors.upCandle)
   style.setProperty('--color-down-candle', colors.downCandle)
+  style.setProperty('--color-bg', base.bg)
+  style.setProperty('--color-surface', base.surface)
   style.setProperty('accent-color', colors.accent)
 }

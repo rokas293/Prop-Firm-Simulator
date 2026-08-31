@@ -11,7 +11,7 @@ import SettingsPanel from './components/SettingsPanel'
 import LiveRegion from './components/LiveRegion'
 import { useUiStore } from './state/uiStore'
 import { usePerfStore } from './state/perfStore'
-import { applyThemeToDocument, useThemeStore } from './state/themeStore'
+import { applyThemeToDocument, useThemeBase, useThemeStore } from './state/themeStore'
 import { isShortcut } from './keyboard/shortcuts'
 
 export default function App() {
@@ -27,9 +27,10 @@ export default function App() {
   // rather than a Tailwind class swap (POLISH_ROADMAP Phase P6).
   const themeColors = useThemeStore((s) => s.colors)
   const themeMode = useThemeStore((s) => s.mode)
+  const themeBase = useThemeBase()
   useEffect(() => {
-    applyThemeToDocument(themeColors, themeMode)
-  }, [themeColors, themeMode])
+    applyThemeToDocument(themeColors, themeMode, themeBase)
+  }, [themeColors, themeMode, themeBase])
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
