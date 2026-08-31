@@ -197,7 +197,24 @@ export const useThemeStore = create<ThemeState>()(
       setMode: (mode) => set({ mode }),
       reset: () => set({ colors: DEFAULT_PRESET.colors, mode: DEFAULT_PRESET.mode }),
     }),
-    { name: 'propbt-viz:theme' },
+    {
+      name: 'propbt-viz:theme',
+      // persist's default merge is a shallow merge of top-level keys, so a
+      // `colors` object saved by an older schema (missing a field added
+      // since, e.g. positive/negative) replaces the default `colors`
+      // wholesale instead of filling the gap -- every canvas-consuming
+      // reader (hexToRgba, RiskChart, ChartKL) then crashes on the missing
+      // key. Deep-merge `colors` specifically so old localStorage can never
+      // leave a semantic token undefined.
+      merge: (persisted, current) => {
+        const p = persisted as Partial<ThemeState> | undefined
+        return {
+          ...current,
+          ...p,
+          colors: { ...current.colors, ...p?.colors },
+        }
+      },
+    },
   ),
 )
 
