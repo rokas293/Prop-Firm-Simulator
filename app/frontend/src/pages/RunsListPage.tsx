@@ -38,7 +38,16 @@ export default function RunsListPage() {
     )
   }
   if (isError) {
-    return <div className="p-6 text-negative">Failed to load runs: {(error as Error).message}</div>
+    // DESIGN_AUDIT.md follow-up re-audit, item 2: color the status, not the
+    // surrounding detail (DESIGN_LANGUAGE.md section 9) -- only "Failed to
+    // load runs" is negative now; the raw exception text is secondary/muted,
+    // same as any other supporting detail next to a colored status word.
+    return (
+      <div className="p-6">
+        <span className="text-negative">Failed to load runs</span>
+        <span className="text-text-muted">: {(error as Error).message}</span>
+      </div>
+    )
   }
   if (!runs || runs.length === 0) {
     return (
@@ -133,10 +142,16 @@ export default function RunsListPage() {
               <td className="cursor-pointer py-2 pr-4" onClick={() => selectRun(run.run_id)}>
                 {run.result.passed ? (
                   <span className="text-positive">PASSED</span>
+                ) : run.result.fail_reason ? (
+                  // DESIGN_AUDIT.md follow-up re-audit, item R3: color the
+                  // status word only, not the parenthetical detail --
+                  // matches the error-state fix above.
+                  <>
+                    <span className="text-negative">FAILED</span>
+                    <span className="text-text-muted"> ({run.result.fail_reason})</span>
+                  </>
                 ) : (
-                  <span className="text-negative">
-                    {run.result.fail_reason ? `FAILED (${run.result.fail_reason})` : 'INCOMPLETE'}
-                  </span>
+                  <span className="text-negative">INCOMPLETE</span>
                 )}
               </td>
               <td className="num cursor-pointer py-2 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
