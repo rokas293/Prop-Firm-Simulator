@@ -214,6 +214,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   <button
                     key={m}
                     onClick={() => setMode(m)}
+                    aria-pressed={mode === m}
                     className={`rounded px-2 py-1 capitalize ${
                       mode === m ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                     }`}
@@ -230,6 +231,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   key={preset.id}
                   onClick={() => applyPreset(preset.id)}
                   title={`${preset.name} (${preset.mode})`}
+                  aria-pressed={activePresetId === preset.id}
                   className={`flex items-center gap-2 rounded border px-3 py-1 text-xs transition-colors ${
                     activePresetId === preset.id
                       ? 'border-accent bg-surface-2 text-text'
@@ -324,6 +326,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     <button
                       key={tf}
                       onClick={() => setDefaultTimeframe(tf)}
+                      aria-pressed={defaultTimeframe === tf}
                       className={`rounded px-2 py-1 ${
                         defaultTimeframe === tf ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                       }`}
@@ -340,6 +343,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     <button
                       key={d}
                       onClick={() => setBracketDensity(d)}
+                      aria-pressed={bracketDensity === d}
                       className={`rounded px-2 py-1 capitalize ${
                         bracketDensity === d ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                       }`}

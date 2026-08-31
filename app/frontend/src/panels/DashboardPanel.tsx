@@ -198,7 +198,11 @@ function ScoreCard({ score }: { score: CompassScore }) {
 // sets session + entryHourNy together (a single bar there means a specific
 // hour within a specific session, not either alone), so that combination is
 // checked before the single-dimension cases below.
-function describeFilters(filters: TradeFilters): string {
+// Exported for LiveRegion.tsx (accessibility fix): the same wording used in
+// this panel's own visible cross-filter badge is what a screen reader
+// should announce too, rather than inventing separate text for the same
+// fact.
+export function describeFilters(filters: TradeFilters): string {
   if (filters.session !== null && filters.entryHourNy !== null) {
     return `session = ${filters.session}, hour = ${String(filters.entryHourNy).padStart(2, '0')}:00 NY`
   }
@@ -328,6 +332,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           <button
             key={s.key}
             onClick={() => setScope(s.key)}
+            aria-pressed={scope === s.key}
             className={`rounded px-3 py-1 text-sm ${
               scope === s.key ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
             }`}

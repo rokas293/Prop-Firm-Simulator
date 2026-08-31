@@ -8,6 +8,7 @@ import KeyboardShortcuts from './workspace/KeyboardShortcuts'
 import PerfHud from './components/PerfHud'
 import ShortcutsOverlay from './components/ShortcutsOverlay'
 import SettingsPanel from './components/SettingsPanel'
+import LiveRegion from './components/LiveRegion'
 import { useUiStore } from './state/uiStore'
 import { usePerfStore } from './state/perfStore'
 import { applyThemeToDocument, useThemeStore } from './state/themeStore'
@@ -121,6 +122,7 @@ export default function App() {
       <CommandPalette />
       <KeyboardShortcuts />
       <PerfHud />
+      <LiveRegion />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

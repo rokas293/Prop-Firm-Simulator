@@ -115,6 +115,7 @@ export default function ComparePage() {
           <button
             key={s.key}
             onClick={() => setScope(s.key)}
+            aria-pressed={scope === s.key}
             className={`rounded px-3 py-1 text-sm ${
               scope === s.key ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
             }`}

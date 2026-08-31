@@ -496,6 +496,7 @@ export default function ChartPanel() {
 
         <button
           onClick={() => setSplitView((v) => !v)}
+          aria-pressed={splitView}
           className={`rounded px-2 py-1 ${
             splitView ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
           }`}
@@ -508,6 +509,7 @@ export default function ChartPanel() {
               <button
                 key={tf}
                 onClick={() => setSecondaryTimeframe(tf)}
+                aria-pressed={secondaryTimeframe === tf}
                 className={`rounded px-2 py-1 ${
                   secondaryTimeframe === tf
                     ? 'bg-accent text-white'
@@ -535,6 +537,7 @@ export default function ChartPanel() {
                     ? 'Always show full brackets'
                     : 'Always show markers only'
               }
+              aria-pressed={bracketDensity === d}
               className={`rounded px-2 py-1 capitalize ${
                 bracketDensity === d ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
               }`}
