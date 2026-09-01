@@ -8,6 +8,7 @@ const INITIAL = {
   cursorIndex: 0,
   isPlaying: false,
   speed: 1,
+  followLatestBar: false,
 }
 
 beforeEach(() => {
@@ -102,6 +103,19 @@ describe('setIsPlaying / setSpeed', () => {
   })
 })
 
+describe('toggleFollowLatestBar', () => {
+  it('starts off (TradingView-style: stepping never touches the camera unless opted in)', () => {
+    expect(useChartViewStore.getState().followLatestBar).toBe(false)
+  })
+
+  it('flips on, then back off', () => {
+    useChartViewStore.getState().toggleFollowLatestBar()
+    expect(useChartViewStore.getState().followLatestBar).toBe(true)
+    useChartViewStore.getState().toggleFollowLatestBar()
+    expect(useChartViewStore.getState().followLatestBar).toBe(false)
+  })
+})
+
 describe('resetForNewRun', () => {
   it('resets every field to its initial value, regardless of prior state', () => {
     useChartViewStore.setState({
@@ -111,6 +125,7 @@ describe('resetForNewRun', () => {
       cursorIndex: 9,
       isPlaying: true,
       speed: 8,
+      followLatestBar: true,
     })
     useChartViewStore.getState().resetForNewRun()
     expect(useChartViewStore.getState()).toMatchObject({
@@ -120,7 +135,8 @@ describe('resetForNewRun', () => {
       cursorIndex: 0,
       isPlaying: false,
     })
-    // speed is deliberately NOT reset -- it's a user preference, not per-run state.
+    // speed/followLatestBar are deliberately NOT reset -- user preferences, not per-run state.
     expect(useChartViewStore.getState().speed).toBe(8)
+    expect(useChartViewStore.getState().followLatestBar).toBe(true)
   })
 })

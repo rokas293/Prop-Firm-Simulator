@@ -24,6 +24,11 @@ interface ChartViewState {
   cursorIndex: number
   isPlaying: boolean
   speed: number
+  // "Follow latest bar" (REPLICA_ROADMAP.md Batch 1: "free camera") --
+  // default OFF, matching TradingView: stepping never touches the camera
+  // unless the user opts in. A display preference like `speed`, not
+  // per-run replay state, so resetForNewRun deliberately leaves it alone.
+  followLatestBar: boolean
 
   /** Picking a trade (Trade List row, next/prev, keyboard) always returns to a plain trade-centered view. */
   selectTradeView: () => void
@@ -38,6 +43,7 @@ interface ChartViewState {
   advanceCursor: (maxIndex: number) => void
   setIsPlaying: (playing: boolean) => void
   setSpeed: (speed: number) => void
+  toggleFollowLatestBar: () => void
   /** Called whenever a fresh bars window loads -- replay always restarts from its beginning. */
   resetCursorForNewBars: () => void
 
@@ -51,6 +57,7 @@ export const useChartViewStore = create<ChartViewState>((set) => ({
   cursorIndex: 0,
   isPlaying: false,
   speed: 1,
+  followLatestBar: false,
 
   selectTradeView: () => set({ viewMode: 'trade', explicitDayWindow: null }),
   selectFullDay: () => set({ viewMode: 'day', explicitDayWindow: null }),
@@ -66,6 +73,7 @@ export const useChartViewStore = create<ChartViewState>((set) => ({
     }),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   setSpeed: (speed) => set({ speed }),
+  toggleFollowLatestBar: () => set((s) => ({ followLatestBar: !s.followLatestBar })),
   resetCursorForNewBars: () => set({ cursorIndex: 0, isPlaying: false }),
 
   resetForNewRun: () =>

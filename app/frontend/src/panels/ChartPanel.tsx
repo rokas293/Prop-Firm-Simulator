@@ -65,11 +65,13 @@ export default function ChartPanel() {
   const cursorIndex = useChartViewStore((s) => s.cursorIndex)
   const isPlaying = useChartViewStore((s) => s.isPlaying)
   const speed = useChartViewStore((s) => s.speed)
+  const followLatestBar = useChartViewStore((s) => s.followLatestBar)
   const toggleReplay = useChartViewStore((s) => s.toggleReplay)
   const setCursorIndex = useChartViewStore((s) => s.setCursorIndex)
   const advanceCursor = useChartViewStore((s) => s.advanceCursor)
   const setIsPlaying = useChartViewStore((s) => s.setIsPlaying)
   const setSpeed = useChartViewStore((s) => s.setSpeed)
+  const toggleFollowLatestBar = useChartViewStore((s) => s.toggleFollowLatestBar)
   const resetCursorForNewBars = useChartViewStore((s) => s.resetCursorForNewBars)
 
   const { data: run } = useRun(runId)
@@ -572,6 +574,8 @@ export default function ChartPanel() {
         onTogglePlaying={() => setIsPlaying(!isPlaying)}
         speed={speed}
         onSpeedChange={setSpeed}
+        followLatestBar={followLatestBar}
+        onToggleFollowLatestBar={toggleFollowLatestBar}
         runningPnl={replayTotals.pnlUsd}
         runningR={replayTotals.r}
         equity={equityAtCursorPoint}
@@ -595,6 +599,7 @@ export default function ChartPanel() {
               bracketDensity={bracketDensity}
               loading={barsFetching}
               cursorTime={cursorTime}
+              followLatestBar={followLatestBar}
               onDrawingsChange={setKlDrawings}
               onDrawingArmedChange={setArmedTool}
               onVisibleRangeChange={splitView ? handlePrimaryKLVisibleRangeChange : undefined}
@@ -616,6 +621,7 @@ export default function ChartPanel() {
                 bracketDensity={bracketDensity}
                 loading={secondaryBarsFetching}
                 cursorTime={cursorTime}
+                followLatestBar={followLatestBar}
                 onVisibleRangeChange={handleSecondaryKLVisibleRangeChange}
               />
             </div>

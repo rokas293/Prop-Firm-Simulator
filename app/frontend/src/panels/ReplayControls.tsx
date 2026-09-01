@@ -17,6 +17,10 @@ interface ReplayControlsProps {
   onTogglePlaying: () => void
   speed: number
   onSpeedChange: (s: number) => void
+  // "Follow latest bar" (REPLICA_ROADMAP.md Batch 1: "free camera") --
+  // default off, so stepping never touches the camera unless opted in.
+  followLatestBar: boolean
+  onToggleFollowLatestBar: () => void
   runningPnl: number
   runningR: number
   equity: EquityPoint | null
@@ -32,6 +36,8 @@ export default function ReplayControls({
   onTogglePlaying,
   speed,
   onSpeedChange,
+  followLatestBar,
+  onToggleFollowLatestBar,
   runningPnl,
   runningR,
   equity,
@@ -85,6 +91,17 @@ export default function ReplayControls({
                 </option>
               ))}
             </select>
+
+            <button
+              onClick={onToggleFollowLatestBar}
+              title="Keep the newest revealed bar in view while stepping (a minimal scroll, never a hard recenter). Off by default -- pan around freely and keep stepping."
+              aria-pressed={followLatestBar}
+              className={`rounded px-2 py-1 ${
+                followLatestBar ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+              }`}
+            >
+              Follow
+            </button>
 
             {/* No explicit accent-color class -- inherits the theme's live
                 accent-color from :root (POLISH_ROADMAP Phase P6). */}

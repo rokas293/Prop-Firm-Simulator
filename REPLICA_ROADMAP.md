@@ -26,7 +26,7 @@ I (the assistant) own the target + sequencing + prompts. You paste each batch in
 
 ### B. Replay
 - ✅ Play/pause/step/scrubber/speed, no-look-ahead, live PnL/R + MLL readout
-- ◐ **Free camera** — stepping doesn't yank the viewport; optional "follow latest bar" toggle  ← Batch 1
+- ✅ **Free camera** — stepping doesn't yank the viewport (klinecharts' `resetData()` was unconditionally resetting the scroll offset on every replay tick; now the visible time range is captured before and restored after via `convertFromPixel`/`scrollToTimestamp`); "Follow" toggle (default off) nudges minimally to keep the latest bar in view, never hard-recenters  ← Batch 1
 - ☐ Click-to-set replay start bar on the chart
 - ☐ Replay from a chosen point with a clear start affordance
 
