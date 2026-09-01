@@ -220,6 +220,10 @@ export interface PersistedOverlay {
   // the next reload/instrument switch, since hydrateOverlay had nothing to
   // pass klinecharts and it defaults every new overlay to lock: false.
   lock?: boolean
+  // The drawing manager's per-item "hide" (REPLICA_ROADMAP.md Batch 2) --
+  // same round-trip concern as lock above: without persisting it, a hidden
+  // drawing would silently reappear on the next reload/instrument switch.
+  visible?: boolean
 }
 
 export function serializeOverlay(overlay: {
@@ -229,6 +233,7 @@ export function serializeOverlay(overlay: {
   styles: OverlayCreate['styles']
   extendData: unknown
   lock?: boolean
+  visible?: boolean
 }): PersistedOverlay {
   return {
     id: overlay.id,
@@ -237,6 +242,7 @@ export function serializeOverlay(overlay: {
     styles: overlay.styles ?? undefined,
     extendDataText: typeof overlay.extendData === 'string' ? overlay.extendData : undefined,
     lock: overlay.lock,
+    visible: overlay.visible,
   }
 }
 
@@ -256,6 +262,7 @@ export function hydrateOverlay(
     styles: persisted.styles,
     extendData: persisted.extendDataText,
     lock: persisted.lock ?? false,
+    visible: persisted.visible ?? true,
     ...callbacks,
   }
 }

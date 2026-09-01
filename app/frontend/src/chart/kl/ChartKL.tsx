@@ -69,6 +69,21 @@ export interface ChartKLHandle {
   cancelActiveDrawing: () => void
   removeDrawing: (id: string) => void
   clearDrawings: () => void
+  // REPLICA_ROADMAP.md Batch 2's drawing manager -- per-item and bulk
+  // hide/lock, plus "select" (frame the drawing on screen + a brief
+  // highlight flash, reusing the same hover-highlight mechanism Batch 1's
+  // context menu already relies on).
+  toggleDrawingVisible: (id: string) => void
+  toggleDrawingLock: (id: string) => void
+  setAllDrawingsVisible: (visible: boolean) => void
+  setAllDrawingsLocked: (locked: boolean) => void
+  selectDrawing: (id: string) => void
+  // Magnet/snap (Batch 2): when on, every point placed or dragged on a NEW
+  // or EXISTING drawing snaps to the nearest OHLC value of the bar under
+  // it -- klinecharts' own built-in overlay `mode` field (confirmed native
+  // in v10.0.3's OverlayView._coordinateToPoint), not anything hand-rolled
+  // here. Scoped to this chart instance only (see the prop's own comment).
+  setMagnetMode: (on: boolean) => void
 }
 
 interface ChartKLProps {
@@ -343,6 +358,15 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // the user hasn't finished clicking all its points yet), so Escape can
   // cancel it -- see cancelActiveDrawing below.
   const activeDrawingIdRef = useRef<string | null>(null)
+  // Magnet/snap toggle (REPLICA_ROADMAP.md Batch 2), off by default --
+  // read by startDrawing (new overlays are created with this mode already
+  // set) and by setMagnetMode itself (which also retroactively overrides
+  // every already-placed drawing, so dragging an existing point picks up
+  // the current setting too). 'strong_magnet' snaps unconditionally to the
+  // nearest OHLC value; klinecharts' 'weak_magnet' (snap only within a
+  // pixel buffer near the high/low) isn't exposed here -- the roadmap asks
+  // for one on/off toggle, not two snap strengths.
+  const magnetModeRef = useRef<'normal' | 'strong_magnet'>('normal')
   const onDrawingsChangeRef = useRef(onDrawingsChange)
   onDrawingsChangeRef.current = onDrawingsChange
   const onDrawingArmedChangeRef = useRef(onDrawingArmedChange)
@@ -521,6 +545,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         styles: hoverSnapshotRef.current.has(o.id) ? hoverSnapshotRef.current.get(o.id) : (o.styles ?? undefined),
         extendData: o.extendData,
         lock: o.lock,
+        visible: o.visible,
       }),
     )
     useKLDrawingStore.getState().setOverlaysForInstrument(inst, persisted)
@@ -817,11 +842,55 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     }
     container?.addEventListener('contextmenu', handleContextMenu)
 
+    // Axis interaction (REPLICA_ROADMAP.md Batch 2): drag-to-scale on both
+    // axes, and double-click the Y axis to auto-reset, are klinecharts'
+    // OWN native behavior (confirmed against the v10.0.3 source --
+    // AxisImp.scrollZoomEnabled defaults to true, and Event.
+    // mouseDoubleClickEvent already resets the Y axis's autoCalcTickFlag on
+    // a Y-axis double-click) -- nothing to wire up for those. There is NO
+    // equivalent native double-click handler for the X axis (its
+    // mouseDoubleClickEvent switch only handles the MAIN and Y_AXIS widget
+    // cases), so that one gap is filled here, reusing the exact same
+    // "reset chart view" resetView() the empty-area right-click menu
+    // already calls. 'x_axis_pane' is klinecharts' own internal pane id
+    // (PaneIdConstants.X_AXIS in the source) -- used the same way
+    // 'candle_pane' already is elsewhere in this file, as a plain string
+    // literal rather than an import, since neither is exported as a named
+    // constant from the package's public API.
+    //
+    // Deliberately NOT a native 'dblclick' listener: klinecharts' own
+    // event layer doesn't rely on the browser's synthesized 'dblclick'
+    // event either (see its EventHandlerImp source -- it double-click-
+    // detects off raw mousedown/mouseup timing+distance itself, which is
+    // exactly what this mirrors, at the same 500ms/manhattan-distance
+    // shape). Confirmed live that headless Chrome via CDP (as used by this
+    // project's own puppeteer verification) never actually synthesizes a
+    // native 'dblclick' DOM event from two dispatched mousedown/mouseup
+    // pairs -- reproduced even on a bare, library-free <div> -- so a plain
+    // addEventListener('dblclick', ...) would have been both untestable
+    // AND a real risk of the same flakiness in whatever real browser
+    // quirk that CDP behavior is standing in for.
+    const xAxisDom = chart.getDom('x_axis_pane', 'root')
+    let lastXAxisClickAt = 0
+    let lastXAxisClickX = 0
+    const handleXAxisClick = (e: MouseEvent) => {
+      const now = performance.now()
+      if (now - lastXAxisClickAt < 400 && Math.abs(e.clientX - lastXAxisClickX) < 6) {
+        resetView()
+        lastXAxisClickAt = 0
+        return
+      }
+      lastXAxisClickAt = now
+      lastXAxisClickX = e.clientX
+    }
+    xAxisDom?.addEventListener('click', handleXAxisClick)
+
     return () => {
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChange)
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChangeForBrackets)
       chart.unsubscribeAction('onCrosshairChange', handleCrosshairChange)
       container?.removeEventListener('contextmenu', handleContextMenu)
+      xAxisDom?.removeEventListener('click', handleXAxisClick)
       dispose(chart)
       chartRef.current = null
       loadedBarsRef.current = []
@@ -1000,6 +1069,60 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     chart.overrideOverlay({ id, lock: !orig.lock })
     persistDrawingsRef.current()
   }
+
+  // Drawing manager (REPLICA_ROADMAP.md Batch 2) -- per-item hide, plus the
+  // "hide all"/"lock all" bulk actions. `visible` is a real klinecharts
+  // Overlay field (confirmed in the v10.0.3 public types), so this is a
+  // thin overrideOverlay wrapper, same shape as toggleDrawingLock above.
+  const toggleDrawingVisible = (id: string) => {
+    const chart = chartRef.current
+    if (!chart) return
+    const [orig] = chart.getOverlays({ id })
+    if (!orig) return
+    chart.overrideOverlay({ id, visible: !orig.visible })
+    persistDrawingsRef.current()
+  }
+  const setAllDrawingsVisible = (visible: boolean) => {
+    const chart = chartRef.current
+    if (!chart) return
+    for (const o of chart.getOverlays({ groupId: DRAWING_GROUP_ID })) {
+      chart.overrideOverlay({ id: o.id, visible })
+    }
+    persistDrawingsRef.current()
+  }
+  const setAllDrawingsLocked = (locked: boolean) => {
+    const chart = chartRef.current
+    if (!chart) return
+    for (const o of chart.getOverlays({ groupId: DRAWING_GROUP_ID })) {
+      chart.overrideOverlay({ id: o.id, lock: locked })
+    }
+    persistDrawingsRef.current()
+  }
+  // "Select" a drawing from the manager list: frame it on screen (center
+  // the chart's time axis on its own point range -- the Y axis needs no
+  // help, it already auto-fits whatever's visible unless the user manually
+  // scaled it, same as clicking a trade in the Trade List) and flash the
+  // SAME hover-highlight Batch 1 already uses for mouse-hover, so there's
+  // only one "this is the drawing you mean" visual language in the app,
+  // not two. Reuses hoverSnapshotRef/hoverOverrideStyles/clearHoverOverride
+  // as-is; a bare setTimeout is enough here (no cleanup-on-unmount worry --
+  // clearHoverOverride is itself a no-op if the drawing/chart is gone by
+  // the time it fires).
+  const selectDrawing = (id: string) => {
+    const chart = chartRef.current
+    if (!chart) return
+    const [o] = chart.getOverlays({ id })
+    if (!o) return
+    const times = o.points.map((p) => p.timestamp).filter((t): t is number => typeof t === 'number')
+    if (times.length > 0) {
+      chart.scrollToTimestamp(((Math.min(...times) + Math.max(...times)) / 2), 200)
+    }
+    if (!hoverSnapshotRef.current.has(id)) {
+      hoverSnapshotRef.current.set(id, o.styles ? structuredClone(o.styles) : undefined)
+      chart.overrideOverlay({ id, styles: hoverOverrideStyles() })
+      window.setTimeout(() => clearHoverOverride(id), 900)
+    }
+  }
   const updateDrawingColor = (id: string, hex: string) => {
     const chart = chartRef.current
     if (!chart) return
@@ -1038,7 +1161,14 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           const id = `kl-drawing-${crypto.randomUUID()}`
           activeDrawingIdRef.current = id
           onDrawingArmedChangeRef.current?.(toolName)
-          chart.createOverlay({ id, name: toolName, groupId: DRAWING_GROUP_ID, extendData, ...drawingCallbacks() })
+          chart.createOverlay({
+            id,
+            name: toolName,
+            groupId: DRAWING_GROUP_ID,
+            extendData,
+            mode: magnetModeRef.current,
+            ...drawingCallbacks(),
+          })
         })
       },
       cancelActiveDrawing: () => {
@@ -1062,6 +1192,19 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         if (!chart) return
         chart.removeOverlay({ groupId: DRAWING_GROUP_ID })
         persistDrawingsRef.current()
+      },
+      toggleDrawingVisible,
+      toggleDrawingLock,
+      setAllDrawingsVisible,
+      setAllDrawingsLocked,
+      selectDrawing,
+      setMagnetMode: (on) => {
+        magnetModeRef.current = on ? 'strong_magnet' : 'normal'
+        const chart = chartRef.current
+        if (!chart) return
+        for (const o of chart.getOverlays({ groupId: DRAWING_GROUP_ID })) {
+          chart.overrideOverlay({ id: o.id, mode: magnetModeRef.current })
+        }
       },
     }),
     [],

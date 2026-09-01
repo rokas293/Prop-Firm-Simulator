@@ -1,5 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { Circle, Layers, Minus, Paintbrush, Ruler, Slash, Square, Tag, MessageSquare, TrendingUp, Triangle } from 'lucide-react'
+import {
+  Circle,
+  Eye,
+  EyeOff,
+  Layers,
+  Lock,
+  Magnet,
+  Minus,
+  Paintbrush,
+  Ruler,
+  Slash,
+  Square,
+  Tag,
+  MessageSquare,
+  Trash2,
+  TrendingUp,
+  Triangle,
+  Unlock,
+} from 'lucide-react'
 import { DRAWING_TOOLS, KL_CIRCLE, KL_MEASURE, KL_TRIANGLE, KL_ZONE, type DrawingGroup, type DrawingTool } from '../chart/kl/drawingOverlays'
 import type { ChartKLHandle } from '../chart/kl/ChartKL'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
@@ -221,7 +239,17 @@ export default function KLDrawingToolbar({
   const [openGroup, setOpenGroup] = useState<DrawingGroup | null>(null)
   const [manageOpen, setManageOpen] = useState(false)
   const [lastUsedByGroup, setLastUsedByGroup] = useState<Record<DrawingGroup, string>>(initialLastUsedByGroup)
+  // Magnet/snap (REPLICA_ROADMAP.md Batch 2) -- local to this toolbar, not
+  // a persisted preference (matches `openGroup`/`manageOpen` above, not
+  // `followLatestBar`'s chartViewStore treatment): it's a "how the next
+  // point lands" drawing-tool setting scoped to this one toolbar/chart
+  // pairing, not a cross-session view preference, and the secondary
+  // split-view chart has no drawing toolbar of its own to share it with.
+  const [magnetOn, setMagnetOn] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  const allVisible = drawings.every((d) => d.visible !== false)
+  const allLocked = drawings.length > 0 && drawings.every((d) => d.lock === true)
 
   // Keeps the group buttons' glyphs in sync with whatever tool is actually
   // armed, regardless of whether it got armed via a toolbar click, a
@@ -258,6 +286,12 @@ export default function KLDrawingToolbar({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [openGroup, manageOpen])
+
+  function toggleMagnet() {
+    const next = !magnetOn
+    setMagnetOn(next)
+    klChartRef.current?.setMagnetMode(next)
+  }
 
   function activateTool(name: string) {
     klChartRef.current?.startDrawing(name)
@@ -358,65 +392,153 @@ export default function KLDrawingToolbar({
         })}
       </div>
 
-      {/* Outside the scrollable tool list (not `mt-auto` inside it) so the
-          manage button stays reachable without scrolling past the groups. */}
-      <div className="group relative flex-none border-t border-border pt-2">
-        <button
-          onClick={() => setManageOpen((o) => !o)}
-          aria-expanded={manageOpen}
-          aria-haspopup="menu"
-          aria-label={`Drawings (${drawings.length})`}
-          className={`relative flex h-8 w-8 items-center justify-center rounded transition-colors ${
-            manageOpen ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2 hover:text-text'
-          }`}
-        >
-          <Layers size={ICON_SIZE} />
-          {drawings.length > 0 && (
-            <span className="tabular-nums absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] leading-none text-white">
-              {drawings.length}
-            </span>
-          )}
-        </button>
-        <IconButtonTooltip text={`Drawings (${drawings.length})`} suppressed={manageOpen} />
+      {/* Outside the scrollable tool list (not `mt-auto` inside it) so this
+          bottom cluster stays reachable without scrolling past the groups. */}
+      <div className="flex flex-none flex-col items-center gap-1 border-t border-border pt-2">
+        <div className="group relative">
+          <button
+            onClick={toggleMagnet}
+            aria-pressed={magnetOn}
+            aria-label="Magnet: snap drawing points to the nearest OHLC value"
+            className={`flex h-8 w-8 items-center justify-center rounded transition-colors ${
+              magnetOn ? 'bg-accent text-white' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+            }`}
+          >
+            <Magnet size={ICON_SIZE} />
+          </button>
+          <IconButtonTooltip text="Magnet -- snap to OHLC" />
+        </div>
 
-        {manageOpen && (
-          <div className="absolute bottom-0 left-full z-30 ml-1 w-52 rounded border border-border bg-surface-2 py-1 shadow-lg">
-            {drawings.length === 0 ? (
-              // POLISH_ROADMAP Phase P6: a helpful empty state rather than
-              // an empty dropdown (previously this button was just
-              // `disabled` at 0, so there was nothing to open at all).
-              <div className="px-3 py-2 text-text-muted">No drawings yet -- pick a tool above to start.</div>
-            ) : (
-              <>
-                {drawings.map((d) => (
-                  <div key={d.id} className="flex items-center justify-between px-3 py-1 hover:bg-surface-2-hover">
-                    <span className="flex items-center gap-2 truncate text-text">
-                      <span className="flex h-4 w-4 flex-none items-center justify-center text-text-muted">{toolIcon(d.name)}</span>
-                      <span className="truncate">{DRAWING_TOOLS.find((t) => t.name === d.name)?.label ?? d.name}</span>
-                    </span>
+        <div className="group relative">
+          <button
+            onClick={() => setManageOpen((o) => !o)}
+            aria-expanded={manageOpen}
+            aria-haspopup="menu"
+            aria-label={`Drawings (${drawings.length})`}
+            className={`relative flex h-8 w-8 items-center justify-center rounded transition-colors ${
+              manageOpen ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+            }`}
+          >
+            <Layers size={ICON_SIZE} />
+            {drawings.length > 0 && (
+              <span className="tabular-nums absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] leading-none text-white">
+                {drawings.length}
+              </span>
+            )}
+          </button>
+          <IconButtonTooltip text={`Drawings (${drawings.length})`} suppressed={manageOpen} />
+
+          {manageOpen && (
+            <div className="absolute bottom-0 left-full z-30 ml-1 w-64 rounded border border-border bg-surface-2 py-1 shadow-lg">
+              {drawings.length === 0 ? (
+                // POLISH_ROADMAP Phase P6: a helpful empty state rather than
+                // an empty dropdown (previously this button was just
+                // `disabled` at 0, so there was nothing to open at all).
+                <div className="px-3 py-2 text-text-muted">No drawings yet -- pick a tool above to start.</div>
+              ) : (
+                <>
+                  {/* Bulk toggles (REPLICA_ROADMAP.md Batch 2) -- a
+                      select-all-checkbox-style flip: while anything is
+                      still visible/unlocked, the action is "hide/lock
+                      all"; once everything already is, it flips to
+                      "show/unlock all" instead of doing nothing. */}
+                  <div className="flex items-center justify-between px-3 pb-1.5">
+                    <span className="micro-label text-text-muted">Drawings ({drawings.length})</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => klChartRef.current?.setAllDrawingsVisible(!allVisible)}
+                        title={allVisible ? 'Hide all drawings' : 'Show all drawings'}
+                        aria-pressed={!allVisible}
+                        className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                      >
+                        {allVisible ? <Eye size={13} /> : <EyeOff size={13} />}
+                      </button>
+                      <button
+                        onClick={() => klChartRef.current?.setAllDrawingsLocked(!allLocked)}
+                        title={allLocked ? 'Unlock all drawings' : 'Lock all drawings'}
+                        aria-pressed={allLocked}
+                        className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                      >
+                        {allLocked ? <Lock size={13} /> : <Unlock size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {drawings.map((d) => {
+                      const hidden = d.visible === false
+                      const locked = d.lock === true
+                      return (
+                        <div
+                          key={d.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => klChartRef.current?.selectDrawing(d.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') klChartRef.current?.selectDrawing(d.id)
+                          }}
+                          title="Click to frame this drawing on the chart"
+                          className={`flex cursor-pointer items-center justify-between px-3 py-1 hover:bg-surface-2-hover ${
+                            hidden ? 'opacity-50' : ''
+                          }`}
+                        >
+                          <span className="flex min-w-0 items-center gap-2 truncate text-text">
+                            <span className="flex h-4 w-4 flex-none items-center justify-center text-text-muted">
+                              {toolIcon(d.name)}
+                            </span>
+                            <span className="truncate">{DRAWING_TOOLS.find((t) => t.name === d.name)?.label ?? d.name}</span>
+                          </span>
+                          <span className="ml-2 flex flex-none items-center gap-0.5">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                klChartRef.current?.toggleDrawingVisible(d.id)
+                              }}
+                              title={hidden ? 'Show' : 'Hide'}
+                              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                            >
+                              {hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                klChartRef.current?.toggleDrawingLock(d.id)
+                              }}
+                              title={locked ? 'Unlock' : 'Lock'}
+                              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                            >
+                              {locked ? <Lock size={13} /> : <Unlock size={13} />}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                klChartRef.current?.removeDrawing(d.id)
+                              }}
+                              title="Delete"
+                              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-negative"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="mt-1 border-t border-border px-3 pt-2">
                     <button
-                      onClick={() => klChartRef.current?.removeDrawing(d.id)}
-                      className="ml-2 shrink-0 text-text-muted hover:text-negative"
+                      onClick={() => {
+                        klChartRef.current?.clearDrawings()
+                        setManageOpen(false)
+                      }}
+                      className="text-text-muted hover:text-negative"
                     >
-                      Delete
+                      Clear all
                     </button>
                   </div>
-                ))}
-                <div className="mt-1 border-t border-border px-3 pt-2">
-                  <button
-                    onClick={() => {
-                      klChartRef.current?.clearDrawings()
-                      setManageOpen(false)
-                    }}
-                    className="text-text-muted hover:text-negative"
-                  >
-                    Clear all
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

@@ -130,6 +130,34 @@ describe('serializeOverlay / hydrateOverlay round trip', () => {
     expect(hydrateOverlay(persisted, {}).lock).toBe(false)
   })
 
+  // REPLICA_ROADMAP.md Batch 2's drawing manager "hide" action: same
+  // round-trip concern as lock above -- without persisting it, a hidden
+  // drawing would silently reappear on the next reload/instrument switch.
+  it('round-trips visible:false through serialize/hydrate', () => {
+    const persisted = serializeOverlay({
+      id: 'kl-drawing-6',
+      name: 'segment',
+      points: [{ timestamp: 1000, value: 1 }],
+      styles: undefined,
+      extendData: undefined,
+      visible: false,
+    })
+    expect(persisted.visible).toBe(false)
+    const hydrated = hydrateOverlay(persisted, {})
+    expect(hydrated.visible).toBe(false)
+  })
+
+  it('hydrates a never-hidden drawing as visible:true, not undefined', () => {
+    const persisted = serializeOverlay({
+      id: 'kl-drawing-7',
+      name: 'segment',
+      points: [],
+      styles: undefined,
+      extendData: undefined,
+    })
+    expect(hydrateOverlay(persisted, {}).visible).toBe(true)
+  })
+
   it('re-attaches every interaction callback the caller passes -- onRightClick/onMouseEnter/onMouseLeave, not just the persistence hooks', () => {
     const onRightClick = () => {}
     const onMouseEnter = () => {}
