@@ -3,10 +3,13 @@ import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { equityAtCursor, runningTotals } from '../chart/replay'
 import { withMargin } from '../chart/windowMargin'
+import ChartLayoutMenu from './ChartLayoutMenu'
 import IndicatorDialog from './IndicatorDialog'
 import KLDrawingToolbar from './KLDrawingToolbar'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import ReplayControls from './ReplayControls'
+import SymbolSearch from './SymbolSearch'
+import TimeframeMenu from './TimeframeMenu'
 import { useBars, useEquity, useIndicators, useRun, useSessions, useTrades } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { filtersToParams, useTradeStore } from '../state/tradeStore'
@@ -16,7 +19,6 @@ import { useChartDefaultsStore } from '../state/chartDefaultsStore'
 import { applyCompassFilters } from '../compass/breakdowns'
 import { isShortcut, DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
 import EmptyState from '../components/EmptyState'
-import type { BracketDensity } from '../chart/tradeBracket'
 import type { IndicatorName } from '../api/types'
 import { fmtUsd } from '../format'
 
@@ -452,34 +454,59 @@ export default function ChartPanel() {
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2 text-sm">
-        {run && <span className="text-text-muted">{run.instrument}</span>}
+      {/* REPLICA_ROADMAP.md Batch 4: one clean top row -- symbol,
+          timeframe, indicators, replay, layout -- matching TradingView's
+          own top bar. Trade navigation/fit/day (row below, used
+          constantly while reviewing a run) and the occasional split-
+          view/bracket-density settings (folded into the Layout popover)
+          deliberately stay OUT of this row so it never gets crowded. */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+        <SymbolSearch />
+        <TimeframeMenu timeframes={TIMEFRAMES} value={timeframe} onChange={(tf) => setTimeframe(tf as Timeframe)} />
 
-        <div className="mx-1 h-4 w-px bg-surface-2" />
+        <button
+          onClick={() => setIndicatorDialogOpen(true)}
+          className="flex h-7 items-center gap-1.5 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
+        >
+          Indicators
+          <span className="tabular-nums flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-none text-white">
+            {activeIndicatorCount}
+          </span>
+        </button>
 
-        <div className="flex gap-1">
-          {TIMEFRAMES.map((tf) => (
-            <button
-              key={tf}
-              onClick={() => setTimeframe(tf)}
-              aria-pressed={timeframe === tf}
-              className={`rounded px-2 py-1 ${
-                timeframe === tf
-                  ? 'bg-accent text-white'
-                  : 'bg-surface-2 text-text hover:bg-surface-2-hover'
-              }`}
-            >
-              {tf}
-            </button>
-          ))}
+        <button
+          onClick={toggleReplay}
+          aria-pressed={replayActive}
+          className={`h-7 rounded px-2 text-xs ${
+            replayActive ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+          }`}
+        >
+          {replayActive ? 'Exit replay' : 'Replay'}
+        </button>
+
+        <div className="ml-auto">
+          <ChartLayoutMenu
+            splitView={splitView}
+            onToggleSplitView={() => setSplitView((v) => !v)}
+            timeframes={TIMEFRAMES}
+            timeframe={timeframe}
+            secondaryTimeframe={secondaryTimeframe}
+            onSecondaryTimeframeChange={(tf) => setSecondaryTimeframe(tf as Timeframe)}
+            bracketDensity={bracketDensity}
+            onBracketDensityChange={setBracketDensity}
+          />
         </div>
+      </div>
+      <IndicatorDialog open={indicatorDialogOpen} onClose={() => setIndicatorDialogOpen(false)} />
 
-        <div className="mx-1 h-4 w-px bg-surface-2" />
-
+      {/* Trade navigation -- used on nearly every click while reviewing a
+          run, so it stays immediately visible rather than folded into a
+          menu (unlike Layout's more occasional display settings above). */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-xs">
         <button
           onClick={() => tradeIdx > 0 && trades && pickTrade(trades[tradeIdx - 1].trade_id)}
           disabled={tradeIdx <= 0}
-          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           &larr; Prev trade
         </button>
@@ -489,7 +516,7 @@ export default function ChartPanel() {
         <button
           onClick={() => trades && tradeIdx < trades.length - 1 && pickTrade(trades[tradeIdx + 1].trade_id)}
           disabled={!trades || tradeIdx < 0 || tradeIdx >= trades.length - 1}
-          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           Next trade &rarr;
         </button>
@@ -499,72 +526,17 @@ export default function ChartPanel() {
         <button
           onClick={fitTrade}
           disabled={!selectedTrade}
-          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           Fit trade
         </button>
         <button
           onClick={selectFullDay}
           disabled={!selectedTrade}
-          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           Full day
         </button>
-
-        <div className="mx-1 h-4 w-px bg-surface-2" />
-
-        <button
-          onClick={() => setSplitView((v) => !v)}
-          aria-pressed={splitView}
-          className={`rounded px-2 py-1 ${
-            splitView ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
-          }`}
-        >
-          Split view
-        </button>
-        {splitView && (
-          <div className="flex gap-1">
-            {TIMEFRAMES.filter((tf) => tf !== timeframe).map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setSecondaryTimeframe(tf)}
-                aria-pressed={secondaryTimeframe === tf}
-                className={`rounded px-2 py-1 ${
-                  secondaryTimeframe === tf
-                    ? 'bg-accent text-white'
-                    : 'bg-surface-2 text-text hover:bg-surface-2-hover'
-                }`}
-              >
-                {tf}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="mx-1 h-4 w-px bg-surface-2" />
-
-        <span className="text-text-muted">Brackets</span>
-        <div className="flex gap-1">
-          {(['auto', 'full', 'markers'] as BracketDensity[]).map((d) => (
-            <button
-              key={d}
-              onClick={() => setBracketDensity(d)}
-              title={
-                d === 'auto'
-                  ? 'Simplify narrow brackets to markers when zoomed out'
-                  : d === 'full'
-                    ? 'Always show full brackets'
-                    : 'Always show markers only'
-              }
-              aria-pressed={bracketDensity === d}
-              className={`rounded px-2 py-1 capitalize ${
-                bracketDensity === d ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
-              }`}
-            >
-              {d === 'markers' ? 'Off' : d}
-            </button>
-          ))}
-        </div>
 
         {selectedTrade && (
           <span className="ml-auto text-xs text-text-muted">
@@ -577,22 +549,8 @@ export default function ChartPanel() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <button
-          onClick={() => setIndicatorDialogOpen(true)}
-          className="flex items-center gap-1.5 rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
-        >
-          Indicators
-          <span className="tabular-nums flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-none text-white">
-            {activeIndicatorCount}
-          </span>
-        </button>
-      </div>
-      <IndicatorDialog open={indicatorDialogOpen} onClose={() => setIndicatorDialogOpen(false)} />
-
       <ReplayControls
         active={replayActive}
-        onToggleActive={toggleReplay}
         bars={bars ?? []}
         cursorIndex={cursorIndex}
         onCursorIndexChange={setCursorIndex}

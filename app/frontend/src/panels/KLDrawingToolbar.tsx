@@ -3,6 +3,7 @@ import {
   Circle,
   Eye,
   EyeOff,
+  History,
   Layers,
   Lock,
   Magnet,
@@ -22,6 +23,7 @@ import { DRAWING_TOOLS, KL_CIRCLE, KL_MEASURE, KL_TRIANGLE, KL_ZONE, type Drawin
 import type { ChartKLHandle } from '../chart/kl/ChartKL'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import { DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
+import { useKLDrawingStore } from '../state/klDrawingStore'
 
 const GROUP_ORDER: DrawingGroup[] = ['lines', 'fibonacci', 'shapes', 'annotations']
 const GROUP_LABELS: Record<DrawingGroup, string> = {
@@ -238,7 +240,10 @@ export default function KLDrawingToolbar({
 }) {
   const [openGroup, setOpenGroup] = useState<DrawingGroup | null>(null)
   const [manageOpen, setManageOpen] = useState(false)
+  const [recentOpen, setRecentOpen] = useState(false)
   const [lastUsedByGroup, setLastUsedByGroup] = useState<Record<DrawingGroup, string>>(initialLastUsedByGroup)
+  const recentTools = useKLDrawingStore((s) => s.recentTools)
+  const recordToolUsed = useKLDrawingStore((s) => s.recordToolUsed)
   // Magnet/snap (REPLICA_ROADMAP.md Batch 2) -- local to this toolbar, not
   // a persisted preference (matches `openGroup`/`manageOpen` above, not
   // `followLatestBar`'s chartViewStore treatment): it's a "how the next
@@ -260,23 +265,31 @@ export default function KLDrawingToolbar({
     const tool = DRAWING_TOOLS.find((t) => t.name === armedTool)
     if (!tool) return
     setLastUsedByGroup((prev) => (prev[tool.group] === armedTool ? prev : { ...prev, [tool.group]: armedTool }))
-  }, [armedTool])
+    // REPLICA_ROADMAP.md Batch 4's favorites row -- armedTool is already
+    // the single source of truth for "a tool just got armed" regardless of
+    // how (toolbar click, a flyout pick, or a DRAWING_SHORTCUTS keypress
+    // handled entirely in ChartPanel.tsx), so recording it here catches
+    // every path without duplicating that logic three times.
+    recordToolUsed(armedTool)
+  }, [armedTool, recordToolUsed])
 
   // Close any open flyout on an outside click or Escape -- same dismissal
   // contract as every other popover in the app (SettingsPanel, command
   // palette).
   useEffect(() => {
-    if (!openGroup && !manageOpen) return
+    if (!openGroup && !manageOpen && !recentOpen) return
     const handlePointerDown = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpenGroup(null)
         setManageOpen(false)
+        setRecentOpen(false)
       }
     }
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpenGroup(null)
         setManageOpen(false)
+        setRecentOpen(false)
       }
     }
     document.addEventListener('mousedown', handlePointerDown)
@@ -285,7 +298,7 @@ export default function KLDrawingToolbar({
       document.removeEventListener('mousedown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [openGroup, manageOpen])
+  }, [openGroup, manageOpen, recentOpen])
 
   function toggleMagnet() {
     const next = !magnetOn
@@ -395,6 +408,56 @@ export default function KLDrawingToolbar({
       {/* Outside the scrollable tool list (not `mt-auto` inside it) so this
           bottom cluster stays reachable without scrolling past the groups. */}
       <div className="flex flex-none flex-col items-center gap-1 border-t border-border pt-2">
+        {/* Favorites/recently-used (REPLICA_ROADMAP.md Batch 4) -- the
+            last few DISTINCT tools actually armed, most-recent-first,
+            sourced straight from DRAWING_TOOLS/toolIcon so a favorite
+            renders identically to its entry in the group flyouts above. */}
+        <div className="group relative">
+          <button
+            onClick={() => setRecentOpen((o) => !o)}
+            aria-expanded={recentOpen}
+            aria-haspopup="menu"
+            aria-label="Recently used tools"
+            disabled={recentTools.length === 0}
+            className={`flex h-8 w-8 items-center justify-center rounded transition-colors disabled:opacity-30 ${
+              recentOpen ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+            }`}
+          >
+            <History size={ICON_SIZE} />
+          </button>
+          <IconButtonTooltip text="Recently used" suppressed={recentOpen} />
+
+          {recentOpen && recentTools.length > 0 && (
+            <div
+              role="menu"
+              aria-label="Recently used tools"
+              className="absolute bottom-0 left-full z-30 ml-1 w-48 rounded border border-border bg-surface-2 py-1 shadow-lg"
+            >
+              {recentTools.map((name) => {
+                const tool = DRAWING_TOOLS.find((t) => t.name === name)
+                if (!tool) return null
+                const active = tool.name === armedTool
+                const key = shortcutFor(tool.name)
+                return (
+                  <button
+                    key={tool.name}
+                    role="menuitem"
+                    onClick={() => activateTool(tool.name)}
+                    aria-pressed={active}
+                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                      active ? 'text-accent' : 'text-text hover:bg-surface-2-hover'
+                    }`}
+                  >
+                    <span className="flex h-4 w-4 flex-none items-center justify-center">{toolIcon(tool.name)}</span>
+                    <span className="flex-1 truncate">{tool.label}</span>
+                    {key && <span className="micro-label flex-none text-text-muted">{key.toUpperCase()}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
         <div className="group relative">
           <button
             onClick={toggleMagnet}

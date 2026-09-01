@@ -9,7 +9,6 @@ function fmtTime(unixSeconds: number): string {
 
 interface ReplayControlsProps {
   active: boolean
-  onToggleActive: () => void
   bars: Bar[]
   cursorIndex: number
   onCursorIndexChange: (i: number) => void
@@ -28,7 +27,6 @@ interface ReplayControlsProps {
 
 export default function ReplayControls({
   active,
-  onToggleActive,
   bars,
   cursorIndex,
   onCursorIndexChange,
@@ -45,19 +43,17 @@ export default function ReplayControls({
   const lastIndex = Math.max(0, bars.length - 1)
   const cursorBar = bars[cursorIndex]
 
+  // REPLICA_ROADMAP.md Batch 4: the enter/exit toggle now lives in
+  // ChartPanel's top toolbar row (alongside symbol/timeframe/indicators),
+  // matching TradingView's own top bar -- this component renders nothing
+  // at all until replay is actually active, instead of always showing a
+  // one-button row.
+  if (!active) return null
+
   return (
     <div className="border-b border-border px-6 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={onToggleActive}
-          className={`rounded px-2 py-1 ${
-            active ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
-          }`}
-        >
-          {active ? 'Exit replay' : 'Replay'}
-        </button>
-
-        {active && bars.length > 0 && (
+        {bars.length > 0 && (
           <>
             <button
               onClick={() => onCursorIndexChange(Math.max(0, cursorIndex - 1))}
@@ -119,35 +115,33 @@ export default function ReplayControls({
         )}
       </div>
 
-      {active && (
-        <div className="mt-2 flex flex-wrap items-center gap-4 text-text-muted">
-          <span>
-            Running:{' '}
-            <span className={`tabular-nums ${runningPnl >= 0 ? 'text-positive' : 'text-negative'}`}>
-              {fmtUsd(runningPnl)}
-            </span>{' '}
-            <span className="tabular-nums text-text-muted">({runningR.toFixed(2)}R)</span>
-          </span>
-          {equity ? (
-            <>
-              <span>
-                Equity: <span className="tabular-nums text-text">{fmtUsd(equity.equity)}</span>
+      <div className="mt-2 flex flex-wrap items-center gap-4 text-text-muted">
+        <span>
+          Running:{' '}
+          <span className={`tabular-nums ${runningPnl >= 0 ? 'text-positive' : 'text-negative'}`}>
+            {fmtUsd(runningPnl)}
+          </span>{' '}
+          <span className="tabular-nums text-text-muted">({runningR.toFixed(2)}R)</span>
+        </span>
+        {equity ? (
+          <>
+            <span>
+              Equity: <span className="tabular-nums text-text">{fmtUsd(equity.equity)}</span>
+            </span>
+            <span>
+              MLL floor: <span className="tabular-nums text-text">{fmtUsd(equity.mll_floor)}</span>
+            </span>
+            <span>
+              Distance to breach:{' '}
+              <span className={`tabular-nums ${equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}`}>
+                {fmtUsd(equity.equity - equity.mll_floor)}
               </span>
-              <span>
-                MLL floor: <span className="tabular-nums text-text">{fmtUsd(equity.mll_floor)}</span>
-              </span>
-              <span>
-                Distance to breach:{' '}
-                <span className={`tabular-nums ${equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}`}>
-                  {fmtUsd(equity.equity - equity.mll_floor)}
-                </span>
-              </span>
-            </>
-          ) : (
-            <span className="text-text-muted">No equity data at cursor</span>
-          )}
-        </div>
-      )}
+            </span>
+          </>
+        ) : (
+          <span className="text-text-muted">No equity data at cursor</span>
+        )}
+      </div>
     </div>
   )
 }

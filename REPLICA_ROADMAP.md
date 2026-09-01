@@ -34,14 +34,13 @@ I (the assistant) own the target + sequencing + prompts. You paste each batch in
 ### C. Toolbars & layout
 - ✅ Left icon drawing toolbar with grouped flyouts
 - ✅ Dockable/resizable panels, layout presets, command palette
-- ☐ Top chart toolbar polish: symbol, timeframe, indicators, settings, replay, layout — one clean row
-- ☐ Favorites / recently-used drawing tools row
+- ✅ **Top chart toolbar, one clean row** — Symbol · Timeframe · Indicators · Replay, with a "Layout" popover (split view, trade-bracket density) pinned right via `ml-auto`. The always-visible checkbox/button sprawl that used to live here (Brackets density row, Split view + its own timeframe pills, a standalone Indicators row) is gone — those two are genuinely occasional settings, folded into Layout, while trade navigation (prev/next/fit/day, used on nearly every click) stays in its own row directly below since burying it would hurt, not help. `ReplayControls` now renders nothing at all until replay is active (its own enter/exit toggle moved into this row) instead of always showing a one-button row.  ← Batch 4
+- ✅ **Favorites / recently-used drawing tools row** — a new History-icon flyout in the drawing toolbar's bottom cluster (alongside Magnet/Drawings), listing the last 5 *distinct* tools actually armed, most-recent-first, click to re-arm. Persisted (`klDrawingStore`'s new `recentTools`) so it survives a reload, sourced from the same `DRAWING_TOOLS`/`toolIcon`/shortcut-key catalog the group flyouts already use — recorded off the single `armedTool` signal that already unifies every arming path (toolbar click, group flyout, or a keyboard shortcut), so nothing had to be duplicated three times to catch all of them.  ← Batch 4
 - ☐ Full-screen / distraction-free chart mode
 
 ### D. Symbol & timeframe UX
-- ✅ Instrument + timeframe switch
-- ☐ Symbol search/quick-switch (typeahead) styled like TradingView's
-- ☐ Timeframe as both quick buttons and a dropdown of the full set
+- ✅ **Symbol search** — an anchored, TradingView-style dropdown (not a centered modal like the command palette/indicator dialog — this one reads as part of the toolbar) built on the same `cmdk` primitives, searchable, showing each available instrument's description. "Switching symbol" reuses the exact semantics the command palette's own "Switch instrument" entries already established: jump to that instrument's first run (this app has no free-floating symbol independent of a loaded run).  ← Batch 4
+- ✅ **Timeframe: quick buttons + a dropdown of the full set** — the quick pills are unchanged; added a chevron that opens a descriptively-labeled dropdown ("1 minute", "5 minutes", …) of the exact same four. Confirmed live there is no wider timeframe set anywhere in the frontend or backend contract to expose — the dropdown is deliberately the standard TradingView interval-picker shape (a canonical, accessible fallback path) rather than a placeholder for timeframes that don't exist yet.  ← Batch 4
 
 ### E. Indicators
 - ✅ Built-in + custom indicators, session shading, fair-value

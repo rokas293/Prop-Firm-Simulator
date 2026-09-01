@@ -9,10 +9,21 @@ import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 // client-only annotation feature doesn't need one; VIZ_SPEC's "frontend
 // does zero financial math" doesn't apply to what's purely a visual note
 // the user drew on their own screen.
+// REPLICA_ROADMAP.md Batch 4's drawing-toolbar favorites row: the last few
+// DISTINCT tool names armed, most-recent-first. Lives here (not new local
+// state in KLDrawingToolbar) so it survives a reload the same way the
+// drawings themselves do -- a genuinely useful "pick up where I left off"
+// preference, not session-only. Capped well below the full ~20-tool
+// catalog so the flyout stays a quick-pick, not a second copy of the tool
+// list.
+const MAX_RECENT_TOOLS = 5
+
 interface KLDrawingState {
   overlaysByInstrument: Record<string, PersistedOverlay[]>
   setOverlaysForInstrument: (instrument: string, overlays: PersistedOverlay[]) => void
   clearForInstrument: (instrument: string) => void
+  recentTools: string[]
+  recordToolUsed: (name: string) => void
 }
 
 export const useKLDrawingStore = create<KLDrawingState>()(
@@ -27,6 +38,9 @@ export const useKLDrawingStore = create<KLDrawingState>()(
           delete next[instrument]
           return { overlaysByInstrument: next }
         }),
+      recentTools: [],
+      recordToolUsed: (name) =>
+        set((s) => ({ recentTools: [name, ...s.recentTools.filter((t) => t !== name)].slice(0, MAX_RECENT_TOOLS) })),
     }),
     { name: 'propbt-viz:kl-drawings' },
   ),
