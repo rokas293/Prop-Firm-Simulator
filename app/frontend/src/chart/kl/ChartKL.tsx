@@ -29,8 +29,10 @@ import {
   KL_EMA50,
   KL_VWAP,
   ensureIndicatorsRegistered,
+  resolveIndicatorLineColor,
   setIndicatorContext,
 } from './indicators'
+import { INDICATOR_KEY_BY_NAME, buildIndicatorFeatures, type IndicatorFeatureId } from './indicatorLegend'
 import {
   FAIR_VALUE_GROUP,
   SESSION_BAND_GROUP,
@@ -41,13 +43,14 @@ import {
 } from './sessionOverlay'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
 import { useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
-import type { IndicatorPrefs } from '../../state/indicatorStore'
+import { useIndicatorStore, type ColorableIndicatorKey, type IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
 import LoadingBar from '../../components/LoadingBar'
 import Skeleton from '../../components/Skeleton'
 import ContextMenu from '../../components/ContextMenu'
 import DrawingStylePopover from './DrawingStylePopover'
+import IndicatorSettingsPopover from './IndicatorSettingsPopover'
 
 interface IndicatorData {
   vwap: IndicatorPoint[]
@@ -135,6 +138,19 @@ interface ChartKLProps {
   onVisibleRangeChange?: (range: { from: number; to: number } | null) => void
 }
 
+// Matches Tailwind's default `font-sans` stack (index.css has no custom
+// @font-face override -- DESIGN_LANGUAGE.md §3: "Inter or the system UI
+// stack"), so canvas-rendered text (which can't read a CSS variable/class)
+// reads as the same family as the surrounding DOM chrome.
+const FONT_FAMILY = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+
+const INDICATOR_LABEL: Record<ColorableIndicatorKey, string> = {
+  vwap: 'VWAP',
+  ema20: 'EMA 20',
+  ema50: 'EMA 50',
+  atr14: 'ATR(14)',
+}
+
 // Theme/mode-changed effect (REDESIGN_APPROACH.md Part C1) recolors
 // everything klinecharts renders that ISN'T a trade/session/drawing
 // overlay (those rebuild fresh from `colors` on every change already, see
@@ -173,6 +189,19 @@ function themeStyles(colors: ThemeColors, base: ThemeBase) {
     },
     indicator: {
       bars: [{ upColor: colors.upCandle, downColor: colors.downCandle, noChangeColor: colors.upCandle }],
+      // The on-chart per-indicator legend row's typography (REPLICA_
+      // ROADMAP.md Batch 3) -- klinecharts' own default is an unthemed
+      // 'Helvetica Neue'/flat-gray (confirmed in the v10.0.3 source), which
+      // doesn't track the app's theme tokens or DESIGN_LANGUAGE.md §3's
+      // "one family, system UI stack" the rest of the app uses. showRule
+      // is already 'always' by default (unchanged) -- only typography
+      // needs setting here; the feature icons (settings/eye/remove/
+      // reorder) are applied per-indicator in rebuildIndicatorsRef below,
+      // not globally, since which icons apply differs by indicator kind.
+      tooltip: {
+        title: { color: base.textMuted, family: FONT_FAMILY },
+        legend: { color: base.text, family: FONT_FAMILY },
+      },
     },
     xAxis: {
       axisLine: { color: base.border },
@@ -215,16 +244,21 @@ function themeStyles(colors: ThemeColors, base: ThemeBase) {
   }
 }
 
-// VWAP (theme accent) and ATR14 (theme textMuted, different dark vs light)
-// track the live theme -- restyled via overrideIndicator rather than
-// baked into their one-time registerIndicator call (indicators.ts), which
-// only sets an initial placeholder. EMA20/EMA50 are fixed categorical
-// colors (registered once, correct forever) so they're not touched here.
-// Safe to call even when an indicator isn't currently created --
-// overrideIndicator just returns false, confirmed from the v10.0.3 types.
+// All four resolve through resolveIndicatorLineColor (indicators.ts): the
+// user's own per-indicator color pick (REPLICA_ROADMAP.md Batch 3's
+// on-chart legend "settings" swatch) if one exists, else the theme
+// default -- VWAP tracks accent, ATR14 tracks textMuted (differs dark vs
+// light), EMA20/EMA50 are fixed categorical defaults. Restyled via
+// overrideIndicator rather than baked into the one-time registerIndicator
+// call (indicators.ts), which only sets an initial placeholder. Safe to
+// call even when an indicator isn't currently created -- overrideIndicator
+// just returns false, confirmed from the v10.0.3 types.
 function applyIndicatorColors(chart: Chart, colors: ThemeColors, base: ThemeBase): void {
-  chart.overrideIndicator({ name: KL_VWAP, styles: { lines: [{ color: colors.accent }] } })
-  chart.overrideIndicator({ name: KL_ATR14, styles: { lines: [{ color: base.textMuted }] } })
+  const keys: ColorableIndicatorKey[] = ['vwap', 'ema20', 'ema50', 'atr14']
+  const names = { vwap: KL_VWAP, ema20: KL_EMA20, ema50: KL_EMA50, atr14: KL_ATR14 }
+  for (const key of keys) {
+    chart.overrideIndicator({ name: names[key], styles: { lines: [{ color: resolveIndicatorLineColor(key, colors, base) }] } })
+  }
 }
 
 function toKLineData(bar: Bar): KLineData {
@@ -367,6 +401,25 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // pixel buffer near the high/low) isn't exposed here -- the roadmap asks
   // for one on/off toggle, not two snap strengths.
   const magnetModeRef = useRef<'normal' | 'strong_magnet'>('normal')
+  // On-chart legend "hide/show" (REPLICA_ROADMAP.md Batch 3) -- a per-
+  // indicator eye toggle, deliberately NOT stored in indicatorStore
+  // (that's "is this indicator on at all", reused as-is for the legend's
+  // "remove"). rebuildIndicatorsRef destroys+recreates every indicator on
+  // any prefs/data/theme change (existing behavior, unchanged), which
+  // would silently reset a native `visible:false` override each time --
+  // this ref is what survives that and gets reapplied on every rebuild.
+  const hiddenIndicatorsRef = useRef<Set<keyof IndicatorPrefs>>(new Set())
+  // The most recent raw mouse position in PAGE coordinates, tracked via a
+  // plain native listener on the container (below) -- klinecharts'
+  // onIndicatorTooltipFeatureClick action reports WHICH indicator/icon was
+  // clicked but no pixel coordinate (confirmed against the v10.0.3 source:
+  // the action payload is just {paneId, indicator, feature}), so this is
+  // what the settings popover uses to position itself near the click
+  // instead. NOT klinecharts' own onCrosshairChange action -- confirmed
+  // live that it only ever fires for the candle pane, never for a sub-pane
+  // (VOL/ATR14), which is exactly where this is needed most.
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
+  const [indicatorSettings, setIndicatorSettings] = useState<{ key: ColorableIndicatorKey; x: number; y: number } | null>(null)
   const onDrawingsChangeRef = useRef(onDrawingsChange)
   onDrawingsChangeRef.current = onDrawingsChange
   const onDrawingArmedChangeRef = useRef(onDrawingArmedChange)
@@ -452,6 +505,86 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // why they're not klinecharts' own built-in EMA/ATR formulas).
   // setIndicatorContext() first so each indicator's calc sees the fresh
   // points the instant createIndicator triggers its first calc pass.
+  // On-chart legend feature icons (REPLICA_ROADMAP.md Batch 3) -- called
+  // once per rebuildIndicatorsRef run, right after (re)creating whichever
+  // indicators are active, so every one gets a fresh createTooltipDataSource
+  // reflecting the CURRENT hidden-state and reorder-eligibility. klinecharts
+  // only honors a per-INDICATOR override of the tooltip's `features` array
+  // via this callback (confirmed against the v10.0.3 source's
+  // getIndicatorTooltipData -- the chart-wide styles.indicator.tooltip.
+  // features is just the fallback default; createTooltipDataSource's own
+  // return is what actually varies per indicator, which is exactly what's
+  // needed here since VOL/ATR14 get reorder arrows and VWAP/EMA/ATR14 get
+  // a settings swatch but VOL doesn't). name/calcParamsText/legends are
+  // deliberately omitted from the returned object so klinecharts keeps
+  // computing its own defaults (the whole point -- only the icon cluster
+  // is custom). The public IndicatorTooltipData type marks those fields
+  // required, but the runtime (isString/isValid guards, same source)
+  // treats an absent field as "no override", NOT as "override with
+  // nothing" -- returning legends: [] here would instead wipe the real
+  // values, so the cast below is a deliberate, verified-safe mismatch
+  // with the published (slightly over-strict) type, not a shortcut.
+  const applyIndicatorLegendFeatures = (chart: Chart, p: IndicatorPrefs) => {
+    const base = baseRef.current
+    const color = base.textMuted
+    const activeColor = base.text
+    const hoverBg = hexToRgba(base.text, 0.08)
+
+    const tooltipDataSource = (features: ReturnType<typeof buildIndicatorFeatures>) =>
+      (() => ({ features })) as unknown as NonNullable<Parameters<Chart['overrideIndicator']>[0]['createTooltipDataSource']>
+
+    const applyOne = (name: string, key: keyof IndicatorPrefs, showSettings: boolean, reorder: 'up' | 'down' | 'both' | 'none') => {
+      const hidden = hiddenIndicatorsRef.current.has(key)
+      chart.overrideIndicator({
+        name,
+        visible: !hidden,
+        createTooltipDataSource: tooltipDataSource(buildIndicatorFeatures({ hidden, showSettings, reorder, color, activeColor, hoverBg })),
+      })
+    }
+
+    if (p.vwap) applyOne(KL_VWAP, 'vwap', true, 'none')
+    if (p.ema20) applyOne(KL_EMA20, 'ema20', true, 'none')
+    if (p.ema50) applyOne(KL_EMA50, 'ema50', true, 'none')
+
+    // Sub-panes (volume/ATR) additionally get reorder arrows, but only
+    // when BOTH are on screen (reordering one pane against itself is
+    // meaningless) -- direction is derived from each pane's CURRENT order
+    // (not creation order), so it stays correct across repeated reorder
+    // clicks: the topmost-on-screen pane can only move down, the bottom
+    // one can only move up.
+    //
+    // klinecharts leaves EVERY new indicator pane's `order` at the same
+    // default (confirmed live: both come back 0) and instead breaks the
+    // tie by array-insertion/creation order internally -- so two tied
+    // panes visually stack correctly on first paint, but a "swap this
+    // pane's order with its sibling's" click would just be exchanging
+    // 0 for 0, a no-op. Normalizing to distinct 0/1 values here (every
+    // rebuild, idempotent once already distinct) is what gives the
+    // reorder click below two actually-different numbers to swap.
+    const subPanes: Array<{ name: string; key: 'volume' | 'atr14' }> = []
+    if (p.volume) subPanes.push({ name: 'VOL', key: 'volume' })
+    if (p.atr14) subPanes.push({ name: KL_ATR14, key: 'atr14' })
+    const ordered = subPanes
+      .map((e) => {
+        const [ind] = chart.getIndicators({ name: e.name })
+        const options = ind ? (chart.getPaneOptions(ind.paneId) as { order: number } | null) : null
+        return { ...e, paneId: ind?.paneId, order: options?.order ?? 0 }
+      })
+      .sort((a, b) => a.order - b.order)
+    ordered.forEach((entry, i) => {
+      if (entry.paneId !== undefined && entry.order !== i) {
+        chart.setPaneOptions({ id: entry.paneId, order: i })
+      }
+      const reorder: 'up' | 'down' | 'both' | 'none' = ordered.length < 2 ? 'none' : i === 0 ? 'down' : 'up'
+      applyOne(entry.name, entry.key, entry.key === 'atr14', reorder)
+    })
+  }
+
+  // Backend-sourced indicators (Phase A3) -- VWAP/EMA20/EMA50/ATR14 are
+  // pass-through custom indicators (see indicators.ts's header comment for
+  // why they're not klinecharts' own built-in EMA/ATR formulas).
+  // setIndicatorContext() first so each indicator's calc sees the fresh
+  // points the instant createIndicator triggers its first calc pass.
   const rebuildIndicatorsRef = useRef<() => void>(() => {})
   rebuildIndicatorsRef.current = () => {
     const chart = chartRef.current
@@ -459,6 +592,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       setIndicatorContext(indicatorsRef.current)
       const spec = findInstrument(requestRef.current.instrument ?? '')
       const precision = spec ? pricePrecisionFromTick(spec.minmov, spec.pricescale) : 2
+      chart.removeIndicator({ name: 'VOL' })
       chart.removeIndicator({ name: KL_VWAP })
       chart.removeIndicator({ name: KL_EMA20 })
       chart.removeIndicator({ name: KL_EMA50 })
@@ -474,11 +608,18 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       // an already-occupied pane silently replaces the previous one
       // instead of coexisting (enabling EMA20 then EMA50 left only EMA50
       // -- VWAP and EMA20 had vanished from getIndicators() entirely).
+      // VOL created first (matches its old mount-time-first behavior, now
+      // gated by prefs.volume -- REPLICA_ROADMAP.md Batch 3 "remove sub-
+      // panes" needed SOME toggle to remove it through), so its pane keeps
+      // landing above ATR14's when both are on, same default stacking
+      // every screenshot this whole project has shown so far.
+      if (p.volume) chart.createIndicator('VOL', false)
       if (p.vwap) chart.createIndicator({ name: KL_VWAP, precision, paneId: 'candle_pane' }, true)
       if (p.ema20) chart.createIndicator({ name: KL_EMA20, precision, paneId: 'candle_pane' }, true)
       if (p.ema50) chart.createIndicator({ name: KL_EMA50, precision, paneId: 'candle_pane' }, true)
       if (p.atr14) chart.createIndicator({ name: KL_ATR14 }, false)
       applyIndicatorColors(chart, colorsRef.current, baseRef.current)
+      applyIndicatorLegendFeatures(chart, p)
     })
   }
 
@@ -691,10 +832,15 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     if (!chart) return
     chartRef.current = chart
     chart.setStyles(themeStyles(colorsRef.current, baseRef.current))
-    // Plain klinecharts built-in (Phase A3) -- just visualizes each bar's
-    // own volume field, no derived calculation, so no VIZ_SPEC risk. LWC
-    // shows volume unconditionally (no toggle); matched here the same way.
-    chart.createIndicator('VOL', false)
+    // VOL (a plain klinecharts built-in, Phase A3 -- just visualizes each
+    // bar's own volume field, no derived calculation) used to be created
+    // unconditionally right here. REPLICA_ROADMAP.md Batch 3 made it a
+    // real on/off indicator like the other five (prefs.volume, gated in
+    // rebuildIndicatorsRef below) so its sub-pane can be removed/reordered
+    // through the same on-chart legend controls as VWAP/EMA/ATR14 -- the
+    // respond() callback a few lines down calls rebuildIndicatorsRef on
+    // every bars load, so it still ends up created on first paint exactly
+    // as before, just no longer unconditionally.
 
     // Applies the current replay cursor (if any) to whichever bars are
     // handed in, feeds the chart, and reruns everything downstream of
@@ -821,6 +967,73 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     }
     chart.subscribeAction('onCrosshairChange', handleCrosshairChange)
 
+    // On-chart legend feature-icon clicks (REPLICA_ROADMAP.md Batch 3) --
+    // one shared handler for every indicator's settings/eye/remove/reorder
+    // icons (see applyIndicatorLegendFeatures above for how each
+    // indicator's OWN feature set is built); this just dispatches by
+    // feature id + indicator name.
+    const handleIndicatorFeatureClick = (data?: unknown) => {
+      const payload = data as
+        | { indicator?: { name: string; paneId: string }; feature?: { id: string } }
+        | undefined
+      const name = payload?.indicator?.name
+      const featureId = payload?.feature?.id as IndicatorFeatureId | undefined
+      if (!name || !featureId) return
+      const key = INDICATOR_KEY_BY_NAME[name]
+      if (!key) return
+      switch (featureId) {
+        case 'ind-remove':
+          useIndicatorStore.getState().toggle(key)
+          break
+        case 'ind-eye': {
+          const hidden = hiddenIndicatorsRef.current
+          if (hidden.has(key)) hidden.delete(key)
+          else hidden.add(key)
+          // Immediate, not waiting for an unrelated prefs/data change to
+          // trigger the next rebuild -- reapplies visible + a freshly
+          // glyph-swapped eye icon for every indicator right now.
+          applyIndicatorLegendFeatures(chart, prefsRef.current)
+          break
+        }
+        case 'ind-settings': {
+          if (key === 'volume') break // no single line color to pick for volume's up/down bars
+          const pointer = lastPointerRef.current
+          if (!pointer) break
+          setIndicatorSettings({ key: key as ColorableIndicatorKey, x: pointer.x, y: pointer.y })
+          break
+        }
+        case 'ind-up':
+        case 'ind-down': {
+          // Only VOL/ATR14 ever get these two ids (see applyIndicatorLegendFeatures'
+          // reorder logic) -- swap this pane's order with its one sibling
+          // sub-pane, whichever that is.
+          const siblingName = name === 'VOL' ? KL_ATR14 : 'VOL'
+          const [thisInd] = chart.getIndicators({ name })
+          const [siblingInd] = chart.getIndicators({ name: siblingName })
+          if (!thisInd || !siblingInd) break
+          const thisOptions = chart.getPaneOptions(thisInd.paneId) as { order: number } | null
+          const siblingOptions = chart.getPaneOptions(siblingInd.paneId) as { order: number } | null
+          if (!thisOptions || !siblingOptions) break
+          // Snapshot both orders into plain numbers BEFORE mutating either --
+          // getPaneOptions returns klinecharts' own LIVE options object by
+          // reference (confirmed against the v10.0.3 source: DrawPane.
+          // getOptions() returns `this._options` directly, and setOptions
+          // merges into that SAME object), so reading `thisOptions.order`
+          // AFTER the first setPaneOptions call below would already see the
+          // just-written new value, not the original -- turning this into a
+          // no-op (both panes end up with the SAME order) instead of a swap.
+          const thisOrder = thisOptions.order
+          const siblingOrder = siblingOptions.order
+          chart.setPaneOptions({ id: thisInd.paneId, order: siblingOrder })
+          chart.setPaneOptions({ id: siblingInd.paneId, order: thisOrder })
+          // Re-derive which pane now shows "up" vs "down" for the new order.
+          applyIndicatorLegendFeatures(chart, prefsRef.current)
+          break
+        }
+      }
+    }
+    chart.subscribeAction('onIndicatorTooltipFeatureClick', handleIndicatorFeatureClick)
+
     // Right-click empty chart area -> "Reset chart view" / "Remove all
     // drawings" (REPLICA_ROADMAP.md Batch 1). klinecharts already calls
     // preventDefault on 'contextmenu' for its OWN target internally (so the
@@ -841,6 +1054,14 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       setContextMenu({ kind: 'empty', x: e.clientX, y: e.clientY })
     }
     container?.addEventListener('contextmenu', handleContextMenu)
+
+    // Plain page-coordinate mouse tracking for the settings popover (see
+    // lastPointerRef's own comment) -- covers the WHOLE chart (candle pane,
+    // every sub-pane, axes), unlike klinecharts' own crosshair action.
+    const handlePointerMove = (e: MouseEvent) => {
+      lastPointerRef.current = { x: e.clientX, y: e.clientY }
+    }
+    container?.addEventListener('mousemove', handlePointerMove)
 
     // Axis interaction (REPLICA_ROADMAP.md Batch 2): drag-to-scale on both
     // axes, and double-click the Y axis to auto-reset, are klinecharts'
@@ -889,7 +1110,9 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChange)
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChangeForBrackets)
       chart.unsubscribeAction('onCrosshairChange', handleCrosshairChange)
+      chart.unsubscribeAction('onIndicatorTooltipFeatureClick', handleIndicatorFeatureClick)
       container?.removeEventListener('contextmenu', handleContextMenu)
+      container?.removeEventListener('mousemove', handlePointerMove)
       xAxisDom?.removeEventListener('click', handleXAxisClick)
       dispose(chart)
       chartRef.current = null
@@ -1139,6 +1362,25 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     persistDrawingsRef.current()
   }
 
+  // On-chart legend "settings" swatch (REPLICA_ROADMAP.md Batch 3) --
+  // applies immediately (so the click feels instant, same as every other
+  // popover in this file) AND persists to indicatorStore so the pick
+  // survives the next rebuildIndicatorsRef (theme switch, timeframe
+  // change, toggling an unrelated indicator all fully recreate every
+  // indicator -- see that function's own comment).
+  const KL_NAME_BY_COLORABLE_KEY: Record<ColorableIndicatorKey, string> = {
+    vwap: KL_VWAP,
+    ema20: KL_EMA20,
+    ema50: KL_EMA50,
+    atr14: KL_ATR14,
+  }
+  const updateIndicatorColor = (key: ColorableIndicatorKey, hex: string) => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.overrideIndicator({ name: KL_NAME_BY_COLORABLE_KEY[key], styles: { lines: [{ color: hex }] } })
+    useIndicatorStore.getState().setIndicatorColor(key, hex)
+  }
+
   useImperativeHandle(
     ref,
     () => ({
@@ -1275,6 +1517,26 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           onPickColor={(hex) => updateDrawingColor(styleEditor.id, hex)}
           onPickWidth={(size) => updateDrawingWidth(styleEditor.id, size)}
           onClose={() => setStyleEditor(null)}
+        />
+      )}
+      {indicatorSettings && (
+        <IndicatorSettingsPopover
+          x={indicatorSettings.x}
+          y={indicatorSettings.y}
+          label={INDICATOR_LABEL[indicatorSettings.key]}
+          colors={colors}
+          onPickColor={(hex) => updateIndicatorColor(indicatorSettings.key, hex)}
+          onReset={() => {
+            useIndicatorStore.getState().setIndicatorColor(indicatorSettings.key, null)
+            const chart = chartRef.current
+            if (chart) {
+              chart.overrideIndicator({
+                name: KL_NAME_BY_COLORABLE_KEY[indicatorSettings.key],
+                styles: { lines: [{ color: resolveIndicatorLineColor(indicatorSettings.key, colorsRef.current, baseRef.current) }] },
+              })
+            }
+          }}
+          onClose={() => setIndicatorSettings(null)}
         />
       )}
     </div>

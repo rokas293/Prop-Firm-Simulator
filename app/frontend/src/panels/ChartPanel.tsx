@@ -3,7 +3,7 @@ import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { equityAtCursor, runningTotals } from '../chart/replay'
 import { withMargin } from '../chart/windowMargin'
-import IndicatorTogglePanel from './IndicatorTogglePanel'
+import IndicatorDialog from './IndicatorDialog'
 import KLDrawingToolbar from './KLDrawingToolbar'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import ReplayControls from './ReplayControls'
@@ -39,6 +39,10 @@ const INDICATORS_OFF: IndicatorPrefs = {
   ema20: false,
   ema50: false,
   atr14: false,
+  // Preserves the secondary split-view chart's pre-Batch-3 behavior --
+  // volume used to be an unconditional mount-time indicator there, now
+  // gated by this same pref (see IndicatorPrefs' own comment).
+  volume: true,
 }
 
 // A standalone dockable panel (POLISH_ROADMAP Phase P1). Coordinates with
@@ -105,6 +109,10 @@ export default function ChartPanel() {
   // whether a tool is actually armed right now (DESIGN_AUDIT.md chart-
   // workspace elevation).
   const [armedTool, setArmedTool] = useState<string | null>(null)
+  // REPLICA_ROADMAP.md Batch 3's add-indicator dialog -- replaces the old
+  // always-visible checkbox row (IndicatorTogglePanel) now that the
+  // on-chart legend itself shows which indicators are active.
+  const [indicatorDialogOpen, setIndicatorDialogOpen] = useState(false)
   const klSecondaryChartRef = useRef<ChartKLHandle>(null)
   const klSyncingRef = useRef(false)
 
@@ -281,6 +289,15 @@ export default function ChartPanel() {
   )
 
   const indicatorPrefs = useIndicatorStore()
+  const activeIndicatorCount = [
+    indicatorPrefs.sessionShading,
+    indicatorPrefs.fairValue,
+    indicatorPrefs.vwap,
+    indicatorPrefs.ema20,
+    indicatorPrefs.ema50,
+    indicatorPrefs.atr14,
+    indicatorPrefs.volume,
+  ].filter(Boolean).length
   const enabledIndicators = useMemo(() => {
     const names: IndicatorName[] = []
     if (indicatorPrefs.vwap) names.push('vwap')
@@ -561,8 +578,17 @@ export default function ChartPanel() {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <IndicatorTogglePanel />
+        <button
+          onClick={() => setIndicatorDialogOpen(true)}
+          className="flex items-center gap-1.5 rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
+        >
+          Indicators
+          <span className="tabular-nums flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-none text-white">
+            {activeIndicatorCount}
+          </span>
+        </button>
       </div>
+      <IndicatorDialog open={indicatorDialogOpen} onClose={() => setIndicatorDialogOpen(false)} />
 
       <ReplayControls
         active={replayActive}

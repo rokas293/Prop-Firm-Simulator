@@ -44,10 +44,10 @@ I (the assistant) own the target + sequencing + prompts. You paste each batch in
 - ☐ Timeframe as both quick buttons and a dropdown of the full set
 
 ### E. Indicators
-- ✅ Built-in + custom indicators, toggle panel, session shading, fair-value
-- ☐ On-chart per-indicator legend row: name + values + hover controls (settings / hide / remove)
-- ☐ Indicator "dialog" for adding, with search
-- ☐ Sub-pane management (resize, reorder, remove) like TradingView panes
+- ✅ Built-in + custom indicators, session shading, fair-value
+- ✅ **On-chart per-indicator legend row** — klinecharts already renders name+live-values natively (confirmed `showRule: 'always'` in the v10.0.3 source, nothing to build there); added the interactive part via its `createTooltipDataSource` per-indicator override (NOT the chart-wide `tooltip.features` default, which the source only uses as a fallback): a settings swatch (line-color picker, VWAP/EMA20/EMA50/ATR14 only — VOL's up/down bars have no single color to pick), an eye (hide/show, klinecharts' native `Indicator.visible` field, re-applied on every rebuild since indicators fully recreate on any prefs/data/theme change), and a remove (×, reuses the same indicatorStore toggle the add-indicator dialog uses). Icons are hand-authored SVG paths (klinecharts' path parser supports the full grammar) since the library ships zero default icons.  ← Batch 3
+- ✅ **Indicator dialog, with search** — replaces the old always-visible checkbox row (deleted `IndicatorTogglePanel`) with a searchable list (cmdk, reusing the command palette's own `.propbt-cmdk-*` chrome verbatim) of the same six prefs plus a newly-added `volume` toggle (previously an unconditional mount-time indicator, not gated by anything). Deliberately does NOT add klinecharts' own built-in MA/EMA/ATR formulas as new options — CLAUDE.md's engine-truth rule means the catalog is exactly what's already a backend pass-through or a zero-computation built-in, nothing new computed client-side.  ← Batch 3
+- ✅ **Sub-pane management** — resize is klinecharts' own native separator-drag (`PaneOptions.dragEnabled`, confirmed via the `onPaneDrag` action, nothing to build); remove reuses the legend row's own × (VOL is now a real on/off indicator, same as the other five, so its pane can be removed/re-added); reorder is two more legend icons (↑/↓, sub-pane indicators only, shown only once ≥2 sub-panes exist) that swap `PaneOptions.order` between VOL and ATR14 — found and fixed two real bugs building this: klinecharts leaves every new sub-pane's `order` tied at the same default (now explicitly normalized to distinct values), and `getPaneOptions()` returns its OWN live/mutable options object rather than a snapshot (a naive swap using both sides' live `.order` after mutating the first was silently a no-op).  ← Batch 3
 
 ### F. Visual & feel
 - ✅ Restrained/minimal design pass across all surfaces; full theming incl. background/candles

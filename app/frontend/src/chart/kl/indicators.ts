@@ -14,7 +14,8 @@
 // each bar's own volume field, so there's no divergence risk.
 import { registerIndicator } from 'klinecharts'
 import type { IndicatorPoint } from '../../api/types'
-import { CHART_LINE_COLORS, resolveBase, useThemeStore } from '../../state/themeStore'
+import { CHART_LINE_COLORS, resolveBase, useThemeStore, type ThemeBase, type ThemeColors } from '../../state/themeStore'
+import { useIndicatorStore, type ColorableIndicatorKey } from '../../state/indicatorStore'
 
 export const KL_VWAP = 'klVwap'
 export const KL_EMA20 = 'klEma20'
@@ -82,14 +83,14 @@ function registerPassthroughIndicator(
   })
 }
 
-// EMA20/EMA50 are fixed CATEGORICAL colors (Part C1 audit risk #3 -- "which
-// line is this", not a tunable semantic), registered once and never
-// restyled. VWAP (theme accent) and ATR14 (theme textMuted, which differs
-// dark vs light) DO need to track live theme/mode changes -- read from the
-// store directly (registration happens once at app start, outside any
-// component) so the registration-time value is the user's actual current
-// theme rather than a guessed placeholder; ChartKL.tsx's immediate
-// chart.overrideIndicator() call keeps both correct on every later change.
+// EMA20/EMA50's REGISTRATION-time color is a fixed categorical default
+// (Part C1 audit risk #3 -- "which line is this"); VWAP/ATR14's is theme-
+// driven (accent / textMuted). All four are resolved again, per-instance,
+// by ChartKL.tsx's rebuildIndicatorsRef on every rebuild via
+// resolveIndicatorLineColor below -- REPLICA_ROADMAP.md Batch 3's on-chart
+// legend "settings" swatch picker overrides any of them, and this is the
+// one place both the theme default AND that override are reconciled, so
+// neither this file nor ChartKL.tsx has to duplicate the fallback logic.
 let registered = false
 export function ensureIndicatorsRegistered(): void {
   if (registered) return
@@ -99,4 +100,28 @@ export function ensureIndicatorsRegistered(): void {
   registerPassthroughIndicator(KL_EMA20, 'EMA20', CHART_LINE_COLORS.ema20, 'price', (c) => c.ema20)
   registerPassthroughIndicator(KL_EMA50, 'EMA50', CHART_LINE_COLORS.ema50, 'price', (c) => c.ema50)
   registerPassthroughIndicator(KL_ATR14, 'ATR14', resolveBase(mode).textMuted, 'normal', (c) => c.atr14)
+}
+
+// This indicator's theme-driven DEFAULT color, before any user override --
+// the same values ensureIndicatorsRegistered seeds at registration time,
+// re-derived live so a later theme/mode switch is reflected too.
+function defaultLineColor(key: ColorableIndicatorKey, colors: ThemeColors, base: ThemeBase): string {
+  switch (key) {
+    case 'vwap':
+      return colors.accent
+    case 'ema20':
+      return CHART_LINE_COLORS.ema20
+    case 'ema50':
+      return CHART_LINE_COLORS.ema50
+    case 'atr14':
+      return base.textMuted
+  }
+}
+
+// The color ChartKL.tsx's rebuildIndicatorsRef should actually apply for
+// this indicator right now: the user's own pick (indicatorStore.colors,
+// REPLICA_ROADMAP.md Batch 3's on-chart legend "settings" swatch) if one
+// exists, else the theme default above.
+export function resolveIndicatorLineColor(key: ColorableIndicatorKey, colors: ThemeColors, base: ThemeBase): string {
+  return useIndicatorStore.getState().colors[key] ?? defaultLineColor(key, colors, base)
 }
