@@ -147,14 +147,14 @@ export default function Workspace() {
             <button
               key={p.name}
               onClick={() => apiRef.current && p.apply(apiRef.current)}
-              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+              className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
             >
               {p.name}
             </button>
           ))}
           <button
             onClick={resetLayout}
-            className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+            className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
           >
             Reset layout
           </button>
@@ -162,7 +162,7 @@ export default function Workspace() {
           <div className="relative ml-auto">
             <button
               onClick={() => setAddMenuOpen((o) => !o)}
-              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+              className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
             >
               + Panel
             </button>

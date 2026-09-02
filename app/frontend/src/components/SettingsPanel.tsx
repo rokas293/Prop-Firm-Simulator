@@ -391,6 +391,27 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
             <ShortcutsList />
           </Section>
         </div>
+
+        {/* Prop Risk's chart (RiskChart.tsx) is built on lightweight-charts,
+            an Apache-2.0 library from TradingView. Its license disables the
+            in-chart attribution logo (see RiskChart.tsx's own comment) in
+            favor of this link -- Apache-2.0 requires retaining the work's
+            attribution notices somewhere user-visible, and the license text
+            itself lives in THIRD_PARTY_NOTICES.md at the repo root. Kept to
+            one quiet, muted line -- DESIGN_LANGUAGE.md section 2's "no
+            decorative color" / section 10's anti-pattern list, so this reads
+            as a footnote, not a feature. */}
+        <div className="border-t border-border px-4 py-2 text-[11px] text-text-muted">
+          Charts by{' '}
+          <a
+            href="https://www.tradingview.com/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:text-text"
+          >
+            TradingView
+          </a>
+        </div>
       </div>
     </div>
   )

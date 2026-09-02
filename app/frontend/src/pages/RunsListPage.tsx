@@ -87,15 +87,15 @@ export default function RunsListPage() {
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-border text-left">
-            <th className="micro-label py-2 pr-4 text-left" title="Select up to 2 runs to compare">
+            <th className="micro-label py-1 pr-4 text-left" title="Select up to 2 runs to compare">
               Cmp
             </th>
-            <th className="micro-label py-2 pr-4 text-left">Run</th>
-            <th className="micro-label py-2 pr-4 text-left">Instrument</th>
-            <th className="micro-label py-2 pr-4 text-left">Date range</th>
-            <th className="micro-label py-2 pr-4 text-left">Result</th>
-            <th className="num micro-label py-2 pr-4">Params</th>
-            <th className="micro-label py-2 pr-4 text-left"></th>
+            <th className="micro-label py-1 pr-4 text-left">Run</th>
+            <th className="micro-label py-1 pr-4 text-left">Instrument</th>
+            <th className="micro-label py-1 pr-4 text-left">Date range</th>
+            <th className="micro-label py-1 pr-4 text-left">Result</th>
+            <th className="num micro-label py-1 pr-4">Params</th>
+            <th className="micro-label py-1 pr-4 text-left"></th>
           </tr>
         </thead>
         <tbody>
@@ -120,7 +120,7 @@ export default function RunsListPage() {
                 selectedRunId === run.run_id ? 'bg-surface' : ''
               }`}
             >
-              <td className="py-2 pr-4">
+              <td className="py-1 pr-4">
                 {/* No explicit accent-color class -- inherits the theme's
                     live accent-color from :root (POLISH_ROADMAP Phase P6). */}
                 <input
@@ -130,16 +130,16 @@ export default function RunsListPage() {
                   onClick={(e) => e.stopPropagation()}
                 />
               </td>
-              <td className="cursor-pointer py-2 pr-4 font-mono text-xs text-text" onClick={() => selectRun(run.run_id)}>
+              <td className="cursor-pointer py-1 pr-4 font-mono text-xs text-text" onClick={() => selectRun(run.run_id)}>
                 {run.run_id}
               </td>
-              <td className="cursor-pointer py-2 pr-4" onClick={() => selectRun(run.run_id)}>
+              <td className="cursor-pointer py-1 pr-4" onClick={() => selectRun(run.run_id)}>
                 {run.instrument}
               </td>
-              <td className="cursor-pointer py-2 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
+              <td className="cursor-pointer py-1 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
                 {run.date_from} &rarr; {run.date_to}
               </td>
-              <td className="cursor-pointer py-2 pr-4" onClick={() => selectRun(run.run_id)}>
+              <td className="cursor-pointer py-1 pr-4" onClick={() => selectRun(run.run_id)}>
                 {run.result.passed ? (
                   <span className="text-positive">PASSED</span>
                 ) : run.result.fail_reason ? (
@@ -154,10 +154,10 @@ export default function RunsListPage() {
                   <span className="text-negative">INCOMPLETE</span>
                 )}
               </td>
-              <td className="num cursor-pointer py-2 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
+              <td className="num cursor-pointer py-1 pr-4 text-text" onClick={() => selectRun(run.run_id)}>
                 {run.params_count}
               </td>
-              <td className="py-2 pr-4">
+              <td className="py-1 pr-4">
                 <a
                   href={`/api/runs/${run.run_id}/export.html`}
                   target="_blank"

@@ -162,7 +162,7 @@ export default function TradeListPanel() {
             value={filters.leg ?? ''}
             onChange={(e) => setFilter('leg', e.target.value || null)}
             aria-label="Filter by leg"
-            className="rounded bg-surface-2 px-2 py-1 text-text"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
           >
             <option value="">Leg: all</option>
             {legOptions.map((v) => (
@@ -175,7 +175,7 @@ export default function TradeListPanel() {
             value={filters.session ?? ''}
             onChange={(e) => setFilter('session', e.target.value || null)}
             aria-label="Filter by session"
-            className="rounded bg-surface-2 px-2 py-1 text-text"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
           >
             <option value="">Session: all</option>
             {sessionOptions.map((v) => (
@@ -188,7 +188,7 @@ export default function TradeListPanel() {
             value={filters.side ?? ''}
             onChange={(e) => setFilter('side', e.target.value || null)}
             aria-label="Filter by side"
-            className="rounded bg-surface-2 px-2 py-1 text-text"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
           >
             <option value="">Side: all</option>
             {SIDE_OPTIONS.map((v) => (
@@ -201,7 +201,7 @@ export default function TradeListPanel() {
             value={filters.result ?? ''}
             onChange={(e) => setFilter('result', (e.target.value || null) as ResultFilter)}
             aria-label="Filter by result"
-            className="rounded bg-surface-2 px-2 py-1 text-text"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
           >
             <option value="">Result: all</option>
             <option value="win">Win</option>
@@ -211,7 +211,7 @@ export default function TradeListPanel() {
             value={filters.exitType ?? ''}
             onChange={(e) => setFilter('exitType', e.target.value || null)}
             aria-label="Filter by exit type"
-            className="rounded bg-surface-2 px-2 py-1 text-text"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
           >
             <option value="">Exit: all</option>
             {EXIT_TYPE_OPTIONS.map((v) => (
@@ -235,7 +235,7 @@ export default function TradeListPanel() {
             type="date"
             value={filters.dateFrom ?? ''}
             onChange={(e) => setFilter('dateFrom', e.target.value || null)}
-            className="rounded bg-surface-2 px-2 py-1 text-text"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
           />
           <label htmlFor="trade-list-date-to" className="text-text-muted">
             To
@@ -245,12 +245,12 @@ export default function TradeListPanel() {
             type="date"
             value={filters.dateTo ?? ''}
             onChange={(e) => setFilter('dateTo', e.target.value || null)}
-            className="rounded bg-surface-2 px-2 py-1 text-text"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
           />
           {hasFilters && (
             <button
               onClick={clearFilters}
-              className="ml-auto rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+              className="ml-auto h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
             >
               Clear
             </button>
@@ -294,7 +294,7 @@ export default function TradeListPanel() {
             hint={hasFilters ? undefined : 'This run has no trades.'}
           >
             {hasFilters && (
-              <button onClick={clearFilters} className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
+              <button onClick={clearFilters} className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover">
                 Clear filters
               </button>
             )}

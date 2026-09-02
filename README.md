@@ -39,6 +39,10 @@ pytest
 bundle (`runs/<run_id>/`) for the local web viewer described in
 `VIZ_SPEC.md` -- see `app/README.md` for how to run it.
 
+## Third-party notices
+
+The viz app's frontend bundles `lightweight-charts` (Apache-2.0, TradingView, Inc.) for the Prop Risk panel's chart. License text and attribution details: `THIRD_PARTY_NOTICES.md`.
+
 ## Status / caveats
 
 - MES and MNQ are the primary targets for now. ZN's contract specs and the

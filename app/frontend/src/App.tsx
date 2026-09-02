@@ -82,7 +82,7 @@ export default function App() {
           <button
             onClick={togglePerf}
             title="Toggle the perf HUD (render/fetch timings)"
-            className={`ml-auto rounded px-2 py-1 text-xs transition-colors ${
+            className={`ml-auto h-7 rounded px-2 text-xs transition-colors ${
               perfEnabled ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-2-hover'
             }`}
           >
@@ -91,7 +91,7 @@ export default function App() {
           <button
             onClick={() => setSettingsOpen(true)}
             title="Settings: themes, layouts, shortcuts, data defaults"
-            className="rounded bg-surface-2 px-2 py-1 text-xs text-text transition-colors hover:bg-surface-2-hover"
+            className="h-7 rounded bg-surface-2 px-2 text-xs text-text transition-colors hover:bg-surface-2-hover"
           >
             Settings
           </button>

@@ -75,7 +75,20 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
 
     const b = baseRef.current
     const chart = createChart(container, {
-      layout: { background: { color: b.bg }, textColor: b.text },
+      // REPLICA_AUDIT.md Top 10 #1 -- what looked like a broken/oversized
+      // clipped text fragment in the bottom-left corner turned out to be
+      // lightweight-charts' own default "Charting by TradingView"
+      // attribution logo (id="tv-attr-logo"): a real, correctly-sized
+      // (35x19px) SVG link the library injects unless told not to --
+      // confirmed live via `document.querySelectorAll('a')` on this pane,
+      // not an actual rendering bug in any of our own drawing code (markers,
+      // MllBandPrimitive, price scales, and crosshair were each ruled out
+      // by ablation first). It read as a glitch here because this app never
+      // opted into it and doesn't otherwise attribute TradingView anywhere,
+      // so an unstyled third-party mark sat directly on top of the chart
+      // it's least supposed to draw attention to. Disabled per its own
+      // documented `attributionLogo` option.
+      layout: { background: { color: b.bg }, textColor: b.text, attributionLogo: false },
       grid: { vertLines: { color: b.grid }, horzLines: { color: b.grid } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: b.border },
       rightPriceScale: { borderColor: b.border },
