@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FunctionComponent } from 'react'
+import { useCallback, useEffect, useRef, type FunctionComponent } from 'react'
 import {
   DockviewReact,
   type DockviewReadyEvent,
@@ -17,9 +17,8 @@ import { useWorkspaceApiStore } from '../state/workspaceApiStore'
 import { useUiStore } from '../state/uiStore'
 import { useTradeStore } from '../state/tradeStore'
 import { useChartViewStore } from '../state/chartViewStore'
-import { applyAnalysisLayout, PRESETS } from './presets'
-import { CHART_PANEL_ID, DASHBOARD_PANEL_ID, EQUITY_PANEL_ID, PANEL_DEFS, PROP_RISK_PANEL_ID, TRADE_LIST_PANEL_ID } from './panelIds'
-import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
+import { applyAnalysisLayout } from './presets'
+import { CHART_PANEL_ID, DASHBOARD_PANEL_ID, EQUITY_PANEL_ID, PROP_RISK_PANEL_ID, TRADE_LIST_PANEL_ID } from './panelIds'
 
 // Perf-instruments every panel from one place (POLISH_ROADMAP Phase P4)
 // rather than touching all 5 panel files -- each panel is registered with
@@ -48,22 +47,22 @@ const SAVE_DEBOUNCE_MS = 400
 // The dockable workspace shell (POLISH_ROADMAP Phase P1), replacing the old
 // fixed Chart/Dashboard/Risk tab bar. Layout state (which panels are open,
 // their arrangement/sizes) lives entirely inside dockview; this component's
-// job is just registering panel components, restoring/auto-saving the
-// layout, and offering preset/reset/add-panel controls.
+// job is just registering panel components and restoring/auto-saving the
+// layout. Preset/reset/add-panel controls (REPLICA_AUDIT.md Top 10 #8) live
+// in ChartLayoutMenu.tsx's popover now, not as a permanent row here -- they
+// read/drive the same `useWorkspaceApiStore` instance this component
+// publishes below, so moving them cost no coordination.
 export default function Workspace() {
   const runId = useUiStore((s) => s.selectedRunId)
   const clearFilters = useTradeStore((s) => s.clearFilters)
   const selectTrade = useTradeStore((s) => s.selectTrade)
+  const setTradeNavFocused = useTradeStore((s) => s.setTradeNavFocused)
   const resetChartViewForNewRun = useChartViewStore((s) => s.resetForNewRun)
 
   const lastLayout = useLayoutStore((s) => s.lastLayout)
   const setLastLayout = useLayoutStore((s) => s.setLastLayout)
-  const clearLastLayout = useLayoutStore((s) => s.clearLastLayout)
   const setApi = useWorkspaceApiStore((s) => s.setApi)
-  // REPLICA_ROADMAP.md Batch 5's distraction-free mode -- hides this row;
-  // the outer h-[calc(100vh-49px)] below also switches to h-screen since
-  // App.tsx's 49px header is gone too in that mode (both driven by the
-  // same flag so they can never disagree about how much height is free).
+  // REPLICA_ROADMAP.md Batch 5's distraction-free mode.
   const distractionFree = useUiStore((s) => s.distractionFree)
 
   // Workspace stays mounted for as long as some run is selected (App.tsx
@@ -73,16 +72,13 @@ export default function Workspace() {
   useEffect(() => {
     clearFilters()
     selectTrade(null)
+    setTradeNavFocused(false)
     resetChartViewForNewRun()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId])
 
   const apiRef = useRef<DockviewReadyEvent['api'] | null>(null)
   const saveTimeoutRef = useRef<number | null>(null)
-  const [addMenuOpen, setAddMenuOpen] = useState(false)
-  // Bumped on every layout change so the "+" menu's open/closed panel list
-  // (derived from apiRef, not React state) recomputes on the next render.
-  const [layoutTick, setLayoutTick] = useState(0)
 
   const scheduleSave = useCallback(() => {
     if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
@@ -115,74 +111,13 @@ export default function Workspace() {
 
       api.onDidLayoutChange(() => {
         scheduleSave()
-        setLayoutTick((n) => n + 1)
       })
     },
     [lastLayout, scheduleSave, setApi],
   )
 
-  const resetLayout = () => {
-    if (!apiRef.current) return
-    clearLastLayout()
-    applyAnalysisLayout(apiRef.current)
-  }
-
-  const openPanelIds = new Set(apiRef.current?.panels.map((p) => p.id) ?? [])
-  const closedPanels = PANEL_DEFS.filter((p) => !openPanelIds.has(p.id))
-  void layoutTick // recomputation trigger only; value itself is unused
-
-  const addPanel = (id: string) => {
-    const def = PANEL_DEFS.find((p) => p.id === id)
-    if (!def || !apiRef.current) return
-    apiRef.current.addPanel({ id: def.id, component: def.component, title: def.title })
-    setAddMenuOpen(false)
-  }
-
   return (
     <div className={`flex flex-col ${distractionFree ? 'h-screen' : 'h-[calc(100vh-49px)]'}`}>
-      {!distractionFree && (
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs">
-          <span className="text-text-muted">Layout:</span>
-          {PRESETS.map((p) => (
-            <button
-              key={p.name}
-              onClick={() => apiRef.current && p.apply(apiRef.current)}
-              className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
-            >
-              {p.name}
-            </button>
-          ))}
-          <button
-            onClick={resetLayout}
-            className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
-          >
-            Reset layout
-          </button>
-
-          <div className="relative ml-auto">
-            <button
-              onClick={() => setAddMenuOpen((o) => !o)}
-              className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
-            >
-              + Panel
-            </button>
-            {addMenuOpen && (
-              <div className={`${POPOVER_SHELL} absolute right-0 top-full z-10 mt-1 w-40 py-1`}>
-                {closedPanels.length === 0 ? (
-                  <div className="px-3 py-1.5 text-text-muted">All panels open</div>
-                ) : (
-                  closedPanels.map((p) => (
-                    <button key={p.id} onClick={() => addPanel(p.id)} className={POPOVER_MENU_ROW}>
-                      {p.title}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       <div className="min-h-0 flex-1">
         <DockviewReact className="dockview-theme-propbt" components={COMPONENTS} onReady={onReady} />
       </div>

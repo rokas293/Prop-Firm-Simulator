@@ -96,6 +96,18 @@ interface TradeState {
   clearFilters: () => void
   selectedTradeId: number | null
   selectTrade: (tradeId: number | null) => void
+  // REPLICA_AUDIT.md Top 10 #3 -- ChartPanel.tsx's own trade-nav row
+  // (Prev/Next/Fit/Full day) shows only once this is true, NOT whenever
+  // `selectedTradeId` is non-null: ChartPanel auto-selects trade #1 on
+  // every run load (a separate, deliberate feature -- it also drives the
+  // chart's default fitted window) which would otherwise make the row
+  // "conditional" in name only. Set explicitly by the two places a user
+  // actually focuses a trade on purpose (TradeListPanel's row click,
+  // ChartPanel's own pickTrade -- covers its Prev/Next buttons and the
+  // nextTrade/prevTrade keyboard shortcuts) and NEVER by the auto-select
+  // effect itself.
+  tradeNavFocused: boolean
+  setTradeNavFocused: (v: boolean) => void
 }
 
 // Only `filters` persists (Phase V7) -- selectedTradeId is ephemeral and
@@ -109,6 +121,8 @@ export const useTradeStore = create<TradeState>()(
       clearFilters: () => set({ filters: EMPTY_FILTERS }),
       selectedTradeId: null,
       selectTrade: (tradeId) => set({ selectedTradeId: tradeId }),
+      tradeNavFocused: false,
+      setTradeNavFocused: (v) => set({ tradeNavFocused: v }),
     }),
     {
       name: 'propbt-viz:trade-filters',

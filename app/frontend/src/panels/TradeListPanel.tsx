@@ -69,6 +69,7 @@ export default function TradeListPanel() {
   const clearFilters = useTradeStore((s) => s.clearFilters)
   const selectedTradeId = useTradeStore((s) => s.selectedTradeId)
   const selectTrade = useTradeStore((s) => s.selectTrade)
+  const setTradeNavFocused = useTradeStore((s) => s.setTradeNavFocused)
   const selectTradeView = useChartViewStore((s) => s.selectTradeView)
 
   const filterParams = useMemo(() => filtersToParams(filters), [filters])
@@ -120,6 +121,7 @@ export default function TradeListPanel() {
 
   const onSelect = (tradeId: number) => {
     selectTrade(tradeId)
+    setTradeNavFocused(true)
     selectTradeView()
   }
 

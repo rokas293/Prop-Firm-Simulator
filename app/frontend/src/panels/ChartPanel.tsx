@@ -67,6 +67,8 @@ export default function ChartPanel() {
   const clearFilters = useTradeStore((s) => s.clearFilters)
   const selectedTradeId = useTradeStore((s) => s.selectedTradeId)
   const selectTrade = useTradeStore((s) => s.selectTrade)
+  const tradeNavFocused = useTradeStore((s) => s.tradeNavFocused)
+  const setTradeNavFocused = useTradeStore((s) => s.setTradeNavFocused)
 
   const viewMode = useChartViewStore((s) => s.viewMode)
   const explicitDayWindow = useChartViewStore((s) => s.explicitDayWindow)
@@ -397,6 +399,7 @@ export default function ChartPanel() {
 
   const pickTrade = (tradeId: number) => {
     selectTrade(tradeId)
+    setTradeNavFocused(true)
     selectTradeView()
     // Immediate pan attempt (PART_A_REVISED_klinecharts.md Phase A1:
     // "clicking a trade... scrolls the chart to it") -- no-ops via the
@@ -591,55 +594,65 @@ export default function ChartPanel() {
       </div>
       <IndicatorDialog open={indicatorDialogOpen} onClose={() => setIndicatorDialogOpen(false)} />
 
-      {/* Trade navigation -- used on nearly every click while reviewing a
-          run, so it stays immediately visible rather than folded into a
-          menu (unlike Layout's more occasional display settings above). */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-xs">
-        <button
-          onClick={() => tradeIdx > 0 && trades && pickTrade(trades[tradeIdx - 1].trade_id)}
-          disabled={tradeIdx <= 0}
-          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
-        >
-          &larr; Prev trade
-        </button>
-        <span className="tabular-nums text-text-muted">
-          {trades && trades.length > 0 ? `Trade ${tradeIdx + 1} / ${trades.length}` : 'No trades'}
-        </span>
-        <button
-          onClick={() => trades && tradeIdx < trades.length - 1 && pickTrade(trades[tradeIdx + 1].trade_id)}
-          disabled={!trades || tradeIdx < 0 || tradeIdx >= trades.length - 1}
-          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
-        >
-          Next trade &rarr;
-        </button>
-
-        <div className="mx-1 h-4 w-px bg-surface-2" />
-
-        <button
-          onClick={fitTrade}
-          disabled={!selectedTrade}
-          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
-        >
-          Fit trade
-        </button>
-        <button
-          onClick={selectFullDay}
-          disabled={!selectedTrade}
-          className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
-        >
-          Full day
-        </button>
-
-        {selectedTrade && (
-          <span className="ml-auto text-xs text-text-muted">
-            #{selectedTrade.trade_id} &middot; {selectedTrade.leg ?? '-'} &middot;{' '}
-            {selectedTrade.session ?? '-'} &middot; {selectedTrade.side} &middot;{' '}
-            <span className={`tabular-nums ${selectedTrade.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
-              {fmtUsd(selectedTrade.pnl_usd)}
-            </span>
+      {/* Trade navigation -- used on nearly every click ONCE you're
+          reviewing a specific trade, but ChartPanel auto-selects trade #1
+          on every run load (a separate feature -- it also drives the
+          chart's default fitted window), so gating this on "a trade is
+          selected" would show it permanently again in practice
+          (REPLICA_AUDIT.md Top 10 #3). Gated on `tradeNavFocused` instead
+          -- set only by an explicit user action (a Trade List row click, or
+          this row's own Prev/Next/keyboard shortcuts once it's already
+          visible), never by the auto-select effect -- so this is genuinely
+          absent on first load and appears the moment someone starts
+          navigating trades by any of those paths. */}
+      {tradeNavFocused && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-xs">
+          <button
+            onClick={() => tradeIdx > 0 && trades && pickTrade(trades[tradeIdx - 1].trade_id)}
+            disabled={tradeIdx <= 0}
+            className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          >
+            &larr; Prev trade
+          </button>
+          <span className="tabular-nums text-text-muted">
+            {trades && trades.length > 0 ? `Trade ${tradeIdx + 1} / ${trades.length}` : 'No trades'}
           </span>
-        )}
-      </div>
+          <button
+            onClick={() => trades && tradeIdx < trades.length - 1 && pickTrade(trades[tradeIdx + 1].trade_id)}
+            disabled={!trades || tradeIdx < 0 || tradeIdx >= trades.length - 1}
+            className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          >
+            Next trade &rarr;
+          </button>
+
+          <div className="mx-1 h-4 w-px bg-surface-2" />
+
+          <button
+            onClick={fitTrade}
+            disabled={!selectedTrade}
+            className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          >
+            Fit trade
+          </button>
+          <button
+            onClick={selectFullDay}
+            disabled={!selectedTrade}
+            className="h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          >
+            Full day
+          </button>
+
+          {selectedTrade && (
+            <span className="ml-auto text-xs text-text-muted">
+              #{selectedTrade.trade_id} &middot; {selectedTrade.leg ?? '-'} &middot;{' '}
+              {selectedTrade.session ?? '-'} &middot; {selectedTrade.side} &middot;{' '}
+              <span className={`tabular-nums ${selectedTrade.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
+                {fmtUsd(selectedTrade.pnl_usd)}
+              </span>
+            </span>
+          )}
+        </div>
+      )}
 
       <ReplayControls
         active={replayActive}
