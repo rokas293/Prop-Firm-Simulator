@@ -18,6 +18,7 @@ export default function App() {
   const selectedRunId = useUiStore((s) => s.selectedRunId)
   const selectRun = useUiStore((s) => s.selectRun)
   const compareRunIds = useUiStore((s) => s.compareRunIds)
+  const distractionFree = useUiStore((s) => s.distractionFree)
   const { data: run } = useRun(selectedRunId)
   const perfEnabled = usePerfStore((s) => s.enabled)
   const togglePerf = usePerfStore((s) => s.toggle)
@@ -58,49 +59,55 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg text-text">
-      <header className="flex items-center gap-3 border-b border-border px-6 py-3">
-        <h1 className="text-sm font-semibold tracking-wide text-text">propbt viz</h1>
-        {!compareRunIds && selectedRunId && (
-          <>
-            <div className="h-4 w-px bg-surface-2" />
-            <button
-              onClick={() => selectRun(null)}
-              className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
-            >
-              &larr; Runs
-            </button>
-            <span className="font-mono text-xs text-text-muted">{selectedRunId}</span>
-            {run && <span className="text-xs text-text-muted">{run.instrument}</span>}
-          </>
-        )}
-        <button
-          onClick={togglePerf}
-          title="Toggle the perf HUD (render/fetch timings)"
-          className={`ml-auto rounded px-2 py-1 text-xs transition-colors ${
-            perfEnabled ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-2-hover'
-          }`}
-        >
-          Perf
-        </button>
-        <button
-          onClick={() => setSettingsOpen(true)}
-          title="Settings: themes, layouts, shortcuts, data defaults"
-          className="rounded bg-surface-2 px-2 py-1 text-xs text-text transition-colors hover:bg-surface-2-hover"
-        >
-          Settings
-        </button>
-        <span className="text-xs text-text-muted">
-          {/* Same kbd treatment as ShortcutsList's keycaps (px-1 py-1, not
-              this surface's own px-1.5 py-0.5) -- this was a third,
-              independent keycap styling, flagged in the Settings/palette
-              pass as out of scope there (global-sweep territory). */}
-          <kbd className="rounded border border-border px-1 py-1">Ctrl/Cmd K</kbd> commands &middot;{' '}
-          <button onClick={() => setShortcutsOpen(true)} className="rounded border border-border px-1 py-1 hover:border-border-hover hover:text-text">
-            ?
-          </button>{' '}
-          shortcuts
-        </span>
-      </header>
+      {/* REPLICA_ROADMAP.md Batch 5: distraction-free chart mode hides this
+          whole header (Workspace.tsx switches its own height calc to match,
+          and drops its "Layout:" preset row the same way) -- ChartPanel.tsx
+          owns the actual toggle/shortcut/button, this just reacts to it. */}
+      {!distractionFree && (
+        <header className="flex items-center gap-3 border-b border-border px-6 py-3">
+          <h1 className="text-sm font-semibold tracking-wide text-text">propbt viz</h1>
+          {!compareRunIds && selectedRunId && (
+            <>
+              <div className="h-4 w-px bg-surface-2" />
+              <button
+                onClick={() => selectRun(null)}
+                className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
+              >
+                &larr; Runs
+              </button>
+              <span className="font-mono text-xs text-text-muted">{selectedRunId}</span>
+              {run && <span className="text-xs text-text-muted">{run.instrument}</span>}
+            </>
+          )}
+          <button
+            onClick={togglePerf}
+            title="Toggle the perf HUD (render/fetch timings)"
+            className={`ml-auto rounded px-2 py-1 text-xs transition-colors ${
+              perfEnabled ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-2-hover'
+            }`}
+          >
+            Perf
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="Settings: themes, layouts, shortcuts, data defaults"
+            className="rounded bg-surface-2 px-2 py-1 text-xs text-text transition-colors hover:bg-surface-2-hover"
+          >
+            Settings
+          </button>
+          <span className="text-xs text-text-muted">
+            {/* Same kbd treatment as ShortcutsList's keycaps (px-1 py-1, not
+                this surface's own px-1.5 py-0.5) -- this was a third,
+                independent keycap styling, flagged in the Settings/palette
+                pass as out of scope there (global-sweep territory). */}
+            <kbd className="rounded border border-border px-1 py-1">Ctrl/Cmd K</kbd> commands &middot;{' '}
+            <button onClick={() => setShortcutsOpen(true)} className="rounded border border-border px-1 py-1 hover:border-border-hover hover:text-text">
+              ?
+            </button>{' '}
+            shortcuts
+          </span>
+        </header>
+      )}
       {compareRunIds && (
         <div key="compare" className="propbt-fade-in">
           <ComparePage />

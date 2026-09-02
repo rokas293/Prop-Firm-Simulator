@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ThemeColors } from '../../state/themeStore'
+import { POPOVER_FORM_PADDING, POPOVER_SHELL } from '../../components/popoverStyles'
 
 // The on-chart legend's "settings" icon (REPLICA_ROADMAP.md Batch 3) --
 // just a line-color swatch picker, the one genuinely tunable per-indicator
@@ -74,7 +75,7 @@ export default function IndicatorSettingsPopover({
       role="dialog"
       aria-label={`${label} settings`}
       style={{ position: 'fixed', left: pos.x, top: pos.y, visibility: measured ? 'visible' : 'hidden' }}
-      className="z-40 w-48 rounded border border-border bg-surface-2 p-3 text-xs shadow-lg"
+      className={`${POPOVER_SHELL} z-40 w-48 ${POPOVER_FORM_PADDING}`}
     >
       <div className="micro-label mb-2">{label}</div>
       <div className="mb-2 text-text-muted">Color</div>

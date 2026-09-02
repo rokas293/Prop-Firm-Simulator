@@ -226,6 +226,22 @@
      stays focused throughout. */
   outline: none;
 }
+/* REPLICA_ROADMAP.md Batch 5: the global `:focus-visible` accent-ring rule
+   below has the SAME specificity as the plain `.propbt-cmdk-input` class
+   above (one selector each), so source order alone decided the winner --
+   and since the global rule is declared later in this file, it was quietly
+   overriding this input's deliberate `outline: none` everywhere it's used
+   (confirmed live: the command palette's own input showed the ring despite
+   its comment's stated intent, and so did the newer symbol-search/
+   indicator-dialog inputs built on the same class). Chrome's :focus-visible
+   heuristic treats a text input as "always focus-visible" regardless of
+   whether focus arrived by click, Tab, or a script -- unlike a button,
+   there's no pointer-vs-keyboard distinction to lean on here, so the fix is
+   specificity: pairing the pseudo-class onto this class (0,2,0) reliably
+   beats the bare global rule (0,1,0) no matter where either is declared. */
+.propbt-cmdk-input:focus-visible {
+  outline: none;
+}
 .propbt-cmdk-input::placeholder {
   color: var(--color-text-muted);
 }
@@ -301,6 +317,23 @@
 }
 .propbt-fade-in {
   animation: propbt-fade-in 140ms ease-out;
+}
+/* DESIGN_LANGUAGE.md §8: "respect prefers-reduced-motion -- drop non-
+   essential transitions." Scoped to the OPEN/entrance motion specifically
+   (this class, plus the cmdk/settings/shortcuts dialogs that inline the
+   same animation rather than using this class) -- the loading shimmer
+   below conveys real state (data is still fetching), not decoration, so
+   it's deliberately left running. REPLICA_ROADMAP.md Batch 5: every
+   popover/menu/dropdown in the app now opens via one of these, so this one
+   rule is what makes "motion polish... respects prefers-reduced-motion"
+   true app-wide instead of per-surface. */
+@media (prefers-reduced-motion: reduce) {
+  .propbt-fade-in,
+  .propbt-cmdk-content,
+  .propbt-settings-content,
+  .propbt-shortcuts-content {
+    animation: none;
+  }
 }
 
 /* Loading shimmer bar (POLISH_ROADMAP Phase P4) -- a subtle top-of-chart

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
 
 // REPLICA_ROADMAP.md Batch 4: "timeframe as both quick buttons and a
 // dropdown of the full set." This app only ever has FOUR timeframes total
@@ -75,7 +76,7 @@ export default function TimeframeMenu({
           <div
             role="listbox"
             aria-label="Timeframe"
-            className="absolute right-0 top-full z-30 mt-1 w-40 rounded border border-border bg-surface-2 py-1 shadow-lg"
+            className={`${POPOVER_SHELL} absolute right-0 top-full z-30 mt-1 w-40 py-1`}
           >
             {timeframes.map((tf) => (
               <button
@@ -86,9 +87,7 @@ export default function TimeframeMenu({
                   onChange(tf)
                   setOpen(false)
                 }}
-                className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs ${
-                  value === tf ? 'text-accent' : 'text-text hover:bg-surface-2-hover'
-                }`}
+                className={`${POPOVER_MENU_ROW} justify-between ${value === tf ? '!text-accent' : ''}`}
               >
                 {LABELS[tf] ?? tf}
               </button>

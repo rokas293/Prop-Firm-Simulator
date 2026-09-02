@@ -136,6 +136,20 @@ interface ChartKLProps {
   // than index 50 on a 15min chart), so this resolves the indices to this
   // chart's own loaded bar timestamps first and reports THOSE.
   onVisibleRangeChange?: (range: { from: number; to: number } | null) => void
+  // REPLICA_ROADMAP.md Batch 5's "click-to-set replay start" -- fires on
+  // ANY plain click on a candle bar (klinecharts' own native
+  // onCandleBarClick action, confirmed in the v10.0.3 source), regardless
+  // of whether the caller is currently in "pick" mode. Deliberately not
+  // gated in here: ChartPanel already knows whether it's armed and this
+  // keeps ChartKL's side a plain, always-on passthrough, same shape as
+  // onVisibleRangeChange/onDrawingsChange above rather than a stateful
+  // arm/disarm round-trip through the imperative handle.
+  onCandleBarClick?: (bar: { timestamp: number }) => void
+  // Swaps the cursor to a crosshair over the candle pane while true -- the
+  // "you're in pick mode" affordance for the click above. Purely visual;
+  // has no effect on what actually happens on click (that's pickMode's
+  // caller deciding whether to act on onCandleBarClick).
+  pickMode?: boolean
 }
 
 // Matches Tailwind's default `font-sans` stack (index.css has no custom
@@ -335,6 +349,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     onDrawingsChange,
     onDrawingArmedChange,
     onVisibleRangeChange,
+    onCandleBarClick,
+    pickMode = false,
   },
   ref,
 ) {
@@ -426,6 +442,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   onDrawingArmedChangeRef.current = onDrawingArmedChange
   const onVisibleRangeChangeRef = useRef(onVisibleRangeChange)
   onVisibleRangeChangeRef.current = onVisibleRangeChange
+  const onCandleBarClickRef = useRef(onCandleBarClick)
+  onCandleBarClickRef.current = onCandleBarClick
 
   // The DataLoader's getBars closure and the overlay-rebuild logic are both
   // registered/defined once and must always see the LATEST values, not
@@ -1034,6 +1052,19 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     }
     chart.subscribeAction('onIndicatorTooltipFeatureClick', handleIndicatorFeatureClick)
 
+    // Click-to-set-replay-start (REPLICA_ROADMAP.md Batch 5) -- a plain
+    // passthrough of klinecharts' own native onCandleBarClick action (data
+    // shape confirmed against the v10.0.3 source: {dataIndex, data:
+    // {current, prev, next}, ...}); ChartPanel decides whether it's
+    // currently in "pick" mode, this file doesn't need to know.
+    const handleCandleBarClick = (data?: unknown) => {
+      const payload = data as { data?: { current?: { timestamp?: number } | null } } | undefined
+      const timestamp = payload?.data?.current?.timestamp
+      if (timestamp === undefined) return
+      onCandleBarClickRef.current?.({ timestamp })
+    }
+    chart.subscribeAction('onCandleBarClick', handleCandleBarClick)
+
     // Right-click empty chart area -> "Reset chart view" / "Remove all
     // drawings" (REPLICA_ROADMAP.md Batch 1). klinecharts already calls
     // preventDefault on 'contextmenu' for its OWN target internally (so the
@@ -1111,6 +1142,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       chart.unsubscribeAction('onVisibleRangeChange', handleVisibleRangeChangeForBrackets)
       chart.unsubscribeAction('onCrosshairChange', handleCrosshairChange)
       chart.unsubscribeAction('onIndicatorTooltipFeatureClick', handleIndicatorFeatureClick)
+      chart.unsubscribeAction('onCandleBarClick', handleCandleBarClick)
       container?.removeEventListener('contextmenu', handleContextMenu)
       container?.removeEventListener('mousemove', handlePointerMove)
       xAxisDom?.removeEventListener('click', handleXAxisClick)
@@ -1455,7 +1487,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   return (
     <div className="relative h-full w-full bg-bg">
       <LoadingBar active={loading} />
-      <div ref={containerRef} className="h-full w-full" />
+      <div ref={containerRef} className={`h-full w-full ${pickMode ? 'cursor-crosshair' : ''}`} />
       {/* First-paint skeleton (DESIGN_AUDIT.md C2): klinecharts needs
           containerRef mounted from the start to call init() against, so
           this overlays the (still-blank) canvas rather than replacing it

@@ -20,6 +20,15 @@ interface UiState {
   // dockable panel (POLISH_ROADMAP Phase P1).
   compareRunIds: [string, string] | null
   setCompareRunIds: (ids: [string, string] | null) => void
+  // Distraction-free chart mode (REPLICA_ROADMAP.md Batch 5) -- hides
+  // App.tsx's header and Workspace.tsx's "Layout:" preset row; ChartPanel.tsx
+  // pairs this with dockview's own native maximizeGroup/exitMaximizedGroup
+  // (workspaceApiStore) to also collapse the sibling panels. Never
+  // persisted (not in partialize below), same as compareRunIds/
+  // pendingDayJump -- an ephemeral session mode, not a durable preference;
+  // reloading mid-session shouldn't trap the user in it.
+  distractionFree: boolean
+  setDistractionFree: (v: boolean) => void
 }
 
 // Persisted to localStorage (Phase V7: "persist view state -- selected
@@ -39,6 +48,8 @@ export const useUiStore = create<UiState>()(
       consumeDayJump: () => set({ pendingDayJump: null }),
       compareRunIds: null,
       setCompareRunIds: (ids) => set({ compareRunIds: ids }),
+      distractionFree: false,
+      setDistractionFree: (v) => set({ distractionFree: v }),
     }),
     {
       name: 'propbt-viz:ui-state',

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Maximize2, Minimize2 } from 'lucide-react'
 import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { equityAtCursor, runningTotals } from '../chart/replay'
@@ -16,6 +17,8 @@ import { filtersToParams, useTradeStore } from '../state/tradeStore'
 import { useIndicatorStore, type IndicatorPrefs } from '../state/indicatorStore'
 import { useChartViewStore } from '../state/chartViewStore'
 import { useChartDefaultsStore } from '../state/chartDefaultsStore'
+import { useWorkspaceApiStore } from '../state/workspaceApiStore'
+import { CHART_PANEL_ID } from '../workspace/panelIds'
 import { applyCompassFilters } from '../compass/breakdowns'
 import { isShortcut, DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
 import EmptyState from '../components/EmptyState'
@@ -56,6 +59,9 @@ export default function ChartPanel() {
   const consumeDayJump = useUiStore((s) => s.consumeDayJump)
   const timeframe = useUiStore((s) => s.timeframe)
   const setTimeframe = useUiStore((s) => s.setTimeframe)
+  const distractionFree = useUiStore((s) => s.distractionFree)
+  const setDistractionFree = useUiStore((s) => s.setDistractionFree)
+  const workspaceApi = useWorkspaceApiStore((s) => s.api)
 
   const filters = useTradeStore((s) => s.filters)
   const clearFilters = useTradeStore((s) => s.clearFilters)
@@ -111,6 +117,10 @@ export default function ChartPanel() {
   // whether a tool is actually armed right now (DESIGN_AUDIT.md chart-
   // workspace elevation).
   const [armedTool, setArmedTool] = useState<string | null>(null)
+  // REPLICA_ROADMAP.md Batch 5's "click-to-set replay start" -- armed via
+  // ReplayControls' own button (or the 'S' shortcut), disarmed the moment
+  // a bar is actually picked (handlePickReplayStart below) or Escape.
+  const [pickingReplayStart, setPickingReplayStart] = useState(false)
   // REPLICA_ROADMAP.md Batch 3's add-indicator dialog -- replaces the old
   // always-visible checkbox row (IndicatorTogglePanel) now that the
   // on-chart legend itself shows which indicators are active.
@@ -127,6 +137,42 @@ export default function ChartPanel() {
   // store.
   const bracketDensity = useChartDefaultsStore((s) => s.bracketDensity)
   const setBracketDensity = useChartDefaultsStore((s) => s.setBracketDensity)
+
+  // Distraction-free chart mode (REPLICA_ROADMAP.md Batch 5) -- pairs
+  // uiStore's own flag (which App.tsx/Workspace.tsx react to, hiding the
+  // outer header/layout row) with dockview's NATIVE panel-maximize API
+  // (confirmed in dockview-core's public component.api.d.ts:
+  // maximizeGroup/exitMaximizedGroup/onDidMaximizedGroupChange), which
+  // collapses the sibling panels (Trade List, Dashboard, ...) without this
+  // app needing to hand-roll that part. Both sides are driven from ONE
+  // toggle so they can't drift apart; the effect below re-syncs uiStore's
+  // flag if dockview's OWN maximize state ever changes some other way.
+  //
+  // Reads useUiStore.getState().distractionFree fresh rather than closing
+  // over the destructured `distractionFree` above -- this is called from
+  // the keydown handler further down, whose own effect deps deliberately
+  // DON'T include every piece of state every branch touches (matches that
+  // effect's existing, established pattern -- see its own comment), so a
+  // closed-over boolean there would go stale the moment this toggles
+  // without ALSO triggering a trades/tradeIdx/selectedTrade change.
+  const toggleDistractionFree = () => {
+    if (useUiStore.getState().distractionFree) {
+      workspaceApi?.exitMaximizedGroup()
+      setDistractionFree(false)
+      return
+    }
+    const panel = workspaceApi?.getPanel(CHART_PANEL_ID)
+    if (!panel) return
+    workspaceApi?.maximizeGroup(panel)
+    setDistractionFree(true)
+  }
+  useEffect(() => {
+    if (!workspaceApi) return
+    const disposable = workspaceApi.onDidMaximizedGroupChange((e) => {
+      if (!e.isMaximized) setDistractionFree(false)
+    })
+    return () => disposable.dispose()
+  }, [workspaceApi, setDistractionFree])
 
   // Reset to a clean state whenever a different run is opened.
   useEffect(() => {
@@ -360,6 +406,21 @@ export default function ChartPanel() {
     if (trade) klChartRef.current?.scrollToTrade(trade.entry_time)
   }
 
+  // REPLICA_ROADMAP.md Batch 5's click-to-set-replay-start -- ChartKL's
+  // onCandleBarClick fires on EVERY bar click regardless of mode (see its
+  // own comment), so this only acts while pickingReplayStart is armed.
+  // Matches by TIMESTAMP, not klinecharts' own dataIndex: the clicked
+  // bar's index into klinecharts' internal (possibly replay-clipped) data
+  // list isn't guaranteed to line up with this component's own `bars`
+  // array position (same reasoning as the Batch 1 camera fix).
+  const handlePickReplayStart = (bar: { timestamp: number }) => {
+    if (!pickingReplayStart || !bars) return
+    const clickedTimeSec = bar.timestamp / 1000
+    const index = bars.findIndex((b) => b.time === clickedTimeSec)
+    if (index >= 0) setCursorIndex(index)
+    setPickingReplayStart(false)
+  }
+
   // Once new bars land for the active view, fit the chart to them. `bars`
   // and KL's own independent fetch are handed the same computed window
   // (see barsWindow below), so this is a reasonable proxy for "the target
@@ -405,12 +466,28 @@ export default function ChartPanel() {
           e.preventDefault()
           fitTrade()
         }
+      } else if (isShortcut(e, 'toggleFullscreen')) {
+        e.preventDefault()
+        toggleDistractionFree()
+      } else if (isShortcut(e, 'setReplayStart')) {
+        if (useChartViewStore.getState().replayActive) {
+          e.preventDefault()
+          setPickingReplayStart((v) => !v)
+        }
       } else if (e.key === 'Escape') {
         // Cancel a still-in-progress drawing (PART_A_REVISED_klinecharts.md
         // Phase A2) -- shares the Escape key with the global
         // 'closeOverlay' shortcut (command palette/settings), which is
         // harmless: cancelActiveDrawing no-ops when nothing is being drawn.
         klChartRef.current?.cancelActiveDrawing()
+        // Same "harmless no-op" reasoning extends to both of these
+        // (REPLICA_ROADMAP.md Batch 5) -- Escape is the universal "get out
+        // of whatever mode I'm in" key, so it doubles as the "clear way
+        // back" for distraction-free mode and cancels an armed "click a
+        // bar to set the replay start" pick without needing its own
+        // separate handler.
+        if (useUiStore.getState().distractionFree) toggleDistractionFree()
+        setPickingReplayStart(false)
       } else if (!e.ctrlKey && !e.metaKey && DRAWING_SHORTCUTS[e.key.toLowerCase()]) {
         e.preventDefault()
         klChartRef.current?.startDrawing(DRAWING_SHORTCUTS[e.key.toLowerCase()])
@@ -484,7 +561,7 @@ export default function ChartPanel() {
           {replayActive ? 'Exit replay' : 'Replay'}
         </button>
 
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
           <ChartLayoutMenu
             splitView={splitView}
             onToggleSplitView={() => setSplitView((v) => !v)}
@@ -495,6 +572,21 @@ export default function ChartPanel() {
             bracketDensity={bracketDensity}
             onBracketDensityChange={setBracketDensity}
           />
+          {/* REPLICA_ROADMAP.md Batch 5: distraction-free chart mode --
+              expands the chart to fill the window, hiding the app header,
+              the workspace's "Layout:" row, and every sibling panel (via
+              dockview's own maximizeGroup). Escape or this same button
+              (now accent-filled) is the way back. */}
+          <button
+            onClick={toggleDistractionFree}
+            aria-pressed={distractionFree}
+            title="Distraction-free chart mode (D)"
+            className={`flex h-7 w-7 items-center justify-center rounded ${
+              distractionFree ? 'bg-accent text-white' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+            }`}
+          >
+            {distractionFree ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
         </div>
       </div>
       <IndicatorDialog open={indicatorDialogOpen} onClose={() => setIndicatorDialogOpen(false)} />
@@ -560,6 +652,8 @@ export default function ChartPanel() {
         onSpeedChange={setSpeed}
         followLatestBar={followLatestBar}
         onToggleFollowLatestBar={toggleFollowLatestBar}
+        pickingReplayStart={pickingReplayStart}
+        onTogglePickingReplayStart={() => setPickingReplayStart((v) => !v)}
         runningPnl={replayTotals.pnlUsd}
         runningR={replayTotals.r}
         equity={equityAtCursorPoint}
@@ -567,7 +661,7 @@ export default function ChartPanel() {
 
       <div className="flex min-h-0 flex-1">
         <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} armedTool={armedTool} />
-        <div className={`min-h-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
+        <div className={`min-h-0 min-w-0 flex-1 ${splitView ? 'flex flex-col' : ''}`}>
           <div className={splitView ? 'min-h-0 flex-1 border-b border-border' : 'h-full'}>
             <ChartKL
               ref={klChartRef}
@@ -587,6 +681,8 @@ export default function ChartPanel() {
               onDrawingsChange={setKlDrawings}
               onDrawingArmedChange={setArmedTool}
               onVisibleRangeChange={splitView ? handlePrimaryKLVisibleRangeChange : undefined}
+              onCandleBarClick={handlePickReplayStart}
+              pickMode={pickingReplayStart}
             />
           </div>
           {splitView && (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { LayoutPanelTop } from 'lucide-react'
 import type { BracketDensity } from '../chart/tradeBracket'
+import { POPOVER_FORM_PADDING, POPOVER_SHELL } from '../components/popoverStyles'
 
 const BRACKET_DENSITIES: BracketDensity[] = ['auto', 'full', 'markers']
 const BRACKET_LABEL: Record<BracketDensity, string> = { auto: 'Auto', full: 'Full', markers: 'Off' }
@@ -70,7 +71,7 @@ export default function ChartLayoutMenu({
       </button>
 
       {open && (
-        <div role="menu" aria-label="Chart layout" className="absolute right-0 top-full z-30 mt-1 w-64 rounded border border-border bg-surface-2 p-3 text-xs shadow-lg">
+        <div role="menu" aria-label="Chart layout" className={`${POPOVER_SHELL} absolute right-0 top-full z-30 mt-1 w-64 ${POPOVER_FORM_PADDING}`}>
           <div className="flex items-center justify-between">
             <span className="text-text-muted">Split view</span>
             <button

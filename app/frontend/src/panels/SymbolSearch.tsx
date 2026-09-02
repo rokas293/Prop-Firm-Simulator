@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react'
 import { useRuns } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { INSTRUMENTS } from '../chart/kl/instruments'
+import { POPOVER_SHELL } from '../components/popoverStyles'
 
 // REPLICA_ROADMAP.md Batch 4's symbol search -- TradingView-style: a
 // compact trigger showing the current symbol, opening an ANCHORED
@@ -67,7 +68,7 @@ export default function SymbolSearch() {
       </button>
 
       {open && (
-        <Command shouldFilter label="Symbol search" className="absolute left-0 top-full z-30 mt-1 w-64 rounded border border-border bg-surface-2 shadow-lg">
+        <Command shouldFilter label="Symbol search" className={`${POPOVER_SHELL} absolute left-0 top-full z-30 mt-1 w-64`}>
           <CommandInput
             autoFocus
             value={search}

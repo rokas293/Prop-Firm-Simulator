@@ -20,6 +20,11 @@ interface ReplayControlsProps {
   // default off, so stepping never touches the camera unless opted in.
   followLatestBar: boolean
   onToggleFollowLatestBar: () => void
+  // "Click a bar to set the replay start" (REPLICA_ROADMAP.md Batch 5) --
+  // armed here, the actual pick happens on the chart itself (ChartKL's
+  // onCandleBarClick, wired up in ChartPanel.tsx).
+  pickingReplayStart: boolean
+  onTogglePickingReplayStart: () => void
   runningPnl: number
   runningR: number
   equity: EquityPoint | null
@@ -36,6 +41,8 @@ export default function ReplayControls({
   onSpeedChange,
   followLatestBar,
   onToggleFollowLatestBar,
+  pickingReplayStart,
+  onTogglePickingReplayStart,
   runningPnl,
   runningR,
   equity,
@@ -74,6 +81,17 @@ export default function ReplayControls({
               className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
             >
               Step &rarr;
+            </button>
+
+            <button
+              onClick={onTogglePickingReplayStart}
+              title="Click a bar on the chart to start replay from there, instead of session open (S)"
+              aria-pressed={pickingReplayStart}
+              className={`rounded px-2 py-1 ${
+                pickingReplayStart ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+              }`}
+            >
+              {pickingReplayStart ? 'Click a bar…' : 'Set start'}
             </button>
 
             <select

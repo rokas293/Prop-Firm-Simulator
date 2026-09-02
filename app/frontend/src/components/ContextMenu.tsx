@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { POPOVER_MENU_ROW, POPOVER_SHELL } from './popoverStyles'
 
 // A single reusable right-click menu (REPLICA_ROADMAP.md Batch 1: "one
 // reusable ContextMenu component"), styled to DESIGN_LANGUAGE.md §6's
@@ -124,7 +125,7 @@ export default function ContextMenu({
       // Rendered off-screen until the post-mount clamp above places it --
       // avoids a one-frame flash at the wrong (unclamped) spot.
       style={{ position: 'fixed', left: pos.x, top: pos.y, visibility: measured ? 'visible' : 'hidden' }}
-      className="z-40 w-48 rounded border border-border bg-surface-2 py-1 text-xs shadow-lg"
+      className={`${POPOVER_SHELL} z-40 w-48 py-1`}
     >
       {items.map((entry, i) =>
         isSeparator(entry) ? (
@@ -138,9 +139,7 @@ export default function ContextMenu({
               entry.onSelect()
               onClose()
             }}
-            className={`flex w-full items-center px-3 py-1.5 text-left disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-50 ${
-              entry.destructive ? 'text-negative hover:bg-surface-2-hover' : 'text-text hover:bg-surface-2-hover'
-            }`}
+            className={`${POPOVER_MENU_ROW} ${entry.destructive ? '!text-negative' : ''}`}
           >
             {entry.label}
           </button>

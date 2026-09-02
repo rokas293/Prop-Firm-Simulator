@@ -64,6 +64,12 @@ describe('isShortcut', () => {
     expect(isShortcut(plain1, 'toggle-panel-chart')).toBe(false)
   })
 
+  it('REPLICA_ROADMAP.md Batch 5: "d" toggles distraction-free, "s" arms click-to-set-replay-start', () => {
+    expect(isShortcut(keyEvent({ key: 'd' }), 'toggleFullscreen')).toBe(true)
+    expect(isShortcut(keyEvent({ key: 's' }), 'setReplayStart')).toBe(true)
+    expect(isShortcut(keyEvent({ key: 'd' }), 'setReplayStart')).toBe(false)
+  })
+
   it('the "?" shortcut fires on the plain key event browsers report for Shift+/', () => {
     // Browsers report KeyboardEvent.key as '?' itself for Shift+/ on a US
     // layout -- the registry intentionally matches on .key here (not

@@ -24,6 +24,7 @@ import type { ChartKLHandle } from '../chart/kl/ChartKL'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import { DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
 import { useKLDrawingStore } from '../state/klDrawingStore'
+import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
 
 const GROUP_ORDER: DrawingGroup[] = ['lines', 'fibonacci', 'shapes', 'annotations']
 const GROUP_LABELS: Record<DrawingGroup, string> = {
@@ -377,7 +378,7 @@ export default function KLDrawingToolbar({
                 <div
                   role="menu"
                   aria-label={`${GROUP_LABELS[group]} tools`}
-                  className="absolute left-full top-0 z-30 ml-1 w-48 rounded border border-border bg-surface-2 py-1 shadow-lg"
+                  className={`${POPOVER_SHELL} absolute left-full top-0 z-30 ml-1 w-48 py-1`}
                 >
                   {groupTools.map((tool) => {
                     const active = tool.name === armedTool
@@ -388,9 +389,7 @@ export default function KLDrawingToolbar({
                         role="menuitem"
                         onClick={() => activateTool(tool.name)}
                         aria-pressed={active}
-                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
-                          active ? 'text-accent' : 'text-text hover:bg-surface-2-hover'
-                        }`}
+                        className={`${POPOVER_MENU_ROW} gap-2 ${active ? '!text-accent' : ''}`}
                       >
                         <span className="flex h-4 w-4 flex-none items-center justify-center">{toolIcon(tool.name)}</span>
                         <span className="flex-1 truncate">{tool.label}</span>
@@ -431,7 +430,7 @@ export default function KLDrawingToolbar({
             <div
               role="menu"
               aria-label="Recently used tools"
-              className="absolute bottom-0 left-full z-30 ml-1 w-48 rounded border border-border bg-surface-2 py-1 shadow-lg"
+              className={`${POPOVER_SHELL} absolute bottom-0 left-full z-30 ml-1 w-48 py-1`}
             >
               {recentTools.map((name) => {
                 const tool = DRAWING_TOOLS.find((t) => t.name === name)
@@ -444,9 +443,7 @@ export default function KLDrawingToolbar({
                     role="menuitem"
                     onClick={() => activateTool(tool.name)}
                     aria-pressed={active}
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
-                      active ? 'text-accent' : 'text-text hover:bg-surface-2-hover'
-                    }`}
+                    className={`${POPOVER_MENU_ROW} gap-2 ${active ? '!text-accent' : ''}`}
                   >
                     <span className="flex h-4 w-4 flex-none items-center justify-center">{toolIcon(tool.name)}</span>
                     <span className="flex-1 truncate">{tool.label}</span>
@@ -492,7 +489,7 @@ export default function KLDrawingToolbar({
           <IconButtonTooltip text={`Drawings (${drawings.length})`} suppressed={manageOpen} />
 
           {manageOpen && (
-            <div className="absolute bottom-0 left-full z-30 ml-1 w-64 rounded border border-border bg-surface-2 py-1 shadow-lg">
+            <div className={`${POPOVER_SHELL} absolute bottom-0 left-full z-30 ml-1 w-64 py-1`}>
               {drawings.length === 0 ? (
                 // POLISH_ROADMAP Phase P6: a helpful empty state rather than
                 // an empty dropdown (previously this button was just

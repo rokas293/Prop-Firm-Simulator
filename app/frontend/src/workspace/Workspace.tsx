@@ -19,6 +19,7 @@ import { useTradeStore } from '../state/tradeStore'
 import { useChartViewStore } from '../state/chartViewStore'
 import { applyAnalysisLayout, PRESETS } from './presets'
 import { CHART_PANEL_ID, DASHBOARD_PANEL_ID, EQUITY_PANEL_ID, PANEL_DEFS, PROP_RISK_PANEL_ID, TRADE_LIST_PANEL_ID } from './panelIds'
+import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
 
 // Perf-instruments every panel from one place (POLISH_ROADMAP Phase P4)
 // rather than touching all 5 panel files -- each panel is registered with
@@ -59,6 +60,11 @@ export default function Workspace() {
   const setLastLayout = useLayoutStore((s) => s.setLastLayout)
   const clearLastLayout = useLayoutStore((s) => s.clearLastLayout)
   const setApi = useWorkspaceApiStore((s) => s.setApi)
+  // REPLICA_ROADMAP.md Batch 5's distraction-free mode -- hides this row;
+  // the outer h-[calc(100vh-49px)] below also switches to h-screen since
+  // App.tsx's 49px header is gone too in that mode (both driven by the
+  // same flag so they can never disagree about how much height is free).
+  const distractionFree = useUiStore((s) => s.distractionFree)
 
   // Workspace stays mounted for as long as some run is selected (App.tsx
   // only swaps it out for the runs list / compare view), so this is the
@@ -133,51 +139,49 @@ export default function Workspace() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-49px)] flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs">
-        <span className="text-text-muted">Layout:</span>
-        {PRESETS.map((p) => (
+    <div className={`flex flex-col ${distractionFree ? 'h-screen' : 'h-[calc(100vh-49px)]'}`}>
+      {!distractionFree && (
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs">
+          <span className="text-text-muted">Layout:</span>
+          {PRESETS.map((p) => (
+            <button
+              key={p.name}
+              onClick={() => apiRef.current && p.apply(apiRef.current)}
+              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+            >
+              {p.name}
+            </button>
+          ))}
           <button
-            key={p.name}
-            onClick={() => apiRef.current && p.apply(apiRef.current)}
+            onClick={resetLayout}
             className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
           >
-            {p.name}
+            Reset layout
           </button>
-        ))}
-        <button
-          onClick={resetLayout}
-          className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
-        >
-          Reset layout
-        </button>
 
-        <div className="relative ml-auto">
-          <button
-            onClick={() => setAddMenuOpen((o) => !o)}
-            className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
-          >
-            + Panel
-          </button>
-          {addMenuOpen && (
-            <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded border border-border bg-surface py-1 shadow-lg">
-              {closedPanels.length === 0 ? (
-                <div className="px-3 py-1 text-text-muted">All panels open</div>
-              ) : (
-                closedPanels.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => addPanel(p.id)}
-                    className="block w-full px-3 py-1 text-left text-text hover:bg-surface-2"
-                  >
-                    {p.title}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
+          <div className="relative ml-auto">
+            <button
+              onClick={() => setAddMenuOpen((o) => !o)}
+              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+            >
+              + Panel
+            </button>
+            {addMenuOpen && (
+              <div className={`${POPOVER_SHELL} absolute right-0 top-full z-10 mt-1 w-40 py-1`}>
+                {closedPanels.length === 0 ? (
+                  <div className="px-3 py-1.5 text-text-muted">All panels open</div>
+                ) : (
+                  closedPanels.map((p) => (
+                    <button key={p.id} onClick={() => addPanel(p.id)} className={POPOVER_MENU_ROW}>
+                      {p.title}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="min-h-0 flex-1">
         <DockviewReact className="dockview-theme-propbt" components={COMPONENTS} onReady={onReady} />

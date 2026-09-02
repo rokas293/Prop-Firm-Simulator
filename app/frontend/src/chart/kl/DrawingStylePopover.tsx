@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ThemeColors } from '../../state/themeStore'
+import { POPOVER_FORM_PADDING, POPOVER_SHELL } from '../../components/popoverStyles'
 
 // The context menu's "Edit style" action (REPLICA_ROADMAP.md Batch 1) --
 // a compact swatch + line-width picker, not a full properties dialog
@@ -76,7 +77,7 @@ export default function DrawingStylePopover({
       role="dialog"
       aria-label="Edit drawing style"
       style={{ position: 'fixed', left: pos.x, top: pos.y, visibility: measured ? 'visible' : 'hidden' }}
-      className="z-40 w-48 rounded border border-border bg-surface-2 p-3 text-xs shadow-lg"
+      className={`${POPOVER_SHELL} z-40 w-48 ${POPOVER_FORM_PADDING}`}
     >
       <div className="micro-label mb-2">Color</div>
       <div className="mb-3 flex items-center gap-2">
