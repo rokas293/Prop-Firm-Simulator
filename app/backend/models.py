@@ -144,3 +144,59 @@ class SessionWindow(BaseModel):
     end: int
     fair_value: Optional[float] = None
     fair_value_time: Optional[int] = None
+
+
+# --- FXR_SPEC.md section 2: manual-backtest sessions (F1 shell). "Session"
+# here means a saved manual-replay session (BacktestSession), a completely
+# different concept from SessionWindow above (an Asia/London/NY trading-
+# session window) -- named `BacktestSession...`/routed under /api/bt-
+# sessions specifically to avoid colliding with that pre-existing meaning.
+
+class SimAccountModel(BaseModel):
+    id: str
+    starting_balance: float
+    balance: float
+    currency: str = "USD"
+    # Exactly one of these is set (validated in bt_session_service, not
+    # here -- keeps this a plain data shape, no cross-field logic in a
+    # response model). risk_per_trade_percent is of the CURRENT balance
+    # when actually used to size a trade (F2+); nothing in F1 reads it yet.
+    risk_per_trade_percent: Optional[float] = None
+    risk_per_trade_usd: Optional[float] = None
+    default_contracts: int
+    commission_per_contract: float
+
+
+class BacktestSessionSummary(BaseModel):
+    id: str
+    instrument: str
+    base_timeframe: str
+    start_time: int
+    created_at: str
+    updated_at: str
+    cursor_time: int
+    status: str  # "active" | "archived"
+    account: SimAccountModel
+
+
+class BacktestSessionDetail(BacktestSessionSummary):
+    pass
+
+
+class CreateSessionRequest(BaseModel):
+    instrument: str
+    base_timeframe: str
+    # Exactly one of start_time/random_start is used (random_start=True
+    # ignores start_time and picks server-side, so the client never sees --
+    # let alone influences -- which historical point it lands on).
+    start_time: Optional[int] = None
+    random_start: bool = False
+    starting_balance: float = 50000.0
+    risk_per_trade_percent: Optional[float] = 1.0
+    risk_per_trade_usd: Optional[float] = None
+    default_contracts: int = 1
+    commission_per_contract: float = 1.0
+
+
+class UpdateCursorRequest(BaseModel):
+    cursor_time: int

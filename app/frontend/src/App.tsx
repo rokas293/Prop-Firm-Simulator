@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useRun } from './api/hooks'
+import { useBtSession, useRun } from './api/hooks'
 import ComparePage from './pages/ComparePage'
 import RunsListPage from './pages/RunsListPage'
+import SessionsListPage from './pages/SessionsListPage'
 import Workspace from './workspace/Workspace'
+import SessionWorkspace from './workspace/SessionWorkspace'
 import CommandPalette from './workspace/CommandPalette'
 import KeyboardShortcuts from './workspace/KeyboardShortcuts'
 import PerfHud from './components/PerfHud'
@@ -17,9 +19,14 @@ import { isShortcut } from './keyboard/shortcuts'
 export default function App() {
   const selectedRunId = useUiStore((s) => s.selectedRunId)
   const selectRun = useUiStore((s) => s.selectRun)
+  const selectedSessionId = useUiStore((s) => s.selectedSessionId)
+  const selectSession = useUiStore((s) => s.selectSession)
+  const landingTab = useUiStore((s) => s.landingTab)
+  const setLandingTab = useUiStore((s) => s.setLandingTab)
   const compareRunIds = useUiStore((s) => s.compareRunIds)
   const distractionFree = useUiStore((s) => s.distractionFree)
   const { data: run } = useRun(selectedRunId)
+  const { data: btSession } = useBtSession(selectedSessionId)
   const perfEnabled = usePerfStore((s) => s.enabled)
   const togglePerf = usePerfStore((s) => s.toggle)
 
@@ -79,6 +86,19 @@ export default function App() {
               {run && <span className="text-xs text-text-muted">{run.instrument}</span>}
             </>
           )}
+          {!compareRunIds && selectedSessionId && (
+            <>
+              <div className="h-4 w-px bg-surface-2" />
+              <button
+                onClick={() => selectSession(null)}
+                className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
+              >
+                &larr; Sessions
+              </button>
+              <span className="font-mono text-xs text-text-muted">{selectedSessionId}</span>
+              {btSession && <span className="text-xs text-text-muted">{btSession.instrument}</span>}
+            </>
+          )}
           <button
             onClick={togglePerf}
             title="Toggle the perf HUD (render/fetch timings)"
@@ -113,9 +133,31 @@ export default function App() {
           <ComparePage />
         </div>
       )}
-      {!compareRunIds && !selectedRunId && (
-        <div key="runs" className="propbt-fade-in">
-          <RunsListPage />
+      {!compareRunIds && !selectedRunId && !selectedSessionId && (
+        <div key="landing" className="propbt-fade-in">
+          {/* FXR_SPEC.md phase F1: a tab switcher between completed
+              automated-backtest runs and manual-replay sessions -- the two
+              are unrelated data models (see uiStore.ts's own comment), so
+              this just decides which list page is mounted. */}
+          <div className="flex gap-2 border-b border-border px-6 pt-4">
+            <button
+              onClick={() => setLandingTab('runs')}
+              className={`rounded-t px-3 py-1.5 text-xs ${
+                landingTab === 'runs' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Runs
+            </button>
+            <button
+              onClick={() => setLandingTab('sessions')}
+              className={`rounded-t px-3 py-1.5 text-xs ${
+                landingTab === 'sessions' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Sessions
+            </button>
+          </div>
+          {landingTab === 'runs' ? <RunsListPage /> : <SessionsListPage />}
         </div>
       )}
       {!compareRunIds && selectedRunId && (
@@ -125,6 +167,11 @@ export default function App() {
         // runs-list -> workspace mount transition, not on every run switch.
         <div className="propbt-fade-in">
           <Workspace />
+        </div>
+      )}
+      {!compareRunIds && selectedSessionId && (
+        <div key={selectedSessionId} className="propbt-fade-in h-[calc(100vh-49px)]">
+          <SessionWorkspace sessionId={selectedSessionId} />
         </div>
       )}
       <CommandPalette />

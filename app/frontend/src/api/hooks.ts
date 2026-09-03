@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
 import { fetchBarsInWorker } from '../workers/barsWorkerClient'
 import type { StatsScope, TradeQueryParams } from '../state/tradeStore'
-import type { IndicatorName } from './types'
+import type { CreateSessionRequest, IndicatorName } from './types'
 
 export type { StatsScope }
 
@@ -154,5 +154,57 @@ export function useAiStatus() {
 export function useSummarizeRun() {
   return useMutation({
     mutationFn: ({ runId, scope }: { runId: string; scope: StatsScope }) => api.summarizeRun(runId, scope),
+  })
+}
+
+// FXR_SPEC.md phase F1: manual-backtest sessions. Named useBtSession* (not
+// useSession*) throughout -- useSessions above already means trading-
+// session windows, an unrelated concept.
+export function useBtSessions(includeArchived = false) {
+  return useQuery({
+    queryKey: ['bt-sessions', includeArchived],
+    queryFn: () => api.listBtSessions(includeArchived),
+  })
+}
+
+export function useBtSession(sessionId: string | null) {
+  return useQuery({
+    queryKey: ['bt-session', sessionId],
+    queryFn: () => api.getBtSession(sessionId as string),
+    enabled: sessionId !== null,
+  })
+}
+
+export function useCreateBtSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateSessionRequest) => api.createBtSession(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
+    },
+  })
+}
+
+// Fired on a debounce as replay steps forward (see SessionWorkspace) --
+// updates the cached session in place rather than invalidating, so the
+// list/detail queries don't refetch on every cursor step.
+export function useUpdateBtSessionCursor() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sessionId, cursorTime }: { sessionId: string; cursorTime: number }) =>
+      api.updateBtSessionCursor(sessionId, cursorTime),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['bt-session', updated.id], updated)
+    },
+  })
+}
+
+export function useArchiveBtSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (sessionId: string) => api.archiveBtSession(sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
+    },
   })
 }

@@ -29,6 +29,15 @@ interface UiState {
   // reloading mid-session shouldn't trap the user in it.
   distractionFree: boolean
   setDistractionFree: (v: boolean) => void
+  // FXR_SPEC.md phase F1: the manual-replay session side of the app, kept
+  // mutually exclusive with selectedRunId (selecting one clears the other)
+  // since App.tsx renders exactly one of RunsListPage/SessionsListPage/
+  // Workspace/SessionWorkspace at a time. landingTab is the tab switcher
+  // shown when neither is selected.
+  selectedSessionId: string | null
+  selectSession: (sessionId: string | null) => void
+  landingTab: 'runs' | 'sessions'
+  setLandingTab: (tab: 'runs' | 'sessions') => void
 }
 
 // Persisted to localStorage (Phase V7: "persist view state -- selected
@@ -40,7 +49,8 @@ export const useUiStore = create<UiState>()(
   persist(
     (set) => ({
       selectedRunId: null,
-      selectRun: (runId) => set({ selectedRunId: runId, pendingDayJump: null }),
+      selectRun: (runId) =>
+        set((s) => ({ selectedRunId: runId, selectedSessionId: runId ? null : s.selectedSessionId, pendingDayJump: null })),
       timeframe: '15min',
       setTimeframe: (tf) => set({ timeframe: tf }),
       pendingDayJump: null,
@@ -50,10 +60,20 @@ export const useUiStore = create<UiState>()(
       setCompareRunIds: (ids) => set({ compareRunIds: ids }),
       distractionFree: false,
       setDistractionFree: (v) => set({ distractionFree: v }),
+      selectedSessionId: null,
+      selectSession: (sessionId) =>
+        set((s) => ({ selectedSessionId: sessionId, selectedRunId: sessionId ? null : s.selectedRunId })),
+      landingTab: 'runs',
+      setLandingTab: (tab) => set({ landingTab: tab }),
     }),
     {
       name: 'propbt-viz:ui-state',
-      partialize: (s) => ({ selectedRunId: s.selectedRunId, timeframe: s.timeframe }),
+      partialize: (s) => ({
+        selectedRunId: s.selectedRunId,
+        timeframe: s.timeframe,
+        selectedSessionId: s.selectedSessionId,
+        landingTab: s.landingTab,
+      }),
     },
   ),
 )

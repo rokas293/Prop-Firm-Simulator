@@ -7,6 +7,8 @@ beforeEach(() => {
     timeframe: '15min',
     pendingDayJump: null,
     compareRunIds: null,
+    selectedSessionId: null,
+    landingTab: 'runs',
   })
 })
 
@@ -45,6 +47,28 @@ describe('day jump lifecycle', () => {
   })
 })
 
+describe('selectSession', () => {
+  it('sets the selected session id and clears any selected run', () => {
+    useUiStore.getState().selectRun('run-1')
+    useUiStore.getState().selectSession('sess-1')
+    expect(useUiStore.getState().selectedSessionId).toBe('sess-1')
+    expect(useUiStore.getState().selectedRunId).toBeNull()
+  })
+
+  it('selectRun clears any selected session', () => {
+    useUiStore.getState().selectSession('sess-1')
+    useUiStore.getState().selectRun('run-1')
+    expect(useUiStore.getState().selectedRunId).toBe('run-1')
+    expect(useUiStore.getState().selectedSessionId).toBeNull()
+  })
+
+  it('deselecting a run (selectRun(null)) does not disturb an unrelated session selection', () => {
+    useUiStore.getState().selectSession('sess-1')
+    useUiStore.getState().selectRun(null)
+    expect(useUiStore.getState().selectedSessionId).toBe('sess-1')
+  })
+})
+
 describe('setTimeframe / setCompareRunIds', () => {
   it('setTimeframe updates the timeframe', () => {
     useUiStore.getState().setTimeframe('1h')
@@ -60,7 +84,7 @@ describe('setTimeframe / setCompareRunIds', () => {
 })
 
 describe('persistence partialize', () => {
-  it('persists only selectedRunId and timeframe, not the ephemeral day-jump/compare fields', () => {
+  it('persists selectedRunId/timeframe/selectedSessionId/landingTab, not the ephemeral day-jump/compare fields', () => {
     // Reaches into the store's own persist config the same way the store is
     // actually constructed with (zustand exposes it on .persist), so this
     // fails if a future edit widens partialize to leak ephemeral state into
@@ -71,6 +95,11 @@ describe('persistence partialize', () => {
     useUiStore.getState().setTimeframe('5min')
     useUiStore.getState().jumpToTradingDay('2024-01-01')
     useUiStore.getState().setCompareRunIds(['run-a', 'run-b'])
-    expect(partialize(useUiStore.getState())).toEqual({ selectedRunId: 'run-1', timeframe: '5min' })
+    expect(partialize(useUiStore.getState())).toEqual({
+      selectedRunId: 'run-1',
+      timeframe: '5min',
+      selectedSessionId: null,
+      landingTab: 'runs',
+    })
   })
 })

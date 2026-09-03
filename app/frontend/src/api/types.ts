@@ -125,6 +125,47 @@ export interface SessionWindow {
   fair_value_time: number | null
 }
 
+// FXR_SPEC.md section 2: manual-backtest sessions (F1). "BacktestSession"
+// (not "Session") throughout, matching the backend's own naming choice to
+// stay unambiguous next to SessionWindow above (a trading-session window,
+// a completely different concept).
+export interface SimAccount {
+  id: string
+  starting_balance: number
+  balance: number
+  currency: string
+  risk_per_trade_percent: number | null
+  risk_per_trade_usd: number | null
+  default_contracts: number
+  commission_per_contract: number
+}
+
+export interface BacktestSessionSummary {
+  id: string
+  instrument: string
+  base_timeframe: string
+  start_time: number
+  created_at: string
+  updated_at: string
+  cursor_time: number
+  status: 'active' | 'archived'
+  account: SimAccount
+}
+
+export type BacktestSessionDetail = BacktestSessionSummary
+
+export interface CreateSessionRequest {
+  instrument: string
+  base_timeframe: string
+  start_time?: number | null
+  random_start?: boolean
+  starting_balance: number
+  risk_per_trade_percent?: number | null
+  risk_per_trade_usd?: number | null
+  default_contracts: number
+  commission_per_contract: number
+}
+
 export interface IndicatorPoint {
   time: number
   value: number

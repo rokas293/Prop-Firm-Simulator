@@ -45,6 +45,16 @@ def _to_bar(ts: pd.Timestamp, row: pd.Series) -> models.Bar:
     )
 
 
+def get_instrument_range(instrument: str) -> tuple[int, int]:
+    """(min, max) unix-second timestamps of the instrument's loaded bars --
+    used by bt_session_service.py to validate a chosen session start_time
+    and to pick a Random-start point, without either of those needing to
+    know anything about the loader/cache themselves.
+    """
+    df = _load_raw(instrument)
+    return int(df.index[0].value // 1_000_000_000), int(df.index[-1].value // 1_000_000_000)
+
+
 def get_bars(instrument: str, tf: str, ts_from: int, ts_to: int, max_points: int = 2000) -> List[models.Bar]:
     df = _load_raw(instrument)
     start = pd.Timestamp(ts_from, unit="s", tz="UTC")

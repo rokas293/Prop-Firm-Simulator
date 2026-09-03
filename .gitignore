@@ -10,6 +10,7 @@ dist/
 .ruff_cache/
 reports/
 runs/
+bt_sessions/
 node_modules/
 app/frontend/dist/
 *.tsbuildinfo
