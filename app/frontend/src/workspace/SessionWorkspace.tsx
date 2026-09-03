@@ -1,17 +1,37 @@
-// FXR_SPEC.md phase F1: a lean chart-only workspace for a manual-replay
+// FXR_SPEC.md phases F1/F2: a lean chart-only workspace for a manual-replay
 // session -- deliberately NOT the full Workspace.tsx/ChartPanel.tsx (those
 // are dockable-panel/trade-review machinery built around a COMPLETED
 // automated-backtest run's fixed trades/equity, which doesn't exist here).
 // Renders ChartKL directly in permanent replay mode, restores the cursor
-// saved on the session, and PATCHes it back to the backend as the user
-// steps -- no trading yet (that lands in F2).
+// saved on the session, PATCHes it back to the backend as the user steps
+// (F1), and (F2) drives the sim broker: one-click Buy/Sell/Close against
+// chart/simBroker.ts's pure fill logic, journaling each closed trade.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
+import { runningTotals } from '../chart/replay'
+import {
+  closePosition,
+  getContractSpec,
+  marketFillPrice,
+  openPositionAsTradeRecord,
+  riskUsdAtEntry,
+  type OpenPosition,
+  type Side,
+} from '../chart/simBroker'
 import ReplayControls from '../panels/ReplayControls'
-import { useBtSession, useBars, useIndicators, useSessions, useUpdateBtSessionCursor } from '../api/hooks'
+import PositionTicket from '../panels/PositionTicket'
+import {
+  useBtSession,
+  useBtSessionTrades,
+  useBars,
+  useCreateManualTrade,
+  useIndicators,
+  useSessions,
+  useUpdateBtSessionCursor,
+} from '../api/hooks'
 import { useIndicatorStore } from '../state/indicatorStore'
-import type { Bar, IndicatorName } from '../api/types'
+import type { Bar, IndicatorName, TradeRecord } from '../api/types'
 import EmptyState from '../components/EmptyState'
 
 // Sized so the fetched window still resolves at the session's own
@@ -49,7 +69,18 @@ export function resyncCursorIndex(bars: Bar[], targetTime: number | null): numbe
 
 export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const { data: session, isLoading, isError, error } = useBtSession(sessionId)
+  const { data: manualTrades } = useBtSessionTrades(sessionId)
   const updateCursor = useUpdateBtSessionCursor()
+  const createTrade = useCreateManualTrade()
+
+  // FXR_SPEC.md phase F2: the sim broker's single open position. Local
+  // state only, not persisted -- F2's own verify checklist doesn't require
+  // an open position to survive a reload (unlike F1's cursor/account, which
+  // explicitly does), and FXR_SPEC's "restores... open positions" is listed
+  // among F4's fuller order-management scope, not F2's MVP. Documented
+  // limitation, not an oversight: reloading mid-trade currently loses the
+  // open position (the trade simply never got journaled).
+  const [position, setPosition] = useState<OpenPosition | null>(null)
 
   const [windowAnchor, setWindowAnchor] = useState<number | null>(null)
   const [cursorIndex, setCursorIndexState] = useState(0)
@@ -74,6 +105,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     cursorTimeRef.current = session.cursor_time
     setWindowAnchor(session.cursor_time)
     setIsPlaying(false)
+    setPosition(null)
   }, [session])
 
   const barsWindow = useMemo(
@@ -179,6 +211,86 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [indicatorData],
   )
 
+  // FXR_SPEC.md section 3/6: market orders fill at the current cursor bar's
+  // close (chart/simBroker.ts's documented convention) -- entry and exit
+  // both read `bars[cursorIndex]` only, never a bar beyond it.
+  const enterPosition = (side: Side) => {
+    if (!session || !bars || !bars[cursorIndex] || position) return
+    const entryBar = bars[cursorIndex]
+    setPosition({
+      side,
+      contracts: session.account.default_contracts,
+      entryPrice: marketFillPrice(entryBar),
+      entryTime: entryBar.time,
+      entryIndex: cursorIndex,
+      riskUsd: riskUsdAtEntry(
+        session.account.balance,
+        session.account.risk_per_trade_percent,
+        session.account.risk_per_trade_usd,
+      ),
+    })
+  }
+
+  const handleClosePosition = () => {
+    if (!session || !bars || !position) return
+    const spec = getContractSpec(session.instrument)
+    const result = closePosition(bars, position, cursorIndex, spec, session.account.commission_per_contract)
+    createTrade.mutate(
+      {
+        sessionId: session.id,
+        body: {
+          entry_time: result.entryTime,
+          exit_time: result.exitTime,
+          instrument: session.instrument,
+          side: result.side,
+          leg: null,
+          session: null,
+          trading_day: null,
+          size_contracts: result.contracts,
+          entry_price: result.entryPrice,
+          exit_price: result.exitPrice,
+          sl_price: null,
+          tp_price: null,
+          sl_points: null,
+          tp_points: null,
+          rr_planned: null,
+          exit_type: 'manual_close',
+          pnl_usd: result.pnlUsd,
+          r_multiple: result.rMultiple,
+          commission_usd: result.commissionUsd,
+          mae_points: result.maePoints,
+          mfe_points: result.mfePoints,
+          mae_r: result.maeR,
+          mfe_r: result.mfeR,
+          bars_held: result.barsHeld,
+        },
+      },
+      { onSuccess: () => setPosition(null) },
+    )
+  }
+
+  // The open position rendered through the SAME TradeRecord shape a closed
+  // trade uses (see openPositionAsTradeRecord's own comment) -- zero
+  // chart-side changes needed to show it with the existing entry marker/
+  // trade-overlay conventions.
+  const openPositionRecord: TradeRecord | null =
+    position && session && bars && bars[cursorIndex]
+      ? openPositionAsTradeRecord({
+          position,
+          instrument: session.instrument,
+          cursorIndex,
+          markPrice: bars[cursorIndex].close,
+          cursorTime: bars[cursorIndex].time,
+        })
+      : null
+
+  const chartTrades: TradeRecord[] = useMemo(
+    () => [...(manualTrades ?? []), ...(openPositionRecord ? [openPositionRecord] : [])],
+    [manualTrades, openPositionRecord],
+  )
+
+  const replayTotals = useMemo(() => runningTotals(manualTrades ?? [], cursorTime), [manualTrades, cursorTime])
+
   const handleCandleBarClick = (bar: { timestamp: number }) => {
     if (!pickingReplayStart || !bars) return
     const clickedTimeSec = bar.timestamp / 1000
@@ -209,9 +321,28 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         onToggleFollowLatestBar={() => setFollowLatestBar((v) => !v)}
         pickingReplayStart={pickingReplayStart}
         onTogglePickingReplayStart={() => setPickingReplayStart((v) => !v)}
-        runningPnl={0}
-        runningR={0}
+        runningPnl={replayTotals.pnlUsd}
+        runningR={replayTotals.r}
         equity={null}
+      />
+      <PositionTicket
+        disabled={!bars || bars.length === 0}
+        position={
+          position && openPositionRecord
+            ? {
+                instrument: session.instrument,
+                side: position.side,
+                contracts: position.contracts,
+                entryPrice: position.entryPrice,
+                pnlUsd: openPositionRecord.pnl_usd,
+                rMultiple: openPositionRecord.r_multiple,
+              }
+            : null
+        }
+        onBuy={() => enterPosition('long')}
+        onSell={() => enterPosition('short')}
+        onClose={handleClosePosition}
+        closing={createTrade.isPending}
       />
       <div className="min-h-0 flex-1">
         <ChartKL
@@ -219,8 +350,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           timeframe={session.base_timeframe}
           from={barsWindow?.from ?? null}
           to={barsWindow?.to ?? null}
-          trades={[]}
-          selectedTrade={null}
+          trades={chartTrades}
+          selectedTrade={openPositionRecord}
           indicators={indicators}
           sessionBands={sessionBands}
           prefs={indicatorPrefs}

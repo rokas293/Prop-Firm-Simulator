@@ -50,3 +50,21 @@ def archive_session(session_id: str) -> models.BacktestSessionDetail:
         return bt_session_service.archive_session(session_id)
     except bt_session_service.SessionNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/{session_id}/trades", response_model=List[models.ManualTrade])
+def list_trades(session_id: str) -> List[models.ManualTrade]:
+    try:
+        return bt_session_service.list_trades(session_id)
+    except bt_session_service.SessionNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{session_id}/trades", response_model=models.RecordTradeResponse)
+def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> models.RecordTradeResponse:
+    try:
+        return bt_session_service.record_trade(session_id, req)
+    except bt_session_service.SessionNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except bt_session_service.InvalidSessionRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))

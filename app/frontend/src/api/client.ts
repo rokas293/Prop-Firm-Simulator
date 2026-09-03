@@ -3,10 +3,13 @@ import type {
   Bar,
   BacktestSessionDetail,
   BacktestSessionSummary,
+  CreateManualTradeRequest,
   CreateSessionRequest,
   DailyRiskPoint,
   EquityPoint,
   IndicatorResponse,
+  ManualTrade,
+  RecordTradeResponse,
   RunMeta,
   RunSummary,
   SessionWindow,
@@ -106,4 +109,7 @@ export const api = {
       cursor_time: cursorTime,
     }),
   archiveBtSession: (sessionId: string) => postRequest<BacktestSessionDetail>(`/bt-sessions/${sessionId}/archive`),
+  getBtSessionTrades: (sessionId: string) => request<ManualTrade[]>(`/bt-sessions/${sessionId}/trades`),
+  createManualTrade: (sessionId: string, body: CreateManualTradeRequest) =>
+    sendJson<RecordTradeResponse, CreateManualTradeRequest>(`/bt-sessions/${sessionId}/trades`, 'POST', body),
 }

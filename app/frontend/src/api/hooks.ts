@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
 import { fetchBarsInWorker } from '../workers/barsWorkerClient'
 import type { StatsScope, TradeQueryParams } from '../state/tradeStore'
-import type { CreateSessionRequest, IndicatorName } from './types'
+import type { CreateManualTradeRequest, CreateSessionRequest, IndicatorName } from './types'
 
 export type { StatsScope }
 
@@ -204,6 +204,33 @@ export function useArchiveBtSession() {
   return useMutation({
     mutationFn: (sessionId: string) => api.archiveBtSession(sessionId),
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
+    },
+  })
+}
+
+// FXR_SPEC.md phase F2: journaled manual trades. The session's own trades,
+// not to be confused with useTrades (an automated-backtest run's trades).
+export function useBtSessionTrades(sessionId: string | null) {
+  return useQuery({
+    queryKey: ['bt-session-trades', sessionId],
+    queryFn: () => api.getBtSessionTrades(sessionId as string),
+    enabled: sessionId !== null,
+  })
+}
+
+// Closing a position: journals the trade AND applies its net PnL to the
+// account balance server-side in one round trip (see record_trade in
+// bt_session_service.py) -- refreshes both the trades list and the session
+// itself (for the new balance), rather than trusting a locally-guessed one.
+export function useCreateManualTrade() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sessionId, body }: { sessionId: string; body: CreateManualTradeRequest }) =>
+      api.createManualTrade(sessionId, body),
+    onSuccess: (result, { sessionId }) => {
+      queryClient.setQueryData(['bt-session', sessionId], result.session)
+      void queryClient.invalidateQueries({ queryKey: ['bt-session-trades', sessionId] })
       void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
     },
   })

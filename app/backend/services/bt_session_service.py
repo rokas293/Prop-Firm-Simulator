@@ -124,6 +124,21 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
     )
 
 
+def _trades_path(session_id: str) -> Path:
+    return _session_dir(session_id) / "trades.json"
+
+
+def _read_trades(session_id: str) -> list:
+    path = _trades_path(session_id)
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_trades(session_id: str, trades: list) -> None:
+    _trades_path(session_id).write_text(json.dumps(trades, indent=2), encoding="utf-8")
+
+
 def _write(session_id: str, data: dict) -> None:
     session_dir = _session_dir(session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -212,3 +227,40 @@ def archive_session(session_id: str) -> models.BacktestSessionDetail:
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)
+
+
+def list_trades(session_id: str) -> List[models.ManualTrade]:
+    _read(session_id)  # raises SessionNotFound if the session itself doesn't exist
+    return [models.ManualTrade.model_validate(t) for t in _read_trades(session_id)]
+
+
+def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> models.RecordTradeResponse:
+    """Journals a closed manual trade and applies its net PnL to the
+    session's account balance, atomically (one write to each file, both
+    happening here so they can never drift apart). The frontend sim broker
+    already computed every number deterministically from (bars, orders)
+    (FXR_SPEC.md section 6) -- this endpoint is durable storage, not a
+    second source of truth, so it does not recompute pnl/r/mae/mfe itself.
+    """
+    data = _read(session_id)
+    if req.instrument != data["instrument"]:
+        raise InvalidSessionRequest(
+            f"trade instrument {req.instrument!r} does not match session instrument {data['instrument']!r}"
+        )
+    if req.side not in ("long", "short"):
+        raise InvalidSessionRequest(f"side must be 'long' or 'short', got {req.side!r}")
+
+    existing = _read_trades(session_id)
+    trade = models.ManualTrade(
+        trade_id=len(existing) + 1,
+        session_id=session_id,
+        **req.model_dump(),
+    )
+    existing.append(trade.model_dump())
+    _write_trades(session_id, existing)
+
+    data["account"]["balance"] += req.pnl_usd
+    data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    _write(session_id, data)
+
+    return models.RecordTradeResponse(trade=trade, session=models.BacktestSessionDetail.model_validate(data))

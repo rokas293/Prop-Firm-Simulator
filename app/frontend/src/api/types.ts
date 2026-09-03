@@ -166,6 +166,48 @@ export interface CreateSessionRequest {
   commission_per_contract: number
 }
 
+// FXR_SPEC.md section 2/6, phase F2: a journaled manual trade -- the exact
+// same field set as TradeRecord above (schema-compatible per spec), plus
+// session_id/source. ManualTrade structurally satisfies TradeRecord (a
+// superset of its fields), so it can be passed anywhere a TradeRecord[] is
+// expected (ChartKL's `trades` prop) with no adapter.
+export interface ManualTrade extends TradeRecord {
+  session_id: string
+  source: 'manual'
+}
+
+export interface CreateManualTradeRequest {
+  entry_time: number
+  exit_time: number
+  instrument: string
+  side: 'long' | 'short'
+  leg: string | null
+  session: string | null
+  trading_day: string | null
+  size_contracts: number
+  entry_price: number
+  exit_price: number
+  sl_price: number | null
+  tp_price: number | null
+  sl_points: number | null
+  tp_points: number | null
+  rr_planned: number | null
+  exit_type: string
+  pnl_usd: number
+  r_multiple: number | null
+  commission_usd: number
+  mae_points: number
+  mfe_points: number
+  mae_r: number | null
+  mfe_r: number | null
+  bars_held: number
+}
+
+export interface RecordTradeResponse {
+  trade: ManualTrade
+  session: BacktestSessionDetail
+}
+
 export interface IndicatorPoint {
   time: number
   value: number

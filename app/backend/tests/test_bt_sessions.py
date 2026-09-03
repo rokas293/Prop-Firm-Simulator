@@ -216,3 +216,123 @@ def test_archive_session(bt_client):
 def test_archive_unknown_session_404(bt_client):
     r = bt_client.post("/api/bt-sessions/does-not-exist/archive")
     assert r.status_code == 404
+
+
+# --- FXR_SPEC.md phase F2: manual trades journaled from the sim broker.
+# The frontend computes fills/pnl/r deterministically (chart/simBroker.ts's
+# own mandatory test covers THAT); these tests cover the backend's job --
+# durable storage plus the account-balance update -- not fill math.
+
+def _manual_trade_body(**overrides):
+    body = {
+        "entry_time": _valid_start_time(),
+        "exit_time": _valid_start_time() + 600,
+        "instrument": "MES",
+        "side": "long",
+        "size_contracts": 1,
+        "entry_price": 5000.0,
+        "exit_price": 5010.0,
+        "exit_type": "manual_close",
+        "pnl_usd": 48.7,  # (5010-5000)*5*1 - commission(1.3)
+        "r_multiple": 0.0974,
+        "commission_usd": 1.3,
+        "mae_points": 1.0,
+        "mfe_points": 10.0,
+        "mae_r": 0.02,
+        "mfe_r": 0.2,
+        "bars_held": 3,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_record_trade_journals_and_returns_trade_plus_session(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body())
+    assert r.status_code == 200
+    data = r.json()
+    assert data["trade"]["trade_id"] == 1
+    assert data["trade"]["session_id"] == session["id"]
+    assert data["trade"]["source"] == "manual"
+    assert data["trade"]["pnl_usd"] == 48.7
+    assert data["session"]["account"]["balance"] == pytest.approx(50000.0 + 48.7)
+
+
+def test_record_trade_applies_net_pnl_to_balance_cumulatively(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client, starting_balance=10000.0).json()
+    bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body(pnl_usd=100.0))
+    r2 = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body(pnl_usd=-40.0))
+    assert r2.json()["session"]["account"]["balance"] == pytest.approx(10000.0 + 100.0 - 40.0)
+
+    fetched = bt_client.get(f"/api/bt-sessions/{session['id']}").json()
+    assert fetched["account"]["balance"] == pytest.approx(10060.0)
+
+
+def test_record_trade_assigns_incrementing_trade_ids_per_session(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r1 = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body())
+    r2 = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body())
+    assert r1.json()["trade"]["trade_id"] == 1
+    assert r2.json()["trade"]["trade_id"] == 2
+
+
+def test_record_trade_rejects_instrument_mismatch(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client, instrument="MES").json()
+    r = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body(instrument="MNQ"))
+    assert r.status_code == 400
+
+
+def test_record_trade_rejects_bad_side(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body(side="up"))
+    assert r.status_code == 400
+
+
+def test_record_trade_unknown_session_404(bt_client):
+    r = bt_client.post("/api/bt-sessions/does-not-exist/trades", json=_manual_trade_body())
+    assert r.status_code == 404
+
+
+def test_list_trades_empty_for_a_fresh_session(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r = bt_client.get(f"/api/bt-sessions/{session['id']}/trades")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_list_trades_returns_them_in_recorded_order(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body(pnl_usd=10.0))
+    bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body(pnl_usd=-5.0))
+    r = bt_client.get(f"/api/bt-sessions/{session['id']}/trades")
+    trades = r.json()
+    assert [t["trade_id"] for t in trades] == [1, 2]
+    assert [t["pnl_usd"] for t in trades] == [10.0, -5.0]
+
+
+def test_list_trades_unknown_session_404(bt_client):
+    r = bt_client.get("/api/bt-sessions/does-not-exist/trades")
+    assert r.status_code == 404
+
+
+def test_record_trade_survives_reload(bt_client):
+    # The F2 counterpart to F1's exact-cursor-resume test: a journaled
+    # trade and the balance it produced must both still be there on a
+    # fresh GET, not just in the POST's own response.
+    _skip_if_no_mes_data()
+    session = _create(bt_client, starting_balance=50000.0).json()
+    bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body(pnl_usd=250.0))
+
+    reloaded_session = bt_client.get(f"/api/bt-sessions/{session['id']}").json()
+    assert reloaded_session["account"]["balance"] == pytest.approx(50250.0)
+
+    reloaded_trades = bt_client.get(f"/api/bt-sessions/{session['id']}/trades").json()
+    assert len(reloaded_trades) == 1
+    assert reloaded_trades[0]["pnl_usd"] == 250.0

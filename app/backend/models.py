@@ -200,3 +200,46 @@ class CreateSessionRequest(BaseModel):
 
 class UpdateCursorRequest(BaseModel):
     cursor_time: int
+
+
+# --- FXR_SPEC.md section 2/6, phase F2: manual trades journaled from the
+# sim broker. Deliberately reuses TradeRecord's exact field set (not a
+# fresh shape) -- "keep manual trades schema-compatible with the existing
+# trade-record model" is section 2's explicit instruction, so Dashboard/
+# Compass/Monte-Carlo/MAE-MFE repoint in F6 with minimal change.
+
+class CreateManualTradeRequest(BaseModel):
+    entry_time: int
+    exit_time: int
+    instrument: str
+    side: str
+    leg: Optional[str] = None
+    session: Optional[str] = None
+    trading_day: Optional[str] = None
+    size_contracts: int
+    entry_price: float
+    exit_price: float
+    sl_price: Optional[float] = None
+    tp_price: Optional[float] = None
+    sl_points: Optional[float] = None
+    tp_points: Optional[float] = None
+    rr_planned: Optional[float] = None
+    exit_type: str
+    pnl_usd: float
+    r_multiple: Optional[float] = None
+    commission_usd: float
+    mae_points: float
+    mfe_points: float
+    mae_r: Optional[float] = None
+    mfe_r: Optional[float] = None
+    bars_held: int
+
+
+class ManualTrade(TradeRecord):
+    session_id: str
+    source: str = "manual"
+
+
+class RecordTradeResponse(BaseModel):
+    trade: ManualTrade
+    session: BacktestSessionDetail
