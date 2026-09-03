@@ -46,6 +46,7 @@ import { useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '.
 import { useIndicatorStore, type ColorableIndicatorKey, type IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
+import { computeMeasure, formatDuration, type MeasurePoint, type MeasureResult } from '../measure'
 import LoadingBar from '../../components/LoadingBar'
 import Skeleton from '../../components/Skeleton'
 import ContextMenu from '../../components/ContextMenu'
@@ -357,6 +358,21 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const colors = useThemeStore((s) => s.colors)
   const base = useThemeBase()
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
+  // REPLICA_AUDIT.md Top 10 #7 -- Alt+drag measure, TradingView's own
+  // ephemeral ruler gesture: no arming step (unlike the pre-existing
+  // `klMeasure` drawing tool, which stays on the chart as a real overlay
+  // once placed -- this leaves nothing behind). `anchor` is screen pixels +
+  // the resolved time/price at mousedown; `current` is the live pixel
+  // position while dragging, used only to draw the connecting line (the
+  // actual measurement re-derives its own time/price from the SAME
+  // convertFromPixel call onCrosshairChange already makes for the bracket
+  // tooltip above, not from raw pixel deltas).
+  const [measureDrag, setMeasureDrag] = useState<{
+    anchor: { x: number; y: number }
+    current: { x: number; y: number }
+    result: MeasureResult
+  } | null>(null)
+  const measureAnchorRef = useRef<MeasurePoint | null>(null)
   // Right-click menus (REPLICA_ROADMAP.md Batch 1). `contextMenu` covers
   // both the empty-chart-area menu and a specific drawing's menu; `styleEditor`
   // is the color/width popover "Edit style" opens (a separate small state
@@ -978,6 +994,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         setTooltip(null)
         return
       }
+      if (measureAnchorRef.current) {
+        const current: MeasurePoint = { time: point.timestamp / 1000, price: point.value }
+        setMeasureDrag((prev) =>
+          prev ? { anchor: prev.anchor, current: { x: crosshair.x!, y: crosshair.y! }, result: computeMeasure(measureAnchorRef.current!, current, loadedBarsRef.current) } : prev,
+        )
+      }
       const cursor = cursorTimeRef.current
       const views = filterTradesForReplay(tradesRef.current, cursor)
       const trade = findBracketAt(views, point.timestamp / 1000, point.value)
@@ -1094,6 +1116,46 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     }
     container?.addEventListener('mousemove', handlePointerMove)
 
+    // Alt+drag measure (REPLICA_AUDIT.md Top 10 #7) -- TradingView's own
+    // ephemeral ruler gesture, no arming step (unlike the pre-existing
+    // `klMeasure` drawing tool below, which stays on the chart as a real
+    // overlay once placed). Registered with capture: true so a qualifying
+    // press never reaches klinecharts' OWN mousedown handling at all --
+    // klinecharts starts its pan/zoom drag from that same event, and
+    // there's no public API to suppress just that for one press without
+    // disabling pan for every other one. Confirmed live: with the initial
+    // mousedown never seen by klinecharts, it treats the subsequent
+    // mousemoves as plain hover (same as with no button held), so
+    // onCrosshairChange below keeps firing normally through the whole drag
+    // instead of klinecharts entering its own pan state.
+    const handleMeasureMouseDown = (e: MouseEvent) => {
+      if (!e.altKey || e.button !== 0 || !container) return
+      const rect = container.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      const [point] = chart.convertFromPixel([{ x, y }], { paneId: 'candle_pane' }) as Array<{
+        timestamp?: number
+        value?: number
+      }>
+      if (point?.value === undefined || point?.timestamp === undefined) return
+      e.preventDefault()
+      e.stopPropagation()
+      const anchor: MeasurePoint = { time: point.timestamp / 1000, price: point.value }
+      measureAnchorRef.current = anchor
+      setMeasureDrag({ anchor: { x, y }, current: { x, y }, result: computeMeasure(anchor, anchor, loadedBarsRef.current) })
+    }
+    container?.addEventListener('mousedown', handleMeasureMouseDown, true)
+
+    // Window, not container -- a real drag routinely ends with the pointer
+    // outside the chart pane (or even outside the browser window), and a
+    // mouseup there must still clear the readout.
+    const handleMeasureMouseUp = () => {
+      if (!measureAnchorRef.current) return
+      measureAnchorRef.current = null
+      setMeasureDrag(null)
+    }
+    window.addEventListener('mouseup', handleMeasureMouseUp)
+
     // Axis interaction (REPLICA_ROADMAP.md Batch 2): drag-to-scale on both
     // axes, and double-click the Y axis to auto-reset, are klinecharts'
     // OWN native behavior (confirmed against the v10.0.3 source --
@@ -1145,6 +1207,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       chart.unsubscribeAction('onCandleBarClick', handleCandleBarClick)
       container?.removeEventListener('contextmenu', handleContextMenu)
       container?.removeEventListener('mousemove', handlePointerMove)
+      container?.removeEventListener('mousedown', handleMeasureMouseDown, true)
+      window.removeEventListener('mouseup', handleMeasureMouseUp)
       xAxisDom?.removeEventListener('click', handleXAxisClick)
       dispose(chart)
       chartRef.current = null
@@ -1509,6 +1573,46 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         >
           {tooltip.text}
         </div>
+      )}
+      {/* Alt+drag measure readout (REPLICA_AUDIT.md Top 10 #7) -- same
+          floating-box shell/shadow as the bracket tooltip above for one
+          consistent "on-demand chrome" look, plus a thin dashed guide line
+          so it's clear WHERE the two points being compared are. Both are
+          plain DOM/SVG on top of the canvas, not a klinecharts overlay --
+          nothing is added to the chart's data model, so there's nothing to
+          clean up beyond clearing this state on mouseup. */}
+      {measureDrag && (
+        <>
+          <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible">
+            <line
+              x1={measureDrag.anchor.x}
+              y1={measureDrag.anchor.y}
+              x2={measureDrag.current.x}
+              y2={measureDrag.current.y}
+              stroke={base.textMuted}
+              strokeWidth={1}
+              strokeDasharray="4 3"
+            />
+            <circle cx={measureDrag.anchor.x} cy={measureDrag.anchor.y} r={3} fill={base.textMuted} />
+            <circle cx={measureDrag.current.x} cy={measureDrag.current.y} r={3} fill={base.textMuted} />
+          </svg>
+          <div
+            className="pointer-events-none absolute z-20 whitespace-nowrap rounded border border-border bg-surface/95 px-2 py-2 shadow-lg"
+            style={{
+              left: Math.min(measureDrag.current.x + 14, (containerRef.current?.clientWidth ?? 0) - 160),
+              top: Math.max(measureDrag.current.y - 14, 0),
+            }}
+          >
+            <span className={`text-xs font-medium tabular-nums ${measureDrag.result.points >= 0 ? 'text-positive' : 'text-negative'}`}>
+              {measureDrag.result.points >= 0 ? '+' : ''}
+              {measureDrag.result.points.toFixed(2)} ({measureDrag.result.percent >= 0 ? '+' : ''}
+              {measureDrag.result.percent.toFixed(2)}%)
+            </span>
+            <div className="mt-0.5 text-[11px] tabular-nums text-text-muted">
+              {measureDrag.result.bars} bars &middot; {formatDuration(measureDrag.result.seconds)}
+            </div>
+          </div>
+        </>
       )}
       {contextMenu?.kind === 'empty' && (
         <ContextMenu

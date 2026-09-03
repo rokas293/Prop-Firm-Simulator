@@ -125,6 +125,20 @@ export const SHORTCUTS: ShortcutDef[] = [
     description: 'Arm "click a bar to set the replay start point" (replay must be active)',
     category: 'Chart',
   },
+  {
+    // Display-only (REPLICA_AUDIT.md Top 10 #7): this is a mouse gesture
+    // checked via MouseEvent.altKey on the chart's own mousedown listener
+    // (ChartKL.tsx), not a keydown combo any handler matches through
+    // isShortcut() -- listed here anyway so it shows up in the "?" overlay
+    // and Settings' Shortcuts section, the same "a working interaction that
+    // isn't discoverable might as well not exist" reasoning DRAWING_SHORTCUTS
+    // above already applies to real keydown-dispatched shortcuts.
+    id: 'measureDrag',
+    combos: [{ key: 'Alt' }],
+    label: 'Alt + drag',
+    description: 'Hold and drag on the chart for an instant price/%/bars/time readout',
+    category: 'Chart',
+  },
   ...TIMEFRAME_SHORTCUTS,
   ...PANEL_TOGGLE_SHORTCUTS,
   ...DRAWING_TOOL_SHORTCUTS,
