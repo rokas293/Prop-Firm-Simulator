@@ -1,9 +1,10 @@
 // FXR_SPEC.md phase F2: the sim broker's compact position panel -- one-click
-// Buy/Sell/Close plus the live open PnL/R readout. Buy/Sell/Close are kept
-// in the app's ordinary neutral button style (not colored green/red) per
-// DESIGN_LANGUAGE.md section 2: color is reserved for DATA (the PnL figure
-// itself, which IS colored below), not for actions -- a deliberate reading
-// of the spec even though colored buy/sell buttons are the trading-app norm.
+// Buy/Sell/Close plus the live open PnL/R readout. Buy/Sell are the one
+// documented exception to DESIGN_LANGUAGE.md section 2's "color is data,
+// not actions" rule (see that file's own "Trading-action exception" bullet)
+// -- muted green/red via the same low-opacity badge recipe already used
+// for DashboardPanel's accent filter chip (`bg-{token}/15 text-{token}`),
+// never a solid/neon fill. Close and everything else here stays neutral.
 import { fmtUsd } from '../format'
 
 export interface PositionSummary {
@@ -30,14 +31,14 @@ export default function PositionTicket({ disabled, position, onBuy, onSell, onCl
       <button
         onClick={onBuy}
         disabled={disabled || position !== null}
-        className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+        className="rounded bg-positive/15 px-3 py-1 text-positive hover:bg-positive/25 disabled:opacity-40"
       >
         Buy
       </button>
       <button
         onClick={onSell}
         disabled={disabled || position !== null}
-        className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+        className="rounded bg-negative/15 px-3 py-1 text-negative hover:bg-negative/25 disabled:opacity-40"
       >
         Sell
       </button>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeWindow, resyncCursorIndex } from './SessionWorkspace'
+import { computeWindow, defaultFitWindow, resyncCursorIndex } from './SessionWorkspace'
 import type { Bar } from '../api/types'
 
 function bar(time: number): Bar {
@@ -25,6 +25,29 @@ describe('computeWindow', () => {
     const w = computeWindow(1_000_000, '5min')
     const wUnknown = computeWindow(1_000_000, 'bogus')
     expect(wUnknown).toEqual(w)
+  })
+})
+
+describe('defaultFitWindow', () => {
+  it('anchors on the given time, weighted toward the future (same shape as computeWindow)', () => {
+    const w = defaultFitWindow(1_000_000, '5min')
+    expect(w.from).toBeLessThan(1_000_000)
+    expect(w.to).toBeGreaterThan(1_000_000)
+    expect(w.to - 1_000_000).toBeGreaterThan(1_000_000 - w.from)
+  })
+
+  it('is much narrower than computeWindow -- the whole point of the split', () => {
+    const fit = defaultFitWindow(1_000_000, '5min')
+    const fetch = computeWindow(1_000_000, '5min')
+    const fitSpan = fit.to - fit.from
+    const fetchSpan = fetch.to - fetch.from
+    expect(fitSpan).toBeLessThan(fetchSpan / 10)
+  })
+
+  it('scales the span with the timeframe bar size', () => {
+    const w1min = defaultFitWindow(1_000_000, '1min')
+    const w1h = defaultFitWindow(1_000_000, '1h')
+    expect(w1h.to - w1h.from).toBeGreaterThan(w1min.to - w1min.from)
   })
 })
 

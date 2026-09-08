@@ -7,7 +7,7 @@
 // (F1), and (F2) drives the sim broker: one-click Buy/Sell/Close against
 // chart/simBroker.ts's pure fill logic, journaling each closed trade.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import ChartKL from '../chart/kl/ChartKL'
+import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { runningTotals } from '../chart/replay'
 import {
@@ -53,6 +53,23 @@ export function computeWindow(anchorTime: number, timeframe: string) {
   return { from: anchorTime - totalSpanSeconds * 0.3, to: anchorTime + totalSpanSeconds * 0.7 }
 }
 
+// The CAMERA's default view is deliberately much tighter than the FETCH
+// window above -- same split ChartPanel.tsx already makes between "how
+// much to fetch" (a wide margin, so panning/stepping rarely needs a
+// refetch -- see withMargin's own comment) and "what fitRange shows by
+// default" (ChartPanel calls fitTrade/fitRange to just the relevant
+// range, not the whole fetched window). Without this split, the camera
+// showed the full ~10-day fetch window at once, so a single trade
+// (typically a handful of bars) was invisible without the user manually
+// zooming in first.
+const DEFAULT_FIT_BARS = 120
+
+export function defaultFitWindow(anchorTime: number, timeframe: string) {
+  const barSeconds = BASE_TF_SECONDS[timeframe] ?? 300
+  const totalSpanSeconds = barSeconds * DEFAULT_FIT_BARS
+  return { from: anchorTime - totalSpanSeconds * 0.3, to: anchorTime + totalSpanSeconds * 0.7 }
+}
+
 export function resyncCursorIndex(bars: Bar[], targetTime: number | null): number {
   if (targetTime === null || bars.length === 0) return 0
   const exact = bars.findIndex((b) => b.time === targetTime)
@@ -95,6 +112,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // INDEX from before is meaningless; the TIME is what's real).
   const cursorTimeRef = useRef<number | null>(null)
   const loadedSessionIdRef = useRef<string | null>(null)
+  const klChartRef = useRef<ChartKLHandle>(null)
 
   // New session loaded (first mount, or switching sessions): anchor the
   // window on its saved cursor, not its start_time -- resuming should show
@@ -123,11 +141,60 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   // Every time a (possibly re-anchored) bars array lands, resolve the
   // logical cursor time back to an index into THIS array -- covers both
-  // the initial resume and any later window shift the same way.
+  // the initial resume and any later window shift the same way. This is
+  // React's documented "adjust state during render" pattern (setState
+  // called mid-render, not inside useEffect) -- deliberately NOT a
+  // useEffect: an effect-based resync commits ONE extra render with
+  // cursorIndex still at its stale default (0 -> bars[0].time, which for
+  // the wide fetch window is ~3 days before the real cursor) BEFORE the
+  // correction lands, and ChartKL reacts to every `cursorTime` change with
+  // its own resetData()+camera-preserve effect (see its own comment), so
+  // that one bad render was enough to permanently poison the preserved
+  // camera position.
+  //
+  // The "have we synced this bars array yet" tracker MUST be useState,
+  // not a ref: confirmed live under StrictMode (main.tsx wraps the app in
+  // it) that a ref mutated conditionally during render is not safe here --
+  // StrictMode intentionally double-invokes the render body, and the ref
+  // write from the first (thrown-away) invocation persists into the
+  // second, so the second invocation sees the ref already "caught up" and
+  // skips the corresponding setCursorIndexState call, leaving the actually-
+  // committed render on the stale index. useState's bookkeeping is,
+  // unlike a ref, itself part of what StrictMode re-derives correctly on
+  // each invocation -- this is React's own documented pattern for exactly
+  // this "adjust state when a prop changes" case, ref-based prevValue
+  // tracking is explicitly not it.
+  const [syncedBars, setSyncedBars] = useState<Bar[] | null>(null)
+  if (bars && bars !== syncedBars) {
+    setSyncedBars(bars)
+    const resynced = resyncCursorIndex(bars, cursorTimeRef.current)
+    if (resynced !== cursorIndex) setCursorIndexState(resynced)
+  }
+
+  // Fit the camera to a tight window around the anchor -- see
+  // defaultFitWindow's own comment for why this is deliberately much
+  // narrower than the fetch window. NOT driven off `bars` (the parent's
+  // own query resolving): ChartKL fetches its OWN bars internally via a
+  // separate async call (setDataLoader's getBars), so a `bars`-keyed
+  // effect races it -- confirmed live, klChartRef.current.fitRange() was
+  // firing while ChartKL's internal loadedBarsRef still held a single
+  // placeholder bar, so the call landed on stale data and got overwritten
+  // by klinecharts' own default zoom-to-fit-everything once the real data
+  // arrived. onVisibleRangeChange fires once ChartKL's real data has
+  // actually rendered (its own auto-range on load included) -- a reliable
+  // "child is ready" signal the imperative handle has no callback for.
+  const initialFitAppliedRef = useRef(false)
   useEffect(() => {
-    if (!bars || bars.length === 0) return
-    setCursorIndexState(resyncCursorIndex(bars, cursorTimeRef.current))
+    initialFitAppliedRef.current = false
   }, [bars])
+  const handleChartVisibleRangeChange = (range: { from: number; to: number } | null) => {
+    // null means ChartKL's own data list is still empty (see its own
+    // handleVisibleRangeChange) -- not yet the "real data is ready" signal.
+    if (!range || initialFitAppliedRef.current || windowAnchor === null || !session) return
+    initialFitAppliedRef.current = true
+    const fit = defaultFitWindow(windowAnchor, session.base_timeframe)
+    klChartRef.current?.fitRange(fit.from, fit.to)
+  }
 
   const saveCursor = (cursorTime: number) => {
     if (!session) return
@@ -346,6 +413,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       />
       <div className="min-h-0 flex-1">
         <ChartKL
+          ref={klChartRef}
           instrument={session.instrument}
           timeframe={session.base_timeframe}
           from={barsWindow?.from ?? null}
@@ -359,6 +427,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           cursorTime={cursorTime}
           followLatestBar={followLatestBar}
           onCandleBarClick={handleCandleBarClick}
+          onVisibleRangeChange={handleChartVisibleRangeChange}
           pickMode={pickingReplayStart}
         />
       </div>
