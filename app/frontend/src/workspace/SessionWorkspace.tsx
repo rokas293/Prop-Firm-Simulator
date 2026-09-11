@@ -1,26 +1,35 @@
-// FXR_SPEC.md phases F1/F2: a lean chart-only workspace for a manual-replay
-// session -- deliberately NOT the full Workspace.tsx/ChartPanel.tsx (those
-// are dockable-panel/trade-review machinery built around a COMPLETED
-// automated-backtest run's fixed trades/equity, which doesn't exist here).
-// Renders ChartKL directly in permanent replay mode, restores the cursor
-// saved on the session, PATCHes it back to the backend as the user steps
-// (F1), and (F2) drives the sim broker: one-click Buy/Sell/Close against
+// FXR_SPEC.md phases F1/F2/F3: a lean chart-only workspace for a manual-
+// replay session -- deliberately NOT the full Workspace.tsx/ChartPanel.tsx
+// (those are dockable-panel/trade-review machinery built around a
+// COMPLETED automated-backtest run's fixed trades/equity, which doesn't
+// exist here). Renders ChartKL directly in permanent replay mode, restores
+// the cursor saved on the session, PATCHes it back to the backend as the
+// user steps (F1), drives the sim broker's market Buy/Sell/Close (F2), and
+// (F3) the "New Trade" drag ticket + right-click limit/stop orders against
 // chart/simBroker.ts's pure fill logic, journaling each closed trade.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { runningTotals } from '../chart/replay'
 import {
+  advanceReplay,
   closePosition,
+  computeAutoSize,
   getContractSpec,
+  impliedOrderType,
   marketFillPrice,
   openPositionAsTradeRecord,
   riskUsdAtEntry,
+  type ClosedTradeResult,
   type OpenPosition,
+  type PendingOrderType,
   type Side,
+  type WorkingOrder,
 } from '../chart/simBroker'
+import type { ContextMenuEntry } from '../components/ContextMenu'
 import ReplayControls from '../panels/ReplayControls'
-import PositionTicket from '../panels/PositionTicket'
+import PositionTicket, { type WorkingOrderSummary } from '../panels/PositionTicket'
+import TradeTicketPanel, { type TicketReadout } from '../panels/TradeTicketPanel'
 import {
   useBtSession,
   useBtSessionTrades,
@@ -31,7 +40,8 @@ import {
   useUpdateBtSessionCursor,
 } from '../api/hooks'
 import { useIndicatorStore } from '../state/indicatorStore'
-import type { Bar, IndicatorName, TradeRecord } from '../api/types'
+import { useThemeBase } from '../state/themeStore'
+import type { Bar, CreateManualTradeRequest, IndicatorName, TradeRecord } from '../api/types'
 import EmptyState from '../components/EmptyState'
 
 // Sized so the fetched window still resolves at the session's own
@@ -84,20 +94,42 @@ export function resyncCursorIndex(bars: Bar[], targetTime: number | null): numbe
   return best
 }
 
+// FXR_SPEC.md phase F3's "New Trade" ticket defaults -- a simple fixed
+// starting point the user is expected to drag to fit their own analysis,
+// not a "smart" volatility-derived guess (the whole point is the 3 lines
+// are draggable). Deliberately the same for MES/MNQ despite their
+// different point values -- it's a STARTING offset, not a risk figure.
+const DEFAULT_TICKET_SL_POINTS = 10
+const DEFAULT_TICKET_RR = 2
+
+// Snap a right-click/drag price to the instrument's own tick size so a
+// pixel-converted price never shows an ugly, unfillable-in-reality
+// fraction (e.g. 5661.2382).
+function roundToTick(price: number, tickSize: number): number {
+  return Math.round(price / tickSize) * tickSize
+}
+
 export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const { data: session, isLoading, isError, error } = useBtSession(sessionId)
   const { data: manualTrades } = useBtSessionTrades(sessionId)
   const updateCursor = useUpdateBtSessionCursor()
   const createTrade = useCreateManualTrade()
+  const themeBase = useThemeBase()
 
-  // FXR_SPEC.md phase F2: the sim broker's single open position. Local
-  // state only, not persisted -- F2's own verify checklist doesn't require
-  // an open position to survive a reload (unlike F1's cursor/account, which
-  // explicitly does), and FXR_SPEC's "restores... open positions" is listed
-  // among F4's fuller order-management scope, not F2's MVP. Documented
-  // limitation, not an oversight: reloading mid-trade currently loses the
-  // open position (the trade simply never got journaled).
+  // FXR_SPEC.md phase F2/F3: the sim broker's single open position and
+  // (F3) working order. Local state only, not persisted -- neither F2 nor
+  // F3's own verify checklists require these to survive a reload (unlike
+  // F1's cursor/account, which explicitly does), and FXR_SPEC's
+  // "restores... open positions/working orders" is listed among F4's
+  // fuller order-management scope. Documented limitation, not an
+  // oversight: reloading mid-trade currently loses the open position or
+  // working order (it simply never got journaled/never fills).
   const [position, setPosition] = useState<OpenPosition | null>(null)
+  const [workingOrders, setWorkingOrders] = useState<WorkingOrder[]>([])
+  // The "New Trade" drag ticket in progress -- entry/SL/TP prices only;
+  // side is DERIVED (tpPrice relative to entryPrice), never stored, so it
+  // can never drift out of sync with the lines actually drawn.
+  const [ticket, setTicket] = useState<{ entryPrice: number; slPrice: number; tpPrice: number } | null>(null)
 
   const [windowAnchor, setWindowAnchor] = useState<number | null>(null)
   const [cursorIndex, setCursorIndexState] = useState(0)
@@ -111,6 +143,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // bars refetch (a re-anchored window has a different array, so the
   // INDEX from before is meaningless; the TIME is what's real).
   const cursorTimeRef = useRef<number | null>(null)
+  // Mirrors cursorIndex/position/workingOrders for synchronous reads from
+  // the play-interval's setInterval callback (a plain function, not a
+  // React reducer -- see advanceTo's own comment for why that distinction
+  // matters here).
+  const cursorIndexRef = useRef(0)
+  const positionRef = useRef<OpenPosition | null>(null)
+  const workingOrdersRef = useRef<WorkingOrder[]>([])
   const loadedSessionIdRef = useRef<string | null>(null)
   const klChartRef = useRef<ChartKLHandle>(null)
 
@@ -124,6 +163,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setWindowAnchor(session.cursor_time)
     setIsPlaying(false)
     setPosition(null)
+    positionRef.current = null
+    setWorkingOrders([])
+    workingOrdersRef.current = []
+    setTicket(null)
   }, [session])
 
   const barsWindow = useMemo(
@@ -169,6 +212,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setSyncedBars(bars)
     const resynced = resyncCursorIndex(bars, cursorTimeRef.current)
     if (resynced !== cursorIndex) setCursorIndexState(resynced)
+    cursorIndexRef.current = resynced
   }
 
   // Fit the camera to a tight window around the anchor -- see
@@ -202,33 +246,96 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     updateCursor.mutate({ sessionId: session.id, cursorTime })
   }
 
-  const handleCursorIndexChange = (i: number) => {
-    setCursorIndexState(i)
-    const t = bars?.[i]?.time
+  // Builds the journal request body from a closed trade -- shared by a
+  // manual Close (F2) and an SL/TP auto-close during replay advance (F3),
+  // so the two never drift into two different ideas of what a "closed
+  // trade" record looks like.
+  const journalClosedTrade = (trade: ClosedTradeResult) => {
+    if (!session) return
+    const slPoints = trade.slPrice !== null ? Math.abs(trade.entryPrice - trade.slPrice) : null
+    const tpPoints = trade.tpPrice !== null ? Math.abs(trade.tpPrice - trade.entryPrice) : null
+    const body: CreateManualTradeRequest = {
+      entry_time: trade.entryTime,
+      exit_time: trade.exitTime,
+      instrument: session.instrument,
+      side: trade.side,
+      leg: null,
+      session: null,
+      trading_day: null,
+      size_contracts: trade.contracts,
+      entry_price: trade.entryPrice,
+      exit_price: trade.exitPrice,
+      sl_price: trade.slPrice,
+      tp_price: trade.tpPrice,
+      sl_points: slPoints,
+      tp_points: tpPoints,
+      rr_planned: slPoints && tpPoints ? tpPoints / slPoints : null,
+      exit_type: trade.exitType,
+      pnl_usd: trade.pnlUsd,
+      r_multiple: trade.rMultiple,
+      commission_usd: trade.commissionUsd,
+      mae_points: trade.maePoints,
+      mfe_points: trade.mfePoints,
+      mae_r: trade.maeR,
+      mfe_r: trade.mfeR,
+      bars_held: trade.barsHeld,
+    }
+    createTrade.mutate({ sessionId: session.id, body })
+  }
+
+  // The single place replay ever moves the cursor forward or back --
+  // FXR_SPEC.md section 3's no-look-ahead fill loop (chart/simBroker.ts's
+  // advanceReplay) runs here so working orders/SL/TP are evaluated against
+  // every bar in between, not just the destination one. Deliberately a
+  // plain function called from event handlers/setInterval, NOT a
+  // setCursorIndexState(prev => ...) functional updater: React (in
+  // StrictMode) double-invokes updater functions to catch impure ones,
+  // and this one's side effects (mutating the position/order state,
+  // POSTing a journaled trade, PATCHing the cursor) must fire exactly
+  // once per step, not twice -- reading cursorIndexRef instead of an
+  // updater's `prev` gets the same "always current" guarantee without
+  // that risk.
+  const advanceTo = (newIndex: number) => {
+    if (!session || !bars) return
+    const spec = getContractSpec(session.instrument)
+    const result = advanceReplay(
+      bars,
+      cursorIndexRef.current,
+      newIndex,
+      positionRef.current,
+      workingOrdersRef.current,
+      spec,
+      session.account.commission_per_contract,
+    )
+    positionRef.current = result.position
+    workingOrdersRef.current = result.workingOrders
+    setPosition(result.position)
+    setWorkingOrders(result.workingOrders)
+    for (const trade of result.closedTrades) journalClosedTrade(trade)
+
+    cursorIndexRef.current = newIndex
+    setCursorIndexState(newIndex)
+    const t = bars[newIndex]?.time
     if (t !== undefined) saveCursor(t)
     // Nearing the end of the loaded window -- shift the anchor forward so
     // continued stepping/playback keeps having bars to advance into,
     // instead of running off the end of a static window.
-    if (bars && i >= bars.length - 20 && bars.length === MAX_POINTS) {
-      setWindowAnchor(bars[i].time)
+    if (newIndex >= bars.length - 20 && bars.length === MAX_POINTS) {
+      setWindowAnchor(bars[newIndex].time)
     }
   }
+
+  const handleCursorIndexChange = (i: number) => advanceTo(i)
 
   useEffect(() => {
     if (!isPlaying || !bars || bars.length === 0) return
     const id = setInterval(() => {
-      setCursorIndexState((prev) => {
-        if (prev >= bars.length - 1) {
-          setIsPlaying(false)
-          return prev
-        }
-        const next = prev + 1
-        saveCursor(bars[next].time)
-        if (next >= bars.length - 20 && bars.length === MAX_POINTS) {
-          setWindowAnchor(bars[next].time)
-        }
-        return next
-      })
+      const prev = cursorIndexRef.current
+      if (prev >= bars.length - 1) {
+        setIsPlaying(false)
+        return
+      }
+      advanceTo(prev + 1)
     }, 1000 / speed)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -278,68 +385,164 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [indicatorData],
   )
 
+  // True while nothing is armed/working/open -- the shared gate for every
+  // action that starts a new trade (Buy/Sell, New Trade, a right-click
+  // order): at most one position-in-progress at a time, same single-
+  // position simplification F2 already established.
+  const flat = !position && workingOrders.length === 0 && !ticket
+
   // FXR_SPEC.md section 3/6: market orders fill at the current cursor bar's
   // close (chart/simBroker.ts's documented convention) -- entry and exit
   // both read `bars[cursorIndex]` only, never a bar beyond it.
   const enterPosition = (side: Side) => {
-    if (!session || !bars || !bars[cursorIndex] || position) return
+    if (!session || !bars || !bars[cursorIndex] || !flat) return
     const entryBar = bars[cursorIndex]
-    setPosition({
+    const newPosition: OpenPosition = {
       side,
       contracts: session.account.default_contracts,
       entryPrice: marketFillPrice(entryBar),
       entryTime: entryBar.time,
       entryIndex: cursorIndex,
-      riskUsd: riskUsdAtEntry(
-        session.account.balance,
-        session.account.risk_per_trade_percent,
-        session.account.risk_per_trade_usd,
-      ),
-    })
+      riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
+      slPrice: null,
+      tpPrice: null,
+    }
+    positionRef.current = newPosition
+    setPosition(newPosition)
   }
 
   const handleClosePosition = () => {
     if (!session || !bars || !position) return
     const spec = getContractSpec(session.instrument)
     const result = closePosition(bars, position, cursorIndex, spec, session.account.commission_per_contract)
-    createTrade.mutate(
-      {
-        sessionId: session.id,
-        body: {
-          entry_time: result.entryTime,
-          exit_time: result.exitTime,
-          instrument: session.instrument,
-          side: result.side,
-          leg: null,
-          session: null,
-          trading_day: null,
-          size_contracts: result.contracts,
-          entry_price: result.entryPrice,
-          exit_price: result.exitPrice,
-          sl_price: null,
-          tp_price: null,
-          sl_points: null,
-          tp_points: null,
-          rr_planned: null,
-          exit_type: 'manual_close',
-          pnl_usd: result.pnlUsd,
-          r_multiple: result.rMultiple,
-          commission_usd: result.commissionUsd,
-          mae_points: result.maePoints,
-          mfe_points: result.mfePoints,
-          mae_r: result.maeR,
-          mfe_r: result.mfeR,
-          bars_held: result.barsHeld,
-        },
-      },
-      { onSuccess: () => setPosition(null) },
-    )
+    journalClosedTrade(result)
+    positionRef.current = null
+    setPosition(null)
+  }
+
+  // "New Trade" (FXR_SPEC.md section B): arms the ticket at sensible
+  // defaults around the current market price -- the user drags all 3
+  // lines from there (see ChartKL's tradeTicket prop).
+  const openTicket = () => {
+    if (!bars || !bars[cursorIndex] || !flat) return
+    const marketPrice = bars[cursorIndex].close
+    setTicket({
+      entryPrice: marketPrice,
+      slPrice: marketPrice - DEFAULT_TICKET_SL_POINTS,
+      tpPrice: marketPrice + DEFAULT_TICKET_SL_POINTS * DEFAULT_TICKET_RR,
+    })
+  }
+  const handleTicketChange = (prices: { entryPrice: number; slPrice: number; tpPrice: number }) => {
+    setTicket(prices)
+  }
+  const cancelTicket = () => setTicket(null)
+
+  // Confirm: at the current market price, fills immediately as a position
+  // (identical to Buy/Sell, just with real SL/TP attached); anywhere else,
+  // places a working limit/stop order instead -- auto-detected from which
+  // side of market the dragged entry line ended up on (impliedOrderType).
+  const confirmTicket = () => {
+    if (!ticket || !session || !bars || !bars[cursorIndex]) return
+    const spec = getContractSpec(session.instrument)
+    const side: Side = ticket.tpPrice >= ticket.entryPrice ? 'long' : 'short'
+    const riskUsd = riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd)
+    const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec)
+    const marketBar = bars[cursorIndex]
+
+    if (ticket.entryPrice === marketBar.close) {
+      const newPosition: OpenPosition = {
+        side,
+        contracts,
+        entryPrice: marketBar.close,
+        entryTime: marketBar.time,
+        entryIndex: cursorIndex,
+        riskUsd,
+        slPrice: ticket.slPrice,
+        tpPrice: ticket.tpPrice,
+      }
+      positionRef.current = newPosition
+      setPosition(newPosition)
+    } else {
+      const orderType = impliedOrderType(side, ticket.entryPrice, marketBar.close)
+      const order: WorkingOrder = {
+        id: crypto.randomUUID(),
+        side,
+        orderType,
+        price: ticket.entryPrice,
+        contracts,
+        slPrice: ticket.slPrice,
+        tpPrice: ticket.tpPrice,
+        riskUsd,
+        placedTime: marketBar.time,
+        placedIndex: cursorIndex,
+      }
+      workingOrdersRef.current = [order]
+      setWorkingOrders([order])
+    }
+    setTicket(null)
+  }
+
+  const cancelWorkingOrder = () => {
+    workingOrdersRef.current = []
+    setWorkingOrders([])
+  }
+
+  // Right-click order placement (FXR_SPEC.md section B): BOTH order-type/
+  // side combinations that are actually meaningful at the clicked price
+  // are offered -- a price above market can be either a buy STOP (chase
+  // the breakout up) or a sell LIMIT (fade back down to it); a price
+  // below market is either a buy LIMIT (wait for the pullback) or a sell
+  // STOP (chase the breakdown). Whichever side/type the user picks is what
+  // impliedOrderType would derive for THAT combination -- offering only
+  // one auto-picked pairing (as an earlier version of this did) meant a
+  // limit order could never actually be placed via right-click at all,
+  // since the "obvious" breakout direction is always a stop. No SL/TP
+  // attached via this quick path (the drag ticket above is the "full" flow
+  // for that); size uses the account's plain default_contracts, same as a
+  // quick Buy/Sell, since there's no SL distance here to auto-size against.
+  const handleEmptyAreaMenuItems = (info: { time: number; price: number }): ContextMenuEntry[] => {
+    if (!session || !bars || !bars[cursorIndex] || !flat) return []
+    const spec = getContractSpec(session.instrument)
+    const marketPrice = bars[cursorIndex].close
+    const price = roundToTick(info.price, spec.tickSize)
+    if (price === marketPrice) return []
+
+    const place = (side: Side, orderType: PendingOrderType) => () => {
+      if (!bars[cursorIndex]) return
+      const order: WorkingOrder = {
+        id: crypto.randomUUID(),
+        side,
+        orderType,
+        price,
+        contracts: session.account.default_contracts,
+        slPrice: null,
+        tpPrice: null,
+        riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
+        placedTime: bars[cursorIndex].time,
+        placedIndex: cursorIndex,
+      }
+      workingOrdersRef.current = [order]
+      setWorkingOrders([order])
+    }
+
+    // impliedOrderType already derives the correct type FOR each side
+    // relative to this price/market pair -- both sides are always
+    // offered, no need to branch on which side of market was clicked.
+    const sides: Side[] = ['long', 'short']
+    return sides.map((side) => {
+      const orderType = impliedOrderType(side, price, marketPrice)
+      return {
+        label: `${side === 'long' ? 'Buy' : 'Sell'} ${orderType} here @ ${price.toFixed(2)}`,
+        onSelect: place(side, orderType),
+      }
+    })
   }
 
   // The open position rendered through the SAME TradeRecord shape a closed
   // trade uses (see openPositionAsTradeRecord's own comment) -- zero
   // chart-side changes needed to show it with the existing entry marker/
-  // trade-overlay conventions.
+  // trade-overlay conventions, now also carrying real SL/TP when the
+  // position has them (F3).
   const openPositionRecord: TradeRecord | null =
     position && session && bars && bars[cursorIndex]
       ? openPositionAsTradeRecord({
@@ -365,6 +568,47 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (index >= 0) handleCursorIndexChange(index)
     setPickingReplayStart(false)
   }
+
+  // The live R:R/$risk/contracts readout for TradeTicketPanel -- purely
+  // derived from `ticket` + the account's risk config on every render, no
+  // separate effect needed.
+  const ticketReadout: TicketReadout | null =
+    ticket && session
+      ? (() => {
+          const spec = getContractSpec(session.instrument)
+          const side: Side = ticket.tpPrice >= ticket.entryPrice ? 'long' : 'short'
+          const slDistance = Math.abs(ticket.entryPrice - ticket.slPrice)
+          const tpDistance = Math.abs(ticket.tpPrice - ticket.entryPrice)
+          const riskUsd = riskUsdAtEntry(
+            session.account.balance,
+            session.account.risk_per_trade_percent,
+            session.account.risk_per_trade_usd,
+          )
+          const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec)
+          return {
+            side,
+            entryPrice: ticket.entryPrice,
+            slPrice: ticket.slPrice,
+            tpPrice: ticket.tpPrice,
+            rr: slDistance > 0 ? tpDistance / slDistance : null,
+            contracts,
+            dollarRisk: slDistance > 0 ? slDistance * spec.pointValue * contracts : null,
+          }
+        })()
+      : null
+
+  const workingOrderSummary: WorkingOrderSummary | null =
+    workingOrders[0] && session
+      ? {
+          instrument: session.instrument,
+          side: workingOrders[0].side,
+          orderType: workingOrders[0].orderType,
+          price: workingOrders[0].price,
+          contracts: workingOrders[0].contracts,
+          slPrice: workingOrders[0].slPrice,
+          tpPrice: workingOrders[0].tpPrice,
+        }
+      : null
 
   if (isLoading) {
     return <EmptyState title="Loading session…" />
@@ -392,25 +636,34 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         runningR={replayTotals.r}
         equity={null}
       />
-      <PositionTicket
-        disabled={!bars || bars.length === 0}
-        position={
-          position && openPositionRecord
-            ? {
-                instrument: session.instrument,
-                side: position.side,
-                contracts: position.contracts,
-                entryPrice: position.entryPrice,
-                pnlUsd: openPositionRecord.pnl_usd,
-                rMultiple: openPositionRecord.r_multiple,
-              }
-            : null
-        }
-        onBuy={() => enterPosition('long')}
-        onSell={() => enterPosition('short')}
-        onClose={handleClosePosition}
-        closing={createTrade.isPending}
-      />
+      {ticketReadout ? (
+        <TradeTicketPanel ticket={ticketReadout} onConfirm={confirmTicket} onCancel={cancelTicket} />
+      ) : (
+        <PositionTicket
+          disabled={!bars || bars.length === 0}
+          position={
+            position && openPositionRecord
+              ? {
+                  instrument: session.instrument,
+                  side: position.side,
+                  contracts: position.contracts,
+                  entryPrice: position.entryPrice,
+                  slPrice: position.slPrice,
+                  tpPrice: position.tpPrice,
+                  pnlUsd: openPositionRecord.pnl_usd,
+                  rMultiple: openPositionRecord.r_multiple,
+                }
+              : null
+          }
+          workingOrder={workingOrderSummary}
+          onBuy={() => enterPosition('long')}
+          onSell={() => enterPosition('short')}
+          onNewTrade={openTicket}
+          onClose={handleClosePosition}
+          onCancelOrder={cancelWorkingOrder}
+          closing={createTrade.isPending}
+        />
+      )}
       <div className="min-h-0 flex-1">
         <ChartKL
           ref={klChartRef}
@@ -429,6 +682,20 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onCandleBarClick={handleCandleBarClick}
           onVisibleRangeChange={handleChartVisibleRangeChange}
           pickMode={pickingReplayStart}
+          slLineColor={themeBase.warning}
+          tradeTicket={ticket}
+          onTradeTicketChange={handleTicketChange}
+          workingOrderView={
+            workingOrders[0]
+              ? {
+                  side: workingOrders[0].side,
+                  price: workingOrders[0].price,
+                  slPrice: workingOrders[0].slPrice,
+                  tpPrice: workingOrders[0].tpPrice,
+                }
+              : null
+          }
+          getEmptyAreaMenuExtraItems={handleEmptyAreaMenuItems}
         />
       </div>
     </div>

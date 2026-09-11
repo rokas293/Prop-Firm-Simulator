@@ -173,6 +173,24 @@ describe('buildSelectedTradeOverlays', () => {
     expect(overlays).toHaveLength(0)
   })
 
+  it('defaults the SL line to colors.negative -- the automated-backtest view keeps its own established color', () => {
+    const [slLine, tpLine] = buildSelectedTradeOverlays(makeView(), colors)
+    expect((slLine.styles as { line: { color: string } }).line.color).toBe(colors.negative)
+    expect((tpLine.styles as { line: { color: string } }).line.color).toBe(colors.positive)
+  })
+
+  it('accepts an SL color override -- FXR_SPEC.md phase F3\'s manual-session orange convention', () => {
+    // The real caller (SessionWorkspace) passes ThemeBase's warning token
+    // (the orange used elsewhere for warnings) -- this override is just a
+    // plain string, so a literal stands in for it here.
+    const orange = '#d29922'
+    const [slLine, tpLine] = buildSelectedTradeOverlays(makeView(), colors, orange)
+    expect((slLine.styles as { line: { color: string } }).line.color).toBe(orange)
+    // TP is untouched by the override -- only SL's color is FXR_SPEC's
+    // documented exception.
+    expect((tpLine.styles as { line: { color: string } }).line.color).toBe(colors.positive)
+  })
+
   // klinecharts' built-in horizontalSegment uses the interactive `line`
   // figure, whose DEFAULT right-click behavior is to delete the overlay
   // outright unless onRightClick calls preventDefault -- without this, a

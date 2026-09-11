@@ -49,9 +49,10 @@ import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from
 import { computeMeasure, formatDuration, type MeasurePoint, type MeasureResult } from '../measure'
 import LoadingBar from '../../components/LoadingBar'
 import Skeleton from '../../components/Skeleton'
-import ContextMenu from '../../components/ContextMenu'
+import ContextMenu, { type ContextMenuEntry } from '../../components/ContextMenu'
 import DrawingStylePopover from './DrawingStylePopover'
 import IndicatorSettingsPopover from './IndicatorSettingsPopover'
+import type { Side } from '../simBroker'
 
 interface IndicatorData {
   vwap: IndicatorPoint[]
@@ -151,6 +152,35 @@ interface ChartKLProps {
   // has no effect on what actually happens on click (that's pickMode's
   // caller deciding whether to act on onCandleBarClick).
   pickMode?: boolean
+  // FXR_SPEC.md phase F3: overrides the SELECTED trade's SL line color
+  // (buildSelectedTradeOverlays' own default is colors.negative). The
+  // manual-session workspace passes colors.warning (orange), matching
+  // FXR_SPEC section B's "SL orange, TP green" convention -- the
+  // automated-backtest review (ChartPanel) leaves this unset and keeps
+  // its own already-shipped red SL line.
+  slLineColor?: string
+  // The "New Trade" drag ticket (FXR_SPEC.md section B), non-null while
+  // armed: renders 3 draggable ghost lines (entry/SL/TP) at these prices.
+  // Deliberately read only ONCE per arm/disarm transition (see the effect
+  // this drives) -- ChartKL owns the actual drag, the caller owns what the
+  // numbers MEAN (R:R, $ risk, auto-sized contracts); re-pushing a price
+  // on every drag frame would fight the user's own drag.
+  tradeTicket?: { entryPrice: number; slPrice: number; tpPrice: number } | null
+  // Fires live as any one of the 3 ticket lines is dragged, with the
+  // COMPLETE updated price set (not just the moved field) -- the caller's
+  // R:R/risk/contracts readout recomputes from this on every frame.
+  onTradeTicketChange?: (prices: { entryPrice: number; slPrice: number; tpPrice: number }) => void
+  // A placed-but-not-yet-filled limit/stop order: a locked (non-draggable)
+  // preview -- a dashed accent line at the order price, plus dashed
+  // orange/green SL/TP preview lines if attached. Position management
+  // (dragging to modify a WORKING order) is explicitly F4 scope, not F3's.
+  workingOrderView?: { side: Side; price: number; slPrice: number | null; tpPrice: number | null } | null
+  // Right-click on empty chart area (Batch 1's existing menu) -- returns
+  // extra items to APPEND to the built-in Reset-view/Remove-drawings menu,
+  // given the clicked price/time. Lets the session workspace extend the
+  // SAME menu with order-placement actions without ChartKL itself knowing
+  // anything about trading.
+  getEmptyAreaMenuExtraItems?: (info: { time: number; price: number }) => ContextMenuEntry[]
 }
 
 // Matches Tailwind's default `font-sans` stack (index.css has no custom
@@ -352,6 +382,11 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     onVisibleRangeChange,
     onCandleBarClick,
     pickMode = false,
+    slLineColor,
+    tradeTicket = null,
+    onTradeTicketChange,
+    workingOrderView = null,
+    getEmptyAreaMenuExtraItems,
   },
   ref,
 ) {
@@ -379,7 +414,9 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // rather than nesting it inside contextMenu, since picking a color
   // outlives the menu itself being open).
   const [contextMenu, setContextMenu] = useState<
-    { kind: 'empty'; x: number; y: number } | { kind: 'drawing'; x: number; y: number; id: string; name: string; locked: boolean } | null
+    | { kind: 'empty'; x: number; y: number; time: number | null; price: number | null }
+    | { kind: 'drawing'; x: number; y: number; id: string; name: string; locked: boolean }
+    | null
   >(null)
   const [styleEditor, setStyleEditor] = useState<{ id: string; x: number; y: number } | null>(null)
   // Set synchronously inside a drawing overlay's onRightClick (fired from
@@ -484,6 +521,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   prefsRef.current = prefs
   const bracketDensityRef = useRef(bracketDensity)
   bracketDensityRef.current = bracketDensity
+  const slLineColorRef = useRef(slLineColor)
+  slLineColorRef.current = slLineColor
 
   const rebuildOverlaysRef = useRef<() => void>(() => {})
   rebuildOverlaysRef.current = () => {
@@ -503,7 +542,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         ? (filterTradesForReplay([selectedTradeRef.current], cursor)[0] ?? null)
         : null
       const entryExit = buildEntryExitOverlays(views, selectedTradeRef.current?.trade_id ?? null, colorsRef.current)
-      const selected = buildSelectedTradeOverlays(selectedView, colorsRef.current)
+      const selected = buildSelectedTradeOverlays(selectedView, colorsRef.current, slLineColorRef.current)
       // Per-trade on-screen width, for the density collapse threshold
       // (tradeBracket.ts's shouldSimplify) -- resolved here, not inside the
       // framework-free tradeOverlays.ts, since only the mounted chart
@@ -1104,7 +1143,25 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         rightClickHandledRef.current = false
         return
       }
-      setContextMenu({ kind: 'empty', x: e.clientX, y: e.clientY })
+      // FXR_SPEC.md phase F3: resolve the clicked price/time too (same
+      // convertFromPixel call the Alt+drag measure gesture already makes),
+      // so getEmptyAreaMenuExtraItems can offer order-placement actions AT
+      // this exact level -- null if this landed outside the candle pane
+      // (an axis, a sub-pane), where "place an order here" is meaningless.
+      let time: number | null = null
+      let price: number | null = null
+      if (container) {
+        const rect = container.getBoundingClientRect()
+        const [point] = chart.convertFromPixel(
+          [{ x: e.clientX - rect.left, y: e.clientY - rect.top }],
+          { paneId: 'candle_pane' },
+        ) as Array<{ timestamp?: number; value?: number }>
+        if (point?.timestamp !== undefined && point?.value !== undefined) {
+          time = point.timestamp / 1000
+          price = point.value
+        }
+      }
+      setContextMenu({ kind: 'empty', x: e.clientX, y: e.clientY, time, price })
     }
     container?.addEventListener('contextmenu', handleContextMenu)
 
@@ -1245,7 +1302,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // overlays against the bars already loaded.
   useEffect(() => {
     rebuildOverlaysRef.current()
-  }, [trades, selectedTrade, colors, bracketDensity])
+  }, [trades, selectedTrade, colors, bracketDensity, slLineColor])
 
   // Theme/mode switch (REDESIGN_APPROACH.md Part C1) -- recolor the
   // candles/volume/grid/axis/crosshair too, not just the trade overlays
@@ -1310,6 +1367,85 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       }
     })
   }, [cursorTime])
+
+  // FXR_SPEC.md phase F3's "New Trade" drag ticket: 3 draggable ghost
+  // lines (entry/SL/TP), created ONCE per arm/disarm transition -- keyed
+  // on `tradeTicketActive`'s boolean flip, NOT the live prices themselves.
+  // Re-creating the overlays on every drag frame (if this depended on the
+  // prices) would fight the user's own in-progress drag, since klinecharts
+  // already owns the line's visual position for the rest of that gesture;
+  // the ARMING prices are read once via a ref for exactly that reason.
+  // Confirming or cancelling sets tradeTicket back to null, which tears
+  // these down via the cleanup below.
+  const TICKET_GROUP_ID = 'kl-trade-ticket'
+  const tradeTicketRef = useRef(tradeTicket)
+  tradeTicketRef.current = tradeTicket
+  const onTradeTicketChangeRef = useRef(onTradeTicketChange)
+  onTradeTicketChangeRef.current = onTradeTicketChange
+  const tradeTicketActive = tradeTicket !== null
+
+  useEffect(() => {
+    const chart = chartRef.current
+    const initial = tradeTicketRef.current
+    if (!chart || !tradeTicketActive || !initial) return
+    const anchorMs = (cursorTimeRef.current ?? 0) * 1000
+
+    const makeLine = (id: string, price: number, color: string, field: 'entryPrice' | 'slPrice' | 'tpPrice'): OverlayCreate => ({
+      id,
+      name: 'horizontalStraightLine',
+      groupId: TICKET_GROUP_ID,
+      lock: false,
+      points: [{ timestamp: anchorMs, value: price }],
+      styles: { line: { color, style: 'dashed', size: 2 } },
+      onPressedMoving: (event) => {
+        const newPrice = event.overlay.points[0]?.value
+        const current = tradeTicketRef.current
+        if (typeof newPrice !== 'number' || !current) return
+        onTradeTicketChangeRef.current?.({ ...current, [field]: newPrice })
+      },
+    })
+
+    chart.createOverlay([
+      makeLine('kl-ticket-entry', initial.entryPrice, colorsRef.current.accent, 'entryPrice'),
+      makeLine('kl-ticket-sl', initial.slPrice, baseRef.current.warning, 'slPrice'),
+      makeLine('kl-ticket-tp', initial.tpPrice, colorsRef.current.positive, 'tpPrice'),
+    ])
+
+    return () => {
+      chart.removeOverlay({ groupId: TICKET_GROUP_ID })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradeTicketActive])
+
+  // A placed-but-not-yet-filled limit/stop order: a LOCKED preview, unlike
+  // the ticket above -- dragging to modify a WORKING order is explicitly
+  // F4 scope ("position management"), not F3's, so this just reacts to
+  // whatever values it's given, no drag-fighting concern.
+  const WORKING_ORDER_GROUP_ID = 'kl-working-order'
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !workingOrderView) return
+    const anchorMs = (cursorTimeRef.current ?? 0) * 1000
+    const line = (id: string, price: number, color: string): OverlayCreate => ({
+      id,
+      name: 'horizontalStraightLine',
+      groupId: WORKING_ORDER_GROUP_ID,
+      lock: true,
+      points: [{ timestamp: anchorMs, value: price }],
+      styles: { line: { color, style: 'dashed', size: 1 } },
+    })
+    const overlays: OverlayCreate[] = [line('kl-working-order-entry', workingOrderView.price, colorsRef.current.accent)]
+    if (workingOrderView.slPrice !== null) {
+      overlays.push(line('kl-working-order-sl', workingOrderView.slPrice, baseRef.current.warning))
+    }
+    if (workingOrderView.tpPrice !== null) {
+      overlays.push(line('kl-working-order-tp', workingOrderView.tpPrice, colorsRef.current.positive))
+    }
+    chart.createOverlay(overlays)
+    return () => {
+      chart.removeOverlay({ groupId: WORKING_ORDER_GROUP_ID })
+    }
+  }, [workingOrderView?.price, workingOrderView?.slPrice, workingOrderView?.tpPrice, workingOrderView?.side])
 
   // Shared by the imperative fitRange handle AND the empty-area menu's
   // "Reset chart view" (which calls it with the full loaded window).
@@ -1624,6 +1760,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
             { label: 'Reset chart view', onSelect: resetView },
             { separator: true },
             { label: 'Remove all drawings', onSelect: removeAllDrawings, disabled: drawingCount() === 0, destructive: true },
+            // FXR_SPEC.md phase F3: order-placement actions, appended only
+            // when both the caller supplied them AND the click resolved to
+            // a real price (never on an axis/sub-pane click).
+            ...(getEmptyAreaMenuExtraItems && contextMenu.time !== null && contextMenu.price !== null
+              ? [{ separator: true } as const, ...getEmptyAreaMenuExtraItems({ time: contextMenu.time, price: contextMenu.price })]
+              : []),
           ]}
         />
       )}

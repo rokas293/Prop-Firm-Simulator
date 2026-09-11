@@ -213,7 +213,18 @@ export function buildEntryExitOverlays(
 // sessionOverlay.ts's fair-value lines for the identical reason) is a
 // plain two-point line, so bounding it to [entry_time, the trade's own
 // close] makes the level disappear along with the trade it belonged to.
-export function buildSelectedTradeOverlays(view: ReplayTradeView | null, colors: ThemeColors): OverlayCreate[] {
+// FXR_SPEC.md phase F3: manual-session SL lines use the warning/orange
+// token, not colors.negative -- FXR_SPEC section B's explicit convention
+// ("SL orange, TP green"), matching FX Replay and distinguishing "planned
+// risk" from colors.negative's OTHER meaning (a realized loss). Left
+// optional/defaulted to colors.negative so the automated-backtest trade
+// review (every OTHER caller of this function) keeps its own established,
+// already-shipped red SL line unchanged.
+export function buildSelectedTradeOverlays(
+  view: ReplayTradeView | null,
+  colors: ThemeColors,
+  slColor: string = colors.negative,
+): OverlayCreate[] {
   if (!view) return []
   const trade = view.trade
   const bounds = computeBracketBounds(view)
@@ -229,7 +240,7 @@ export function buildSelectedTradeOverlays(view: ReplayTradeView | null, colors:
         { timestamp: toMs(trade.entry_time), value: trade.sl_price },
         { timestamp: toMs(bounds.timeTo), value: trade.sl_price },
       ],
-      styles: { line: { color: colors.negative, style: 'dashed', size: 1 } },
+      styles: { line: { color: slColor, style: 'dashed', size: 1 } },
       onRightClick: suppressRightClickDelete,
     })
   }
