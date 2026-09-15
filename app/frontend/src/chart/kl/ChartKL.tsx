@@ -175,6 +175,21 @@ interface ChartKLProps {
   // orange/green SL/TP preview lines if attached. Position management
   // (dragging to modify a WORKING order) is explicitly F4 scope, not F3's.
   workingOrderView?: { side: Side; price: number; slPrice: number | null; tpPrice: number | null } | null
+  // FXR_SPEC.md phase F4: draggable SL/TP lines for an ALREADY-OPEN
+  // position -- distinct from the F3 ticket above (which drags 3 lines
+  // BEFORE a trade exists). `entryTime` is the position's identity: the
+  // create-once effect below is keyed on it, so it only rebuilds the lines
+  // when a genuinely NEW position opens (or the old one closes), never on
+  // every render or on a live break-even/trailing price update (those are
+  // instead pushed via a separate sync effect using overrideOverlay, so
+  // they move the line without re-arming a drag in progress). A null
+  // slPrice/tpPrice draws no line at all -- there's nothing to drag if the
+  // position was opened without one; adding a stop/target after the fact
+  // is out of scope here (use the ticket flow for a new trade instead).
+  openPositionEditor?: { entryTime: number; side: Side; slPrice: number | null; tpPrice: number | null } | null
+  // Fires live as the SL or TP line is dragged, with the COMPLETE updated
+  // pair (not just the moved field) -- same contract as onTradeTicketChange.
+  onOpenPositionSlTpChange?: (next: { slPrice: number | null; tpPrice: number | null }) => void
   // Right-click on empty chart area (Batch 1's existing menu) -- returns
   // extra items to APPEND to the built-in Reset-view/Remove-drawings menu,
   // given the clicked price/time. Lets the session workspace extend the
@@ -386,6 +401,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     tradeTicket = null,
     onTradeTicketChange,
     workingOrderView = null,
+    openPositionEditor = null,
+    onOpenPositionSlTpChange,
     getEmptyAreaMenuExtraItems,
   },
   ref,
@@ -523,6 +540,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   bracketDensityRef.current = bracketDensity
   const slLineColorRef = useRef(slLineColor)
   slLineColorRef.current = slLineColor
+  const openPositionEditorRef = useRef(openPositionEditor)
+  openPositionEditorRef.current = openPositionEditor
 
   const rebuildOverlaysRef = useRef<() => void>(() => {})
   rebuildOverlaysRef.current = () => {
@@ -542,7 +561,17 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         ? (filterTradesForReplay([selectedTradeRef.current], cursor)[0] ?? null)
         : null
       const entryExit = buildEntryExitOverlays(views, selectedTradeRef.current?.trade_id ?? null, colorsRef.current)
-      const selected = buildSelectedTradeOverlays(selectedView, colorsRef.current, slLineColorRef.current)
+      // trade_id 0 is the open-position sentinel (openPositionAsTradeRecord's
+      // own comment) -- while the F4 draggable editor below is active for it,
+      // its SL/TP come from THAT overlay group instead, so the locked lines
+      // this would otherwise draw are suppressed to avoid two overlapping
+      // lines at the same price.
+      const suppressLockedSlTp = openPositionEditorRef.current !== null && selectedView?.trade.trade_id === 0
+      const selected = buildSelectedTradeOverlays(
+        suppressLockedSlTp ? { ...selectedView!, trade: { ...selectedView!.trade, sl_price: null, tp_price: null } } : selectedView,
+        colorsRef.current,
+        slLineColorRef.current,
+      )
       // Per-trade on-screen width, for the density collapse threshold
       // (tradeBracket.ts's shouldSimplify) -- resolved here, not inside the
       // framework-free tradeOverlays.ts, since only the mounted chart
@@ -1302,7 +1331,13 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // overlays against the bars already loaded.
   useEffect(() => {
     rebuildOverlaysRef.current()
-  }, [trades, selectedTrade, colors, bracketDensity, slLineColor])
+    // openPositionEditor's presence (not its live price fields) governs
+    // whether this rebuild suppresses the locked SL/TP lines in favor of
+    // the F4 draggable ones -- only its arm/disarm transition needs to
+    // retrigger this, same identity-not-value dependency as the draggable
+    // lines' own create-once effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades, selectedTrade, colors, bracketDensity, slLineColor, openPositionEditor !== null])
 
   // Theme/mode switch (REDESIGN_APPROACH.md Part C1) -- recolor the
   // candles/volume/grid/axis/crosshair too, not just the trade overlays
@@ -1446,6 +1481,84 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       chart.removeOverlay({ groupId: WORKING_ORDER_GROUP_ID })
     }
   }, [workingOrderView?.price, workingOrderView?.slPrice, workingOrderView?.tpPrice, workingOrderView?.side])
+
+  // FXR_SPEC.md phase F4: draggable SL/TP lines for an OPEN position (see
+  // the prop's own comment). Created ONCE per position identity (keyed on
+  // entryTime, same "read the arming values once via a ref, let klinecharts
+  // own the drag" discipline as the F3 ticket above) -- a null slPrice/
+  // tpPrice at creation time draws no line, so a position opened without
+  // one has nothing to drag.
+  const OPEN_POS_SLTP_GROUP_ID = 'kl-open-position-sltp'
+  const onOpenPositionSlTpChangeRef = useRef(onOpenPositionSlTpChange)
+  onOpenPositionSlTpChangeRef.current = onOpenPositionSlTpChange
+  // The last pair THIS component itself reported via a drag -- lets the
+  // sync effect below tell "the price changed because the user dragged it"
+  // (already reflected on screen, no need to touch the overlay) apart from
+  // "the price changed for some other reason" (break-even/trailing firing
+  // during replay, or a restored position landing with its persisted SL/TP)
+  // (both need the line pushed to the new price via overrideOverlay).
+  const lastReportedOpenPosSlTpRef = useRef<{ slPrice: number | null; tpPrice: number | null } | null>(null)
+  const openPositionEntryTime = openPositionEditor?.entryTime ?? null
+
+  useEffect(() => {
+    const chart = chartRef.current
+    const initial = openPositionEditorRef.current
+    if (!chart || !initial) return
+    const anchorMs = (cursorTimeRef.current ?? initial.entryTime) * 1000
+
+    const makeLine = (id: string, price: number, color: string, field: 'slPrice' | 'tpPrice'): OverlayCreate => ({
+      id,
+      name: 'horizontalStraightLine',
+      groupId: OPEN_POS_SLTP_GROUP_ID,
+      lock: false,
+      points: [{ timestamp: anchorMs, value: price }],
+      styles: { line: { color, style: 'dashed', size: 2 } },
+      onPressedMoving: (event) => {
+        const newPrice = event.overlay.points[0]?.value
+        const current = openPositionEditorRef.current
+        if (typeof newPrice !== 'number' || !current) return
+        const next = { slPrice: current.slPrice, tpPrice: current.tpPrice, [field]: newPrice }
+        lastReportedOpenPosSlTpRef.current = next
+        onOpenPositionSlTpChangeRef.current?.(next)
+      },
+    })
+
+    const overlays: OverlayCreate[] = []
+    if (initial.slPrice !== null) overlays.push(makeLine('kl-open-pos-sl', initial.slPrice, baseRef.current.warning, 'slPrice'))
+    if (initial.tpPrice !== null) overlays.push(makeLine('kl-open-pos-tp', initial.tpPrice, colorsRef.current.positive, 'tpPrice'))
+    if (overlays.length > 0) chart.createOverlay(overlays)
+    lastReportedOpenPosSlTpRef.current = null
+
+    return () => {
+      chart.removeOverlay({ groupId: OPEN_POS_SLTP_GROUP_ID })
+      lastReportedOpenPosSlTpRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPositionEntryTime])
+
+  // Pushes an EXTERNAL SL/TP change (break-even/trailing firing during
+  // replay, or a mid-trade reload restoring a persisted position) onto the
+  // already-created lines above via overrideOverlay -- deliberately NOT a
+  // dependency of the create-once effect, so it never tears down and
+  // rebuilds the overlay (which would fight a drag already in progress).
+  // Skips the update when the new value is exactly what THIS component
+  // itself last reported (see lastReportedOpenPosSlTpRef's own comment) --
+  // otherwise every drag frame would immediately get echoed back through
+  // this effect, which is harmless but pointless.
+  useEffect(() => {
+    const chart = chartRef.current
+    const current = openPositionEditor
+    if (!chart || !current) return
+    const last = lastReportedOpenPosSlTpRef.current
+    if (last && last.slPrice === current.slPrice && last.tpPrice === current.tpPrice) return
+    const anchorMs = (cursorTimeRef.current ?? current.entryTime) * 1000
+    if (current.slPrice !== null) {
+      chart.overrideOverlay({ id: 'kl-open-pos-sl', points: [{ timestamp: anchorMs, value: current.slPrice }] })
+    }
+    if (current.tpPrice !== null) {
+      chart.overrideOverlay({ id: 'kl-open-pos-tp', points: [{ timestamp: anchorMs, value: current.tpPrice }] })
+    }
+  }, [openPositionEditor?.slPrice, openPositionEditor?.tpPrice])
 
   // Shared by the imperative fitRange handle AND the empty-area menu's
   // "Reset chart view" (which calls it with the full loaded window).

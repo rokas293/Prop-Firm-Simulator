@@ -14,12 +14,17 @@ import { runningTotals } from '../chart/replay'
 import {
   advanceReplay,
   closePosition,
+  closePositionPartialAtMarket,
   computeAutoSize,
+  fromPersistedPosition,
+  fromPersistedWorkingOrder,
   getContractSpec,
   impliedOrderType,
   marketFillPrice,
   openPositionAsTradeRecord,
   riskUsdAtEntry,
+  toPersistedPosition,
+  toPersistedWorkingOrder,
   type ClosedTradeResult,
   type OpenPosition,
   type PendingOrderType,
@@ -116,20 +121,30 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const createTrade = useCreateManualTrade()
   const themeBase = useThemeBase()
 
-  // FXR_SPEC.md phase F2/F3: the sim broker's single open position and
-  // (F3) working order. Local state only, not persisted -- neither F2 nor
-  // F3's own verify checklists require these to survive a reload (unlike
-  // F1's cursor/account, which explicitly does), and FXR_SPEC's
-  // "restores... open positions/working orders" is listed among F4's
-  // fuller order-management scope. Documented limitation, not an
-  // oversight: reloading mid-trade currently loses the open position or
-  // working order (it simply never got journaled/never fills).
+  // FXR_SPEC.md phase F2/F3/F4: the sim broker's single open position and
+  // working orders. Local state, mirrored to the backend on every change
+  // (see `persist` below) -- F4 closes the F2/F3-era gap where a mid-trade
+  // reload silently lost the open position/working order; restore-on-load
+  // is the effect further down keyed on `restoredForSessionRef`.
+  //
+  // Single-position limit (documented, not implemented as multiple
+  // concurrent positions -- FXR_SPEC.md phase F4 explicitly allows
+  // documenting this instead): `position` is a single OpenPosition | null,
+  // and every entry path (enterPosition/confirmTicket/advanceReplay's
+  // order-fill branch) is gated on `flat` below, same as F2/F3. A second
+  // position can't be opened until the first is fully closed.
   const [position, setPosition] = useState<OpenPosition | null>(null)
   const [workingOrders, setWorkingOrders] = useState<WorkingOrder[]>([])
   // The "New Trade" drag ticket in progress -- entry/SL/TP prices only;
   // side is DERIVED (tpPrice relative to entryPrice), never stored, so it
   // can never drift out of sync with the lines actually drawn.
   const [ticket, setTicket] = useState<{ entryPrice: number; slPrice: number; tpPrice: number } | null>(null)
+  // F4's optional toggles, ARMED state for the next trade while flat --
+  // once a position is open, PositionTicket's same two controls instead
+  // read/write that position's own autoBreakeven/trailingPoints fields
+  // directly (see handleAutoBreakevenChange/handleTrailingPointsChange).
+  const [armedAutoBreakeven, setArmedAutoBreakeven] = useState(false)
+  const [armedTrailingPoints, setArmedTrailingPoints] = useState<number | null>(null)
 
   const [windowAnchor, setWindowAnchor] = useState<number | null>(null)
   const [cursorIndex, setCursorIndexState] = useState(0)
@@ -151,6 +166,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const positionRef = useRef<OpenPosition | null>(null)
   const workingOrdersRef = useRef<WorkingOrder[]>([])
   const loadedSessionIdRef = useRef<string | null>(null)
+  // F4 restore-on-load: guards the restore effect below against re-running
+  // for the SAME session -- `session` itself changes identity on every
+  // persist (its onSuccess writes the fresh response into the query cache),
+  // so without this guard every local change would immediately be
+  // overwritten by re-restoring from what was just echoed back.
+  const restoredForSessionRef = useRef<string | null>(null)
   const klChartRef = useRef<ChartKLHandle>(null)
 
   // New session loaded (first mount, or switching sessions): anchor the
@@ -159,6 +180,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (!session || loadedSessionIdRef.current === session.id) return
     loadedSessionIdRef.current = session.id
+    restoredForSessionRef.current = null
     cursorTimeRef.current = session.cursor_time
     setWindowAnchor(session.cursor_time)
     setIsPlaying(false)
@@ -181,6 +203,28 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     barsWindow?.to ?? null,
     MAX_POINTS,
   )
+
+  // F4: once this (new) session's bars have loaded, restore its persisted
+  // position/working orders -- entry_time/placed_time are re-resolved to
+  // indices into THIS bars array via resyncCursorIndex, the exact same
+  // time->index recovery cursor_time itself already uses (see that
+  // function's own comment for why an index can never survive a reload
+  // directly). Runs at most once per session id (restoredForSessionRef).
+  useEffect(() => {
+    if (!session || !bars || bars.length === 0 || restoredForSessionRef.current === session.id) return
+    restoredForSessionRef.current = session.id
+    if (session.position) {
+      const entryIndex = resyncCursorIndex(bars, session.position.entry_time)
+      const restored = fromPersistedPosition(session.position, entryIndex)
+      positionRef.current = restored
+      setPosition(restored)
+    }
+    if (session.working_orders.length > 0) {
+      const restored = session.working_orders.map((o) => fromPersistedWorkingOrder(o, resyncCursorIndex(bars, o.placed_time)))
+      workingOrdersRef.current = restored
+      setWorkingOrders(restored)
+    }
+  }, [session, bars])
 
   // Every time a (possibly re-anchored) bars array lands, resolve the
   // logical cursor time back to an index into THIS array -- covers both
@@ -240,17 +284,42 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     klChartRef.current?.fitRange(fit.from, fit.to)
   }
 
-  const saveCursor = (cursorTime: number) => {
+  // F4: every position-changing action (not just a replay step) PATCHes
+  // the FULL current broker-state snapshot -- see UpdateSessionStateRequest's
+  // own comment for why this is a full snapshot, never a partial patch.
+  // Reads position/workingOrders from the REFS (always current, unlike
+  // React state inside the same synchronous handler that just called
+  // setPosition/setWorkingOrders) so every call site can update the refs
+  // first and then call this with no extra parameters.
+  const persist = (cursorTimeOverride?: number) => {
     if (!session) return
+    const cursorTime = cursorTimeOverride ?? cursorTimeRef.current
+    if (cursorTime === null) return
     cursorTimeRef.current = cursorTime
-    updateCursor.mutate({ sessionId: session.id, cursorTime })
+    updateCursor.mutate({
+      sessionId: session.id,
+      cursorTime,
+      position: positionRef.current ? toPersistedPosition(positionRef.current) : null,
+      workingOrders: workingOrdersRef.current.map(toPersistedWorkingOrder),
+    })
   }
 
   // Builds the journal request body from a closed trade -- shared by a
-  // manual Close (F2) and an SL/TP auto-close during replay advance (F3),
-  // so the two never drift into two different ideas of what a "closed
-  // trade" record looks like.
-  const journalClosedTrade = (trade: ClosedTradeResult) => {
+  // manual Close (F2), a partial close (F4), and an SL/TP auto-close
+  // during replay advance (F3), so all three never drift into two
+  // different ideas of what a "closed trade" record looks like.
+  //
+  // Returns the mutation's promise (mutateAsync, not the fire-and-forget
+  // `mutate`) so callers can AWAIT it before their own persist() call --
+  // both this (POST /trades) and persist() (PATCH .../cursor) do their own
+  // read-modify-write of the SAME session.json server-side (see
+  // bt_session_service.py's record_trade/update_cursor), so firing them
+  // without a real ordering guarantee races: whichever one's own _read()
+  // happens to land first would silently overwrite the OTHER's write with
+  // stale data once it writes back. Confirmed live during F4 verification
+  // (a partial close's persisted position reverted to its PRE-close
+  // contract count) before this await was added.
+  const journalClosedTrade = async (trade: ClosedTradeResult) => {
     if (!session) return
     const slPoints = trade.slPrice !== null ? Math.abs(trade.entryPrice - trade.slPrice) : null
     const tpPoints = trade.tpPrice !== null ? Math.abs(trade.tpPrice - trade.entryPrice) : null
@@ -280,7 +349,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       mfe_r: trade.mfeR,
       bars_held: trade.barsHeld,
     }
-    createTrade.mutate({ sessionId: session.id, body })
+    await createTrade.mutateAsync({ sessionId: session.id, body })
   }
 
   // The single place replay ever moves the cursor forward or back --
@@ -295,7 +364,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // once per step, not twice -- reading cursorIndexRef instead of an
   // updater's `prev` gets the same "always current" guarantee without
   // that risk.
-  const advanceTo = (newIndex: number) => {
+  const advanceTo = async (newIndex: number) => {
     if (!session || !bars) return
     const spec = getContractSpec(session.instrument)
     const result = advanceReplay(
@@ -311,12 +380,19 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     workingOrdersRef.current = result.workingOrders
     setPosition(result.position)
     setWorkingOrders(result.workingOrders)
-    for (const trade of result.closedTrades) journalClosedTrade(trade)
 
     cursorIndexRef.current = newIndex
     setCursorIndexState(newIndex)
     const t = bars[newIndex]?.time
-    if (t !== undefined) saveCursor(t)
+    // Journal any closed trade(s) BEFORE persisting -- both this (POST
+    // /trades) and persist() (PATCH .../cursor) do their own read-modify-
+    // write of the SAME session.json server-side, so awaiting the journal
+    // first (see journalClosedTrade's own comment) guarantees persist's
+    // own read sees the post-trade balance AND that persist's write --
+    // carrying the correct post-close position/working_orders -- lands
+    // last, rather than racing and possibly being silently overwritten.
+    for (const trade of result.closedTrades) await journalClosedTrade(trade)
+    if (t !== undefined) persist(t)
     // Nearing the end of the loaded window -- shift the anchor forward so
     // continued stepping/playback keeps having bars to advance into,
     // instead of running off the end of a static window.
@@ -406,18 +482,79 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
       slPrice: null,
       tpPrice: null,
+      autoBreakeven: armedAutoBreakeven,
+      trailingPoints: armedTrailingPoints,
     }
     positionRef.current = newPosition
     setPosition(newPosition)
+    persist()
   }
 
-  const handleClosePosition = () => {
+  const handleClosePosition = async () => {
     if (!session || !bars || !position) return
     const spec = getContractSpec(session.instrument)
     const result = closePosition(bars, position, cursorIndex, spec, session.account.commission_per_contract)
-    journalClosedTrade(result)
     positionRef.current = null
     setPosition(null)
+    // Journal BEFORE persisting -- see journalClosedTrade's own comment on
+    // why the order matters (both endpoints race on the same session.json
+    // otherwise).
+    await journalClosedTrade(result)
+    persist()
+  }
+
+  // FXR_SPEC.md phase F4: closes half the position at market, journaling
+  // that slice as its own closed trade and leaving the remainder open
+  // (same avg entry/SL/TP -- there's only ever one entry fill in this
+  // model, see closePositionPartial's own comment). Rounds to the nearest
+  // whole contract; if that's the WHOLE position (e.g. 1 contract), this
+  // is equivalent to a full Close.
+  const handlePartialClose = async () => {
+    if (!session || !bars || !position) return
+    const spec = getContractSpec(session.instrument)
+    const half = Math.max(1, Math.round(position.contracts / 2))
+    const result = closePositionPartialAtMarket(bars, position, cursorIndex, half, spec, session.account.commission_per_contract)
+    positionRef.current = result.remainingPosition
+    setPosition(result.remainingPosition)
+    await journalClosedTrade(result.closedTrade)
+    persist()
+  }
+
+  // FXR_SPEC.md phase F4's optional toggles: FLAT, these arm the toggle
+  // for the next trade; with a position OPEN, they read/write its live
+  // fields directly and re-persist immediately (PositionTicket's own
+  // comment explains the dual purpose -- this is where it's decided).
+  const handleAutoBreakevenChange = (v: boolean) => {
+    if (position) {
+      const updated = { ...position, autoBreakeven: v }
+      positionRef.current = updated
+      setPosition(updated)
+      persist()
+    } else {
+      setArmedAutoBreakeven(v)
+    }
+  }
+  const handleTrailingPointsChange = (v: number | null) => {
+    if (position) {
+      const updated = { ...position, trailingPoints: v }
+      positionRef.current = updated
+      setPosition(updated)
+      persist()
+    } else {
+      setArmedTrailingPoints(v)
+    }
+  }
+
+  // ChartKL's F4 draggable open-position SL/TP lines (see its
+  // openPositionEditor prop) -- re-computes open R live off the new
+  // levels for free, since PositionTicket's readout already derives R
+  // from `openPositionRecord`, which itself derives from `position`.
+  const handleOpenPositionSlTpChange = (next: { slPrice: number | null; tpPrice: number | null }) => {
+    if (!position) return
+    const updated = { ...position, slPrice: next.slPrice, tpPrice: next.tpPrice }
+    positionRef.current = updated
+    setPosition(updated)
+    persist()
   }
 
   // "New Trade" (FXR_SPEC.md section B): arms the ticket at sensible
@@ -459,6 +596,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         riskUsd,
         slPrice: ticket.slPrice,
         tpPrice: ticket.tpPrice,
+        autoBreakeven: armedAutoBreakeven,
+        trailingPoints: armedTrailingPoints,
       }
       positionRef.current = newPosition
       setPosition(newPosition)
@@ -475,16 +614,20 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         riskUsd,
         placedTime: marketBar.time,
         placedIndex: cursorIndex,
+        autoBreakeven: armedAutoBreakeven,
+        trailingPoints: armedTrailingPoints,
       }
       workingOrdersRef.current = [order]
       setWorkingOrders([order])
     }
     setTicket(null)
+    persist()
   }
 
   const cancelWorkingOrder = () => {
     workingOrdersRef.current = []
     setWorkingOrders([])
+    persist()
   }
 
   // Right-click order placement (FXR_SPEC.md section B): BOTH order-type/
@@ -520,9 +663,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
         placedTime: bars[cursorIndex].time,
         placedIndex: cursorIndex,
+        autoBreakeven: armedAutoBreakeven,
+        trailingPoints: armedTrailingPoints,
       }
       workingOrdersRef.current = [order]
       setWorkingOrders([order])
+      persist()
     }
 
     // impliedOrderType already derives the correct type FOR each side
@@ -662,6 +808,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onClose={handleClosePosition}
           onCancelOrder={cancelWorkingOrder}
           closing={createTrade.isPending}
+          autoBreakeven={position ? position.autoBreakeven : armedAutoBreakeven}
+          onAutoBreakevenChange={handleAutoBreakevenChange}
+          trailingPoints={position ? position.trailingPoints : armedTrailingPoints}
+          onTrailingPointsChange={handleTrailingPointsChange}
+          onPartialClose={handlePartialClose}
+          partialCloseDisabled={!position || position.contracts < 2}
         />
       )}
       <div className="min-h-0 flex-1">
@@ -696,6 +848,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               : null
           }
           getEmptyAreaMenuExtraItems={handleEmptyAreaMenuItems}
+          openPositionEditor={
+            position ? { entryTime: position.entryTime, side: position.side, slPrice: position.slPrice, tpPrice: position.tpPrice } : null
+          }
+          onOpenPositionSlTpChange={handleOpenPositionSlTpChange}
         />
       </div>
     </div>

@@ -40,6 +40,19 @@ interface PositionTicketProps {
   onClose: () => void
   onCancelOrder: () => void
   closing: boolean
+  // FXR_SPEC.md phase F4's optional toggles. Dual-purpose depending on
+  // whether a position is open: FLAT, these arm the toggle for the NEXT
+  // trade (Buy/Sell/ticket confirm); OPEN, they read/write the live
+  // position's own fields directly (SessionWorkspace decides which one
+  // these mean -- this panel just renders whatever it's handed). Same
+  // pattern for partial close: only meaningful (and only enabled) once a
+  // position with >=2 contracts is open.
+  autoBreakeven: boolean
+  onAutoBreakevenChange: (v: boolean) => void
+  trailingPoints: number | null
+  onTrailingPointsChange: (v: number | null) => void
+  onPartialClose: () => void
+  partialCloseDisabled: boolean
 }
 
 function slTp(slPrice: number | null, tpPrice: number | null): string {
@@ -59,6 +72,12 @@ export default function PositionTicket({
   onClose,
   onCancelOrder,
   closing,
+  autoBreakeven,
+  onAutoBreakevenChange,
+  trailingPoints,
+  onTrailingPointsChange,
+  onPartialClose,
+  partialCloseDisabled,
 }: PositionTicketProps) {
   const flat = !position && !workingOrder
 
@@ -92,11 +111,54 @@ export default function PositionTicket({
       >
         {closing ? 'Closing…' : 'Close'}
       </button>
+      {position && (
+        <button
+          onClick={onPartialClose}
+          disabled={disabled || partialCloseDisabled || closing}
+          className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+        >
+          Close ½
+        </button>
+      )}
       {workingOrder && (
         <button onClick={onCancelOrder} className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover">
           Cancel order
         </button>
       )}
+
+      <div className="h-4 w-px bg-surface-2" />
+
+      {/* DESIGN_LANGUAGE.md section 4: every gap/padding here stays on the
+          4px grid (gap-2/px-2/py-1), matching the buttons' own px-3 py-1 --
+          so the input sits at the same height as the controls beside it. The
+          number field follows section 6's "faint border only on focus":
+          borderless at rest (it reads as part of the label), accent ring on
+          focus-visible, same as every other input in the app. */}
+      <label className="flex items-center gap-2 text-text-muted">
+        <input
+          type="checkbox"
+          checked={autoBreakeven}
+          onChange={(e) => onAutoBreakevenChange(e.target.checked)}
+          className="accent-accent"
+        />
+        BE @+1R
+      </label>
+      <label className="flex items-center gap-2 text-text-muted">
+        Trail
+        <input
+          type="number"
+          min={0}
+          step={0.25}
+          value={trailingPoints ?? ''}
+          onChange={(e) => {
+            const v = e.target.value === '' ? null : Number(e.target.value)
+            onTrailingPointsChange(v !== null && v > 0 ? v : null)
+          }}
+          placeholder="off"
+          className="w-14 rounded border border-transparent bg-surface-2 px-2 py-1 text-text tabular-nums focus:border-accent focus:outline-none"
+        />
+        pts
+      </label>
 
       <div className="h-4 w-px bg-surface-2" />
 

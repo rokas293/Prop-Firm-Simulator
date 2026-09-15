@@ -25,7 +25,7 @@
 //   Deliberately skips slippage/gap-to-open handling entirely, matching
 //   F2's own already-shipped "no slippage modeling" simplification for
 //   consistency; revisit if a later phase needs higher fidelity.
-import type { Bar, TradeRecord } from '../api/types'
+import type { Bar, PersistedPosition, PersistedWorkingOrder, TradeRecord } from '../api/types'
 
 export type Side = 'long' | 'short'
 export type ExitType = 'manual_close' | 'stop_loss' | 'take_profit'
@@ -151,6 +151,44 @@ export interface OpenPosition {
   riskUsd: number | null
   slPrice: number | null
   tpPrice: number | null
+  // F4 optional toggles -- see applyBreakevenAndTrailing.
+  autoBreakeven: boolean
+  trailingPoints: number | null
+}
+
+// FXR_SPEC.md section B/3, phase F4: persistence boundary conversions --
+// entryIndex/placedIndex are indices into the CURRENTLY LOADED bars array,
+// meaningless across a reload (a fresh fetch window re-indexes everything
+// from 0), so they're deliberately dropped here and re-resolved from the
+// persisted TIME the same way cursor_time itself already is
+// (resyncCursorIndex) once bars load again.
+export function toPersistedPosition(position: OpenPosition): PersistedPosition {
+  return {
+    side: position.side,
+    contracts: position.contracts,
+    entry_price: position.entryPrice,
+    entry_time: position.entryTime,
+    risk_usd: position.riskUsd,
+    sl_price: position.slPrice,
+    tp_price: position.tpPrice,
+    auto_breakeven: position.autoBreakeven,
+    trailing_points: position.trailingPoints,
+  }
+}
+
+export function fromPersistedPosition(p: PersistedPosition, entryIndex: number): OpenPosition {
+  return {
+    side: p.side,
+    contracts: p.contracts,
+    entryPrice: p.entry_price,
+    entryTime: p.entry_time,
+    entryIndex,
+    riskUsd: p.risk_usd,
+    slPrice: p.sl_price,
+    tpPrice: p.tp_price,
+    autoBreakeven: p.auto_breakeven,
+    trailingPoints: p.trailing_points,
+  }
 }
 
 export interface ClosedTradeResult {
@@ -262,6 +300,46 @@ export interface WorkingOrder {
   riskUsd: number | null
   placedTime: number
   placedIndex: number
+  // Carried through to the OpenPosition once this order fills (F4) -- an
+  // armed toggle is a property of the TRADE, decided at placement time,
+  // whether it fills immediately (a market order) or later (a working one).
+  autoBreakeven: boolean
+  trailingPoints: number | null
+}
+
+// PersistedWorkingOrder deliberately has no auto_breakeven/trailing_points
+// fields -- FXR_SPEC.md phase F4 only asks for these toggles on an OPEN
+// position, not a still-pending order; a WORKING order that hasn't filled
+// yet carries neither, so there's nothing to lose across a reload.
+export function toPersistedWorkingOrder(order: WorkingOrder): PersistedWorkingOrder {
+  return {
+    id: order.id,
+    side: order.side,
+    order_type: order.orderType,
+    price: order.price,
+    contracts: order.contracts,
+    sl_price: order.slPrice,
+    tp_price: order.tpPrice,
+    risk_usd: order.riskUsd,
+    placed_time: order.placedTime,
+  }
+}
+
+export function fromPersistedWorkingOrder(o: PersistedWorkingOrder, placedIndex: number): WorkingOrder {
+  return {
+    id: o.id,
+    side: o.side,
+    orderType: o.order_type as PendingOrderType,
+    price: o.price,
+    contracts: o.contracts,
+    slPrice: o.sl_price,
+    tpPrice: o.tp_price,
+    riskUsd: o.risk_usd,
+    placedTime: o.placed_time,
+    placedIndex,
+    autoBreakeven: false,
+    trailingPoints: null,
+  }
 }
 
 // Which entry-order type makes sense for a given side, given where the
@@ -296,6 +374,113 @@ function slTpHit(position: OpenPosition, bar: Bar): ExitType | null {
     (position.side === 'long' ? bar.high >= position.tpPrice : bar.low <= position.tpPrice)
   if (!hitSl && !hitTp) return null
   return hitSl ? 'stop_loss' : 'take_profit'
+}
+
+// FXR_SPEC.md section B, phase F4's optional toggles -- evaluated once per
+// bar, AFTER that bar's own SL/TP check (see advanceReplay: a position
+// already closed this bar has nothing left to adjust), so a stop can never
+// be moved using information from a bar it didn't survive. Both read the
+// bar's OWN favorable extreme (high for a long, low for a short) -- the
+// same "this bar's OHLC only" discipline as every other fill/trigger check
+// in this module.
+//
+// Break-even moves the SL to entry (never a fee-inclusive "entry + costs"
+// figure -- SL is a PRICE, commission is separate) the first bar the
+// favorable excursion reaches +1R, and only that once (`slPrice !==
+// entryPrice` guards against re-triggering every subsequent bar).
+//
+// Trailing keeps the SL exactly trailingPoints behind the best price seen
+// so far, and -- critically -- only ever moves it TOWARD the position's
+// favor, never back: a bar that pulls back doesn't drag the stop with it.
+function applyBreakevenAndTrailing(position: OpenPosition, bar: Bar, spec: ContractSpec): OpenPosition {
+  let pos = position
+  const favorableExtreme = pos.side === 'long' ? bar.high : bar.low
+
+  if (pos.autoBreakeven && pos.riskUsd && pos.slPrice !== pos.entryPrice) {
+    const profitAtExtreme = unrealizedPnl(pos.side, pos.entryPrice, favorableExtreme, pos.contracts, spec)
+    if (profitAtExtreme >= pos.riskUsd) {
+      pos = { ...pos, slPrice: pos.entryPrice }
+    }
+  }
+
+  if (pos.trailingPoints !== null && pos.trailingPoints > 0) {
+    const candidateSl = pos.side === 'long' ? favorableExtreme - pos.trailingPoints : favorableExtreme + pos.trailingPoints
+    const trailedSl =
+      pos.slPrice === null ? candidateSl : pos.side === 'long' ? Math.max(pos.slPrice, candidateSl) : Math.min(pos.slPrice, candidateSl)
+    if (trailedSl !== pos.slPrice) pos = { ...pos, slPrice: trailedSl }
+  }
+
+  return pos
+}
+
+// FXR_SPEC.md section B, phase F4: closes CONTRACTS-worth of the position
+// at exitPrice, journaling that slice as its own ClosedTradeResult, and
+// returns whatever's left open (null if this closed the whole thing).
+// There is only ever ONE entry fill in this model (no averaging-in), so
+// the remainder's entryPrice/entryTime/slPrice/tpPrice are all unchanged --
+// only contracts (and riskUsd, proportionally) shrink. riskUsd shrinks
+// proportionally because it represents a DOLLAR figure frozen at entry for
+// the WHOLE position; the remaining contracts' share of that original
+// risk is smaller, so R-multiples on both the closed slice and whatever's
+// left keep meaning "fraction of the ORIGINALLY intended max loss", not a
+// number that jumps around across partial closes.
+export interface PartialCloseResult {
+  closedTrade: ClosedTradeResult
+  remainingPosition: OpenPosition | null
+}
+
+export function closePositionPartial(
+  bars: Bar[],
+  position: OpenPosition,
+  exitIndex: number,
+  contractsToClose: number,
+  exitPrice: number,
+  exitType: ExitType,
+  spec: ContractSpec,
+  commissionPerContract: number,
+): PartialCloseResult {
+  const closingAll = contractsToClose >= position.contracts
+  const closedPortion: OpenPosition = closingAll
+    ? position
+    : {
+        ...position,
+        contracts: contractsToClose,
+        riskUsd: position.riskUsd !== null ? (position.riskUsd * contractsToClose) / position.contracts : null,
+      }
+  const closedTrade = closePositionAt(bars, closedPortion, exitIndex, exitPrice, exitType, spec, commissionPerContract)
+  if (closingAll) return { closedTrade, remainingPosition: null }
+
+  const remainingContracts = position.contracts - contractsToClose
+  const remainingPosition: OpenPosition = {
+    ...position,
+    contracts: remainingContracts,
+    riskUsd: position.riskUsd !== null ? (position.riskUsd * remainingContracts) / position.contracts : null,
+  }
+  return { closedTrade, remainingPosition }
+}
+
+// The "Close half" button's own convenience wrapper -- mirrors
+// closePosition's own relationship to closePositionAt (always at market,
+// always a manual_close; partial closes are a manual-only action in F4,
+// never auto-triggered by SL/TP).
+export function closePositionPartialAtMarket(
+  bars: Bar[],
+  position: OpenPosition,
+  exitIndex: number,
+  contractsToClose: number,
+  spec: ContractSpec,
+  commissionPerContract: number,
+): PartialCloseResult {
+  return closePositionPartial(
+    bars,
+    position,
+    exitIndex,
+    contractsToClose,
+    marketFillPrice(bars[exitIndex]),
+    'manual_close',
+    spec,
+    commissionPerContract,
+  )
 }
 
 export interface AdvanceReplayResult {
@@ -340,6 +525,12 @@ export function advanceReplay(
         const exitPrice = hit === 'stop_loss' ? (pos.slPrice as number) : (pos.tpPrice as number)
         closedTrades.push(closePositionAt(bars, pos, i, exitPrice, hit, spec, commissionPerContract))
         pos = null
+      } else {
+        // Only a position that was ALREADY open (and survived this bar's
+        // own SL/TP check) gets its stop adjusted -- never a position that
+        // just filled this same bar (see the same-bar-exit branch below,
+        // which deliberately does not call this).
+        pos = applyBreakevenAndTrailing(pos, bar, spec)
       }
     }
 
@@ -356,6 +547,8 @@ export function advanceReplay(
           riskUsd: order.riskUsd,
           slPrice: order.slPrice,
           tpPrice: order.tpPrice,
+          autoBreakeven: order.autoBreakeven,
+          trailingPoints: order.trailingPoints,
         }
         filledOrderIds.push(order.id)
         orders = orders.filter((o) => o.id !== order.id)

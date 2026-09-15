@@ -140,6 +140,35 @@ export interface SimAccount {
   commission_per_contract: number
 }
 
+// FXR_SPEC.md section B/3, phase F4: the sim broker's open position and
+// working orders, persisted WITH the session (see UpdateSessionStateRequest
+// below) so a mid-trade reload restores them. Deliberately no *_index
+// field -- see the backend model's own comment for why only the TIME
+// survives a reload, never a bars-array index.
+export interface PersistedPosition {
+  side: 'long' | 'short'
+  contracts: number
+  entry_price: number
+  entry_time: number
+  risk_usd: number | null
+  sl_price: number | null
+  tp_price: number | null
+  auto_breakeven: boolean
+  trailing_points: number | null
+}
+
+export interface PersistedWorkingOrder {
+  id: string
+  side: 'long' | 'short'
+  order_type: 'limit' | 'stop'
+  price: number
+  contracts: number
+  sl_price: number | null
+  tp_price: number | null
+  risk_usd: number | null
+  placed_time: number
+}
+
 export interface BacktestSessionSummary {
   id: string
   instrument: string
@@ -150,6 +179,8 @@ export interface BacktestSessionSummary {
   cursor_time: number
   status: 'active' | 'archived'
   account: SimAccount
+  position: PersistedPosition | null
+  working_orders: PersistedWorkingOrder[]
 }
 
 export type BacktestSessionDetail = BacktestSessionSummary
@@ -164,6 +195,16 @@ export interface CreateSessionRequest {
   risk_per_trade_usd?: number | null
   default_contracts: number
   commission_per_contract: number
+}
+
+// F4: every cursor update carries the FULL current broker state, never a
+// partial patch -- see the backend model's own comment for why (unambiguous
+// "flat" vs "unchanged"). Used standalone (cursor_time left at whatever it
+// already is) by every position-changing action, not just replay steps.
+export interface UpdateSessionStateRequest {
+  cursor_time: number
+  position?: PersistedPosition | null
+  working_orders?: PersistedWorkingOrder[]
 }
 
 // FXR_SPEC.md section 2/6, phase F2: a journaled manual trade -- the exact

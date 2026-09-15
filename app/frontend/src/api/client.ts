@@ -9,6 +9,8 @@ import type {
   EquityPoint,
   IndicatorResponse,
   ManualTrade,
+  PersistedPosition,
+  PersistedWorkingOrder,
   RecordTradeResponse,
   RunMeta,
   RunSummary,
@@ -16,6 +18,7 @@ import type {
   StatsResponse,
   SummarizeResponse,
   TradeRecord,
+  UpdateSessionStateRequest,
 } from './types'
 import { usePerfStore } from '../state/perfStore'
 
@@ -104,9 +107,20 @@ export const api = {
     request<BacktestSessionSummary[]>('/bt-sessions', { include_archived: includeArchived ? 'true' : undefined }),
   getBtSession: (sessionId: string) => request<BacktestSessionDetail>(`/bt-sessions/${sessionId}`),
   createBtSession: (body: CreateSessionRequest) => sendJson<BacktestSessionDetail, CreateSessionRequest>('/bt-sessions', 'POST', body),
-  updateBtSessionCursor: (sessionId: string, cursorTime: number) =>
-    sendJson<BacktestSessionDetail, { cursor_time: number }>(`/bt-sessions/${sessionId}/cursor`, 'PATCH', {
+  // F4: also carries the FULL current position/working-orders snapshot
+  // (see UpdateSessionStateRequest's own comment) -- position/workingOrders
+  // default to null/[] (flat) so F1/F2 call sites that only care about the
+  // cursor don't need to change.
+  updateBtSessionCursor: (
+    sessionId: string,
+    cursorTime: number,
+    position: PersistedPosition | null = null,
+    workingOrders: PersistedWorkingOrder[] = [],
+  ) =>
+    sendJson<BacktestSessionDetail, UpdateSessionStateRequest>(`/bt-sessions/${sessionId}/cursor`, 'PATCH', {
       cursor_time: cursorTime,
+      position,
+      working_orders: workingOrders,
     }),
   archiveBtSession: (sessionId: string) => postRequest<BacktestSessionDetail>(`/bt-sessions/${sessionId}/archive`),
   getBtSessionTrades: (sessionId: string) => request<ManualTrade[]>(`/bt-sessions/${sessionId}/trades`),

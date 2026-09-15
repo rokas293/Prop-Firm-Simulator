@@ -175,6 +175,8 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         "status": "active",
         "account": account.model_dump(),
         "settings": {"random_start": req.random_start},
+        "position": None,
+        "working_orders": [],
     }
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)
@@ -206,16 +208,24 @@ def get_session(session_id: str) -> models.BacktestSessionDetail:
     return models.BacktestSessionDetail.model_validate(data)
 
 
-def update_cursor(session_id: str, cursor_time: int) -> models.BacktestSessionDetail:
+def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.BacktestSessionDetail:
+    """Advances the cursor AND persists the full current broker state
+    (F4) in one write -- also called with cursor_time left unchanged by
+    every OTHER position-changing action (Buy/Sell/Confirm/Close/partial-
+    close/cancel-order/drag-modify), so a reload never has to wait for the
+    next replay step to see the latest trade (F2/F3's own flagged gap).
+    """
     data = _read(session_id)
     # No-look-ahead sanity check at the persistence boundary too (VIZ_SPEC
     # section 0's rule isn't just a chart-rendering concern): a session can
     # never save a cursor before its own replay anchor.
-    if cursor_time < data["start_time"]:
+    if req.cursor_time < data["start_time"]:
         raise InvalidSessionRequest(
-            f"cursor_time {cursor_time} is before this session's start_time {data['start_time']}"
+            f"cursor_time {req.cursor_time} is before this session's start_time {data['start_time']}"
         )
-    data["cursor_time"] = cursor_time
+    data["cursor_time"] = req.cursor_time
+    data["position"] = req.position.model_dump() if req.position is not None else None
+    data["working_orders"] = [o.model_dump() for o in req.working_orders]
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)

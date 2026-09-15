@@ -5,9 +5,9 @@ so nothing downstream has to think about timezones again.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RunResultModel(BaseModel):
@@ -167,22 +167,6 @@ class SimAccountModel(BaseModel):
     commission_per_contract: float
 
 
-class BacktestSessionSummary(BaseModel):
-    id: str
-    instrument: str
-    base_timeframe: str
-    start_time: int
-    created_at: str
-    updated_at: str
-    cursor_time: int
-    status: str  # "active" | "archived"
-    account: SimAccountModel
-
-
-class BacktestSessionDetail(BacktestSessionSummary):
-    pass
-
-
 class CreateSessionRequest(BaseModel):
     instrument: str
     base_timeframe: str
@@ -198,8 +182,71 @@ class CreateSessionRequest(BaseModel):
     commission_per_contract: float = 1.0
 
 
+# --- FXR_SPEC.md section B/3, phase F4: the sim broker's open position and
+# working orders, persisted WITH the session so a mid-trade reload restores
+# them instead of silently losing the trade (F2/F3's own flagged gap).
+# Deliberately no *_index field -- an index into the currently-loaded bars
+# array is meaningless across a reload (a fresh fetch window re-indexes
+# everything from 0), same reasoning as cursor_time itself: only the TIME
+# survives a reload; the frontend re-resolves it back to an index the same
+# way it already does for cursor_time (resyncCursorIndex).
+
+class PersistedPosition(BaseModel):
+    side: str
+    contracts: int
+    entry_price: float
+    entry_time: int
+    risk_usd: Optional[float] = None
+    sl_price: Optional[float] = None
+    tp_price: Optional[float] = None
+    # F4 optional toggles -- carried on the position so they survive a
+    # reload same as everything else about it.
+    auto_breakeven: bool = False
+    trailing_points: Optional[float] = None
+
+
+class PersistedWorkingOrder(BaseModel):
+    id: str
+    side: str
+    order_type: str  # "limit" | "stop"
+    price: float
+    contracts: int
+    sl_price: Optional[float] = None
+    tp_price: Optional[float] = None
+    risk_usd: Optional[float] = None
+    placed_time: int
+
+
+class BacktestSessionSummary(BaseModel):
+    id: str
+    instrument: str
+    base_timeframe: str
+    start_time: int
+    created_at: str
+    updated_at: str
+    cursor_time: int
+    status: str  # "active" | "archived"
+    account: SimAccountModel
+    position: Optional[PersistedPosition] = None
+    working_orders: List[PersistedWorkingOrder] = Field(default_factory=list)
+
+
+class BacktestSessionDetail(BacktestSessionSummary):
+    pass
+
+
 class UpdateCursorRequest(BaseModel):
     cursor_time: int
+    # F4: every cursor update also carries the FULL current broker state
+    # (never a partial/optional patch) -- unambiguously distinguishes
+    # "flat" (position=None) from "unchanged" without a separate sentinel,
+    # since the frontend always knows its own current state at the moment
+    # of any step. Also used standalone (cursor_time left at whatever it
+    # already is) by every OTHER position-changing action (Buy/Sell/
+    # Confirm/Close/partial-close/cancel-order/drag-modify) so a reload
+    # never has to wait for the next replay step to see the latest trade.
+    position: Optional[PersistedPosition] = None
+    working_orders: List[PersistedWorkingOrder] = Field(default_factory=list)
 
 
 # --- FXR_SPEC.md section 2/6, phase F2: manual trades journaled from the

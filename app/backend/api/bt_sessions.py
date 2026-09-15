@@ -37,7 +37,7 @@ def get_session(session_id: str) -> models.BacktestSessionDetail:
 @router.patch("/{session_id}/cursor", response_model=models.BacktestSessionDetail)
 def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.BacktestSessionDetail:
     try:
-        return bt_session_service.update_cursor(session_id, req.cursor_time)
+        return bt_session_service.update_cursor(session_id, req)
     except bt_session_service.SessionNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except bt_session_service.InvalidSessionRequest as e:

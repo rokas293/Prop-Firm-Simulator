@@ -200,6 +200,111 @@ def test_update_cursor_unknown_session_404(bt_client):
     assert r.status_code == 404
 
 
+# --- FXR_SPEC.md phase F4's MUST-FIX: the open position and working
+# orders persist WITH the session (via the same cursor PATCH), so a
+# mid-trade reload restores them instead of silently losing the trade.
+
+def _position_payload(**overrides):
+    body = {
+        "side": "long",
+        "contracts": 2,
+        "entry_price": 5010.0,
+        "entry_time": _valid_start_time() + 600,
+        "risk_usd": 500.0,
+        "sl_price": 5000.0,
+        "tp_price": 5030.0,
+        "auto_breakeven": False,
+        "trailing_points": None,
+    }
+    body.update(overrides)
+    return body
+
+
+def _working_order_payload(**overrides):
+    body = {
+        "id": "order-1",
+        "side": "short",
+        "order_type": "stop",
+        "price": 4990.0,
+        "contracts": 1,
+        "sl_price": None,
+        "tp_price": None,
+        "risk_usd": 250.0,
+        "placed_time": _valid_start_time() + 600,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_fresh_session_starts_flat_with_no_position_or_orders(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    assert created["position"] is None
+    assert created["working_orders"] == []
+
+
+def test_update_cursor_persists_position_and_survives_reload(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    cursor_time = created["start_time"] + 600
+    r = bt_client.patch(
+        f"/api/bt-sessions/{created['id']}/cursor",
+        json={"cursor_time": cursor_time, "position": _position_payload()},
+    )
+    assert r.status_code == 200
+    assert r.json()["position"] == _position_payload()
+
+    # The actual "reload" check: a FRESH GET (simulating a new page load)
+    # must see the exact same position, not just the PATCH's own response.
+    reloaded = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
+    assert reloaded["position"] == _position_payload()
+    assert reloaded["cursor_time"] == cursor_time
+
+
+def test_update_cursor_persists_working_orders_and_survives_reload(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    cursor_time = created["start_time"] + 600
+    bt_client.patch(
+        f"/api/bt-sessions/{created['id']}/cursor",
+        json={"cursor_time": cursor_time, "working_orders": [_working_order_payload()]},
+    )
+    reloaded = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
+    assert reloaded["working_orders"] == [_working_order_payload()]
+    assert reloaded["position"] is None  # unaffected, still flat
+
+
+def test_update_cursor_with_no_position_field_clears_it_back_to_flat(bt_client):
+    # Every cursor update carries the FULL current broker state (no partial
+    # patch semantics) -- a step taken after closing out must clear a
+    # previously-persisted position, not leave the stale one behind.
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    t1 = created["start_time"] + 300
+    bt_client.patch(f"/api/bt-sessions/{created['id']}/cursor", json={"cursor_time": t1, "position": _position_payload()})
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] is not None
+
+    t2 = created["start_time"] + 600
+    bt_client.patch(f"/api/bt-sessions/{created['id']}/cursor", json={"cursor_time": t2})
+    reloaded = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
+    assert reloaded["position"] is None
+    assert reloaded["working_orders"] == []
+    assert reloaded["cursor_time"] == t2
+
+
+def test_update_cursor_position_carries_auto_breakeven_and_trailing_toggles(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    payload = _position_payload(auto_breakeven=True, trailing_points=8.0)
+    bt_client.patch(
+        f"/api/bt-sessions/{created['id']}/cursor",
+        json={"cursor_time": created["start_time"] + 300, "position": payload},
+    )
+    reloaded = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
+    assert reloaded["position"]["auto_breakeven"] is True
+    assert reloaded["position"]["trailing_points"] == 8.0
+
+
 def test_archive_session(bt_client):
     _skip_if_no_mes_data()
     created = _create(bt_client).json()

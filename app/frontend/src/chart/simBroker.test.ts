@@ -4,8 +4,12 @@ import {
   MAX_POSITION_CONTRACTS,
   advanceReplay,
   closePosition,
+  closePositionPartial,
+  closePositionPartialAtMarket,
   computeAutoSize,
   computeMaeMfe,
+  fromPersistedPosition,
+  fromPersistedWorkingOrder,
   getContractSpec,
   impliedOrderType,
   marketFillPrice,
@@ -13,6 +17,8 @@ import {
   orderTriggered,
   riskUsdAtEntry,
   sideSign,
+  toPersistedPosition,
+  toPersistedWorkingOrder,
   toR,
   unrealizedPnl,
   type OpenPosition,
@@ -128,6 +134,8 @@ describe('closePosition -- deterministic fill reproducibility', () => {
     riskUsd: 100,
     slPrice: null,
     tpPrice: null,
+    autoBreakeven: false,
+    trailingPoints: null,
   }
 
   function handCalcExpected() {
@@ -207,6 +215,8 @@ describe('openPositionAsTradeRecord', () => {
     riskUsd: 50,
     slPrice: null,
     tpPrice: null,
+    autoBreakeven: false,
+    trailingPoints: null,
   }
 
   it('marks to market at the current cursor bar and computes live pnl/r', () => {
@@ -351,6 +361,8 @@ function baseOrder(overrides: Partial<WorkingOrder> = {}): WorkingOrder {
     riskUsd: null,
     placedTime: BARS2[0].time,
     placedIndex: 0,
+    autoBreakeven: false,
+    trailingPoints: null,
     ...overrides,
   }
 }
@@ -394,6 +406,8 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       entryTime: 600,
       entryIndex: 2,
       riskUsd: null,
+      autoBreakeven: false,
+      trailingPoints: null,
       slPrice: null,
       tpPrice: null,
     })
@@ -469,6 +483,8 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       riskUsd: 50,
       slPrice: 4980,
       tpPrice: 5040,
+      autoBreakeven: false,
+      trailingPoints: null,
     }
     // bar5 (idx5): low 4970 <= slPrice 4980 -- closes there, at the SL
     // price exactly, not the bar's own (worse) low.
@@ -497,6 +513,8 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       // close this on TP a bar early, before the intended same-bar
       // ambiguity on bar5 (high 5035) is ever reached.
       tpPrice: 5031,
+      autoBreakeven: false,
+      trailingPoints: null,
     }
     const result = advanceReplay(BARS2, 3, 5, position, [], CONTRACT_SPECS.MES, 1.3)
     expect(result.closedTrades[0].exitType).toBe('stop_loss')
@@ -513,6 +531,8 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       riskUsd: null,
       slPrice: null,
       tpPrice: null,
+      autoBreakeven: false,
+      trailingPoints: null,
     }
     const order = baseOrder({ id: 'limit-1', price: 4988 })
     const result = advanceReplay(BARS2, 0, 3, openPos, [order], CONTRACT_SPECS.MES, 1.3)
@@ -522,5 +542,256 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
     expect(result.position).toEqual(openPos)
     expect(result.workingOrders).toEqual([order])
     expect(result.filledOrderIds).toEqual([])
+  })
+})
+
+// FXR_SPEC.md phase F4: partial close -- closes CONTRACTS-worth at market/
+// a given price, journals that slice, and leaves the remainder open with
+// the SAME entry/SL/TP (there's only ever one entry fill in this model)
+// and a proportionally-shrunk riskUsd, so R-multiples on both pieces keep
+// meaning "fraction of the originally-intended max loss."
+describe('closePositionPartial / closePositionPartialAtMarket (F4)', () => {
+  const position: OpenPosition = {
+    side: 'long',
+    contracts: 4,
+    entryPrice: 5000,
+    entryTime: BARS[0].time,
+    entryIndex: 0,
+    riskUsd: 400,
+    slPrice: 4980,
+    tpPrice: 5040,
+    autoBreakeven: false,
+    trailingPoints: null,
+  }
+
+  it('closing 1 of 4 contracts: the closed slice is hand-calculated exactly, and the remainder keeps the same entry/SL/TP with 3/4 the risk', () => {
+    // exitIndex=2 (bars[2].close=5005): closed slice grosses
+    // (5005-5000)*5*1=25, minus $1 commission = $24 net; its own riskUsd
+    // is 400*1/4=100, so r = 24/100 = 0.24.
+    const result = closePositionPartial(BARS, position, 2, 1, 5005, 'manual_close', CONTRACT_SPECS.MES, 1)
+    expect(result.closedTrade.contracts).toBe(1)
+    expect(result.closedTrade.pnlUsd).toBeCloseTo(24)
+    expect(result.closedTrade.rMultiple).toBeCloseTo(0.24)
+    expect(result.remainingPosition).not.toBeNull()
+    expect(result.remainingPosition!.contracts).toBe(3)
+    expect(result.remainingPosition!.entryPrice).toBe(position.entryPrice)
+    expect(result.remainingPosition!.entryTime).toBe(position.entryTime)
+    expect(result.remainingPosition!.slPrice).toBe(position.slPrice)
+    expect(result.remainingPosition!.tpPrice).toBe(position.tpPrice)
+    expect(result.remainingPosition!.riskUsd).toBeCloseTo(300) // 400 * 3/4
+  })
+
+  it('mae/mfe on the closed slice are scanned over the ORIGINAL entryIndex, same as a full close', () => {
+    // bars[0..2] low/high: lo=min(4998,5001,5004)=4998, hi=max(5003,5012,5015)=5015
+    const result = closePositionPartial(BARS, position, 2, 1, 5005, 'manual_close', CONTRACT_SPECS.MES, 0)
+    expect(result.closedTrade.maePoints).toBeCloseTo(2) // 5000-4998
+    expect(result.closedTrade.mfePoints).toBeCloseTo(15) // 5015-5000
+  })
+
+  it('closing >= the full size behaves exactly like closePosition: no remainder, the closed trade is the WHOLE position', () => {
+    const result = closePositionPartial(BARS, position, 2, 4, 5005, 'manual_close', CONTRACT_SPECS.MES, 1)
+    expect(result.remainingPosition).toBeNull()
+    expect(result.closedTrade.contracts).toBe(4)
+    expect(result.closedTrade.pnlUsd).toBeCloseTo((5005 - 5000) * 5 * 4 - 1 * 4)
+  })
+
+  it('closePositionPartialAtMarket fills the closed slice at the bar close and journals it as a manual_close, matching closePosition/closePositionPartial conventions', () => {
+    const result = closePositionPartialAtMarket(BARS, position, 2, 1, CONTRACT_SPECS.MES, 1)
+    expect(result.closedTrade.exitPrice).toBe(marketFillPrice(BARS[2]))
+    expect(result.closedTrade.exitType).toBe('manual_close')
+  })
+
+  it('is reproducible: identical inputs always yield an identical result', () => {
+    const a = closePositionPartial(BARS, position, 2, 1, 5005, 'manual_close', CONTRACT_SPECS.MES, 1)
+    const b = closePositionPartial(BARS, position, 2, 1, 5005, 'manual_close', CONTRACT_SPECS.MES, 1)
+    expect(a).toEqual(b)
+  })
+})
+
+// FXR_SPEC.md phase F4's optional toggles, exercised through advanceReplay
+// (applyBreakevenAndTrailing itself isn't exported -- same "test the public
+// surface" discipline as slTpHit above). Each bars fixture is small and
+// hand-calculated per step so the exact bar that flips the stop is obvious.
+describe('advanceReplay -- auto break-even and trailing stop (F4)', () => {
+  const BE_BARS: Bar[] = [
+    { time: 0, open: 5000, high: 5000, low: 5000, close: 5000, volume: 100 },
+    // profit at the high = (5015-5000)*5 = $75, under the $100 1R basis --
+    // must NOT trigger yet.
+    { time: 300, open: 5000, high: 5015, low: 4995, close: 5010, volume: 100 },
+    // profit at the high = (5022-5000)*5 = $110 >= $100 -- triggers,
+    // SL moves to entry (5000) exactly, not entry+fees.
+    { time: 600, open: 5010, high: 5022, low: 5008, close: 5020, volume: 100 },
+    // pulls back (low 5010 stays above the new 5000 stop) -- SL must stay
+    // at 5000, not re-derive a different level from this bar's own profit.
+    { time: 900, open: 5020, high: 5019, low: 5010, close: 5015, volume: 100 },
+    // drops through the break-even stop -- exits flat (entry==exit), not
+    // at a loss, which is the entire point of the toggle.
+    { time: 1200, open: 5015, high: 5018, low: 4995, close: 5000, volume: 100 },
+  ]
+  const bePosition: OpenPosition = {
+    side: 'long',
+    contracts: 1,
+    entryPrice: 5000,
+    entryTime: BE_BARS[0].time,
+    entryIndex: 0,
+    riskUsd: 100,
+    slPrice: null,
+    tpPrice: null,
+    autoBreakeven: true,
+    trailingPoints: null,
+  }
+
+  it('does not move the SL before the favorable excursion reaches +1R', () => {
+    const r1 = advanceReplay(BE_BARS, 0, 1, bePosition, [], CONTRACT_SPECS.MES, 0)
+    expect(r1.position?.slPrice).toBeNull()
+  })
+
+  it('moves the SL to exactly entry price the first bar +1R is reached', () => {
+    const r1 = advanceReplay(BE_BARS, 0, 1, bePosition, [], CONTRACT_SPECS.MES, 0)
+    const r2 = advanceReplay(BE_BARS, 1, 2, r1.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r2.position?.slPrice).toBe(5000)
+  })
+
+  it('does not re-derive/re-trigger on a later bar once already at break-even', () => {
+    const r1 = advanceReplay(BE_BARS, 0, 1, bePosition, [], CONTRACT_SPECS.MES, 0)
+    const r2 = advanceReplay(BE_BARS, 1, 2, r1.position, [], CONTRACT_SPECS.MES, 0)
+    const r3 = advanceReplay(BE_BARS, 2, 3, r2.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r3.position?.slPrice).toBe(5000)
+  })
+
+  it('a subsequent pullback through the break-even stop exits FLAT (0 pnl), not at a loss', () => {
+    const r1 = advanceReplay(BE_BARS, 0, 1, bePosition, [], CONTRACT_SPECS.MES, 0)
+    const r2 = advanceReplay(BE_BARS, 1, 2, r1.position, [], CONTRACT_SPECS.MES, 0)
+    const r3 = advanceReplay(BE_BARS, 2, 3, r2.position, [], CONTRACT_SPECS.MES, 0)
+    const r4 = advanceReplay(BE_BARS, 3, 4, r3.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r4.position).toBeNull()
+    expect(r4.closedTrades[0].exitType).toBe('stop_loss')
+    expect(r4.closedTrades[0].exitPrice).toBe(5000)
+    expect(r4.closedTrades[0].pnlUsd).toBe(0)
+    expect(r4.closedTrades[0].rMultiple).toBe(0)
+  })
+
+  const TRAIL_BARS: Bar[] = [
+    { time: 0, open: 5000, high: 5000, low: 5000, close: 5000, volume: 100 },
+    // sets the first trail: high 5020 - 10pt trail = 5010.
+    { time: 300, open: 5000, high: 5020, low: 4998, close: 5015, volume: 100 },
+    // pulls back (high only 5012, a LOWER high) but stays above the 5010
+    // stop -- the trail must NOT drag backward to 5012-10=5002.
+    { time: 600, open: 5015, high: 5012, low: 5011, close: 5011, volume: 100 },
+    // a new higher high (5035) advances the trail to 5035-10=5025.
+    { time: 900, open: 5011, high: 5035, low: 5015, close: 5030, volume: 100 },
+    // drops through the now-5025 trailed stop.
+    { time: 1200, open: 5030, high: 5032, low: 5020, close: 5025, volume: 100 },
+  ]
+  const trailPosition: OpenPosition = {
+    side: 'long',
+    contracts: 1,
+    entryPrice: 5000,
+    entryTime: TRAIL_BARS[0].time,
+    entryIndex: 0,
+    riskUsd: null,
+    slPrice: null,
+    tpPrice: null,
+    autoBreakeven: false,
+    trailingPoints: 10,
+  }
+
+  it('sets the SL to exactly trailingPoints behind the first favorable extreme', () => {
+    const r1 = advanceReplay(TRAIL_BARS, 0, 1, trailPosition, [], CONTRACT_SPECS.MES, 0)
+    expect(r1.position?.slPrice).toBe(5010) // 5020 - 10
+  })
+
+  it('never drags the stop backward on a pullback bar, even when that bar\'s own high is lower', () => {
+    const r1 = advanceReplay(TRAIL_BARS, 0, 1, trailPosition, [], CONTRACT_SPECS.MES, 0)
+    const r2 = advanceReplay(TRAIL_BARS, 1, 2, r1.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r2.position?.slPrice).toBe(5010) // unchanged, not 5012-10=5002
+  })
+
+  it('advances the stop again once a new higher high is made', () => {
+    const r1 = advanceReplay(TRAIL_BARS, 0, 1, trailPosition, [], CONTRACT_SPECS.MES, 0)
+    const r2 = advanceReplay(TRAIL_BARS, 1, 2, r1.position, [], CONTRACT_SPECS.MES, 0)
+    const r3 = advanceReplay(TRAIL_BARS, 2, 3, r2.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r3.position?.slPrice).toBe(5025) // 5035 - 10
+  })
+
+  it('closes exactly at the trailed stop price once price drops through it', () => {
+    const r1 = advanceReplay(TRAIL_BARS, 0, 1, trailPosition, [], CONTRACT_SPECS.MES, 0)
+    const r2 = advanceReplay(TRAIL_BARS, 1, 2, r1.position, [], CONTRACT_SPECS.MES, 0)
+    const r3 = advanceReplay(TRAIL_BARS, 2, 3, r2.position, [], CONTRACT_SPECS.MES, 0)
+    const r4 = advanceReplay(TRAIL_BARS, 3, 4, r3.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r4.position).toBeNull()
+    expect(r4.closedTrades[0].exitType).toBe('stop_loss')
+    expect(r4.closedTrades[0].exitPrice).toBe(5025)
+  })
+
+  it('processing the whole trail in ONE jump gives the same final result as stepping bar-by-bar (determinism holds with toggles active too)', () => {
+    const stepped1 = advanceReplay(TRAIL_BARS, 0, 1, trailPosition, [], CONTRACT_SPECS.MES, 0)
+    const stepped2 = advanceReplay(TRAIL_BARS, 1, 2, stepped1.position, [], CONTRACT_SPECS.MES, 0)
+    const stepped3 = advanceReplay(TRAIL_BARS, 2, 3, stepped2.position, [], CONTRACT_SPECS.MES, 0)
+    const stepped4 = advanceReplay(TRAIL_BARS, 3, 4, stepped3.position, [], CONTRACT_SPECS.MES, 0)
+    const jumped = advanceReplay(TRAIL_BARS, 0, 4, trailPosition, [], CONTRACT_SPECS.MES, 0)
+    expect(jumped).toEqual(stepped4)
+  })
+})
+
+// FXR_SPEC.md phase F4: the persistence boundary conversions -- a mid-trade
+// reload must restore the EXACT same domain object modulo the one field
+// that can't survive (the bars-array index, re-resolved externally by the
+// caller and passed back in here, same contract resyncCursorIndex already
+// established for cursor_time).
+describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder / fromPersistedWorkingOrder (F4)', () => {
+  const position: OpenPosition = {
+    side: 'short',
+    contracts: 2,
+    entryPrice: 5012.5,
+    entryTime: 12345,
+    entryIndex: 7, // deliberately NOT expected to round-trip
+    riskUsd: 250,
+    slPrice: 5030,
+    tpPrice: 4990,
+    autoBreakeven: true,
+    trailingPoints: 8,
+  }
+
+  it('round-trips every field except entryIndex, which is re-supplied externally', () => {
+    const persisted = toPersistedPosition(position)
+    const restored = fromPersistedPosition(persisted, 42)
+    expect(restored).toEqual({ ...position, entryIndex: 42 })
+  })
+
+  it('the wire shape uses the documented snake_case field names', () => {
+    const persisted = toPersistedPosition(position)
+    expect(persisted).toEqual({
+      side: 'short',
+      contracts: 2,
+      entry_price: 5012.5,
+      entry_time: 12345,
+      risk_usd: 250,
+      sl_price: 5030,
+      tp_price: 4990,
+      auto_breakeven: true,
+      trailing_points: 8,
+    })
+  })
+
+  const order: WorkingOrder = {
+    id: 'wo-1',
+    side: 'long',
+    orderType: 'stop',
+    price: 5100,
+    contracts: 1,
+    slPrice: 5080,
+    tpPrice: 5150,
+    riskUsd: 150,
+    placedTime: 999,
+    placedIndex: 3, // deliberately NOT expected to round-trip
+    autoBreakeven: true,
+    trailingPoints: 5,
+  }
+
+  it('round-trips a working order, EXCEPT placedIndex (re-supplied externally) and the F4 toggles (documented gap: not carried on the wire while still pending)', () => {
+    const persisted = toPersistedWorkingOrder(order)
+    const restored = fromPersistedWorkingOrder(persisted, 9)
+    expect(restored).toEqual({ ...order, placedIndex: 9, autoBreakeven: false, trailingPoints: null })
   })
 })

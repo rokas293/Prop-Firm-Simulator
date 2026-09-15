@@ -2,7 +2,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
 import { fetchBarsInWorker } from '../workers/barsWorkerClient'
 import type { StatsScope, TradeQueryParams } from '../state/tradeStore'
-import type { CreateManualTradeRequest, CreateSessionRequest, IndicatorName } from './types'
+import type {
+  CreateManualTradeRequest,
+  CreateSessionRequest,
+  IndicatorName,
+  PersistedPosition,
+  PersistedWorkingOrder,
+} from './types'
 
 export type { StatsScope }
 
@@ -191,8 +197,17 @@ export function useCreateBtSession() {
 export function useUpdateBtSessionCursor() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ sessionId, cursorTime }: { sessionId: string; cursorTime: number }) =>
-      api.updateBtSessionCursor(sessionId, cursorTime),
+    mutationFn: ({
+      sessionId,
+      cursorTime,
+      position,
+      workingOrders,
+    }: {
+      sessionId: string
+      cursorTime: number
+      position?: PersistedPosition | null
+      workingOrders?: PersistedWorkingOrder[]
+    }) => api.updateBtSessionCursor(sessionId, cursorTime, position ?? null, workingOrders ?? []),
     onSuccess: (updated) => {
       queryClient.setQueryData(['bt-session', updated.id], updated)
     },
