@@ -41,6 +41,8 @@ import {
   ensureSessionBandOverlayRegistered,
   type SessionBand,
 } from './sessionOverlay'
+import { cameraRestoreIndex } from './cameraPreserve'
+import { KL_ORDER_LINE, ensureOrderLineOverlayRegistered } from './orderLineOverlay'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
 import { useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
 import { useIndicatorStore, type ColorableIndicatorKey, type IndicatorPrefs } from '../../state/indicatorStore'
@@ -234,6 +236,27 @@ function themeStyles(colors: ThemeColors, base: ThemeBase) {
       vertical: { color: base.grid },
     },
     candle: {
+      // The always-on legend in the pane's top-left. klinecharts' default
+      // template is verbose ("Time: … Open: … High: … Low: … Close: …
+      // Volume: …", ~570px wide), which is both at odds with
+      // DESIGN_LANGUAGE.md section 1/5 ("elevate by removing", quiet chrome)
+      // and the main thing the sim broker's order lines collide with (see
+      // orderLineOverlay.ts). Time is already on the x-axis and in the
+      // replay bar, and volume has its own VOL sub-pane legend, so both go;
+      // what's left is the compact O/H/L/C every trading chart uses. Titles
+      // take the muted text level, values the primary one -- section 2's
+      // "two levels of text, never color, for hierarchy".
+      tooltip: {
+        legend: {
+          template: [
+            { title: { text: 'O', color: base.textMuted }, value: { text: '{open}', color: base.text } },
+            { title: { text: 'H', color: base.textMuted }, value: { text: '{high}', color: base.text } },
+            { title: { text: 'L', color: base.textMuted }, value: { text: '{low}', color: base.text } },
+            { title: { text: 'C', color: base.textMuted }, value: { text: '{close}', color: base.text } },
+          ],
+        },
+        title: { color: base.textMuted, family: FONT_FAMILY },
+      },
       bar: {
         compareRule: 'current_open' as const,
         upColor: colors.upCandle,
@@ -337,23 +360,6 @@ function toKLineData(bar: Bar): KLineData {
 function withReadyChart(chart: Chart | null, hasData: boolean, fn: (chart: Chart) => void): void {
   if (!chart || !hasData) return
   fn(chart)
-}
-
-// The exact [leftTime, rightTime] (unix seconds) the candle pane is
-// currently showing, via pixel->time conversion at both edges -- avoids
-// reasoning about klinecharts' own internal bar-count/offset indexing
-// entirely (see the cursorTime effect below, REPLICA_ROADMAP.md Batch 1's
-// "free camera," for why that matters: resetData() rebuilds the whole data
-// list on every replay step, so a bar INDEX captured before the rebuild
-// doesn't necessarily mean the same thing after it, but a TIMESTAMP does).
-function getVisibleTimeRange(chart: Chart): { leftTime: number; rightTime: number } | null {
-  const width = chart.getSize()?.width
-  if (!width) return null
-  const [left, right] = chart.convertFromPixel([{ x: 0 }, { x: width }], { paneId: 'candle_pane' }) as Array<{
-    timestamp?: number
-  }>
-  if (left?.timestamp === undefined || right?.timestamp === undefined) return null
-  return { leftTime: left.timestamp / 1000, rightTime: right.timestamp / 1000 }
 }
 
 // The sole price-chart engine (PART_A_REVISED_klinecharts.md Phases A1-A5
@@ -929,6 +935,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     ensureDrawingOverlaysRegistered()
     ensureIndicatorsRegistered()
     ensureSessionBandOverlayRegistered()
+    ensureOrderLineOverlayRegistered()
     if (!containerRef.current) return
     const chart = init(containerRef.current, { timezone: 'America/New_York' })
     if (!chart) return
@@ -1373,33 +1380,28 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // setOffsetRightDistance(this._offsetRightDistance) runs on every init
   // load, independent of how far the user had panned), which is exactly
   // why the camera used to snap back to the right edge on every step. The
-  // fix captures/restores the visible range in TIME, not klinecharts' own
-  // bar-index space (getVisibleTimeRange above) -- resetData() rebuilds
-  // the whole data list every tick, so an index captured before doesn't
-  // reliably mean the same thing after, but a timestamp does. Zoom
-  // (barSpace) is untouched by resetData() itself, so only scroll needs
-  // restoring. respond() (the mount effect's DataLoader) runs synchronously
-  // for a replay tick (same window, cache hit), so loadedBarsRef.current
-  // already reflects the new cursor by the time resetData() returns.
+  // fix captures/restores the viewport in klinecharts' own DATA-INDEX
+  // space -- see chart/kl/cameraPreserve.ts for the full derivation and
+  // for why the previous timestamp-midpoint restore walked the camera
+  // backwards half a viewport on every single step. Zoom (barSpace) is
+  // untouched by resetData() itself, so only scroll needs restoring.
+  // respond() (the mount effect's DataLoader) runs synchronously for a
+  // replay tick (same window, cache hit), so the data list already
+  // reflects the new cursor by the time resetData() returns.
   useEffect(() => {
     withReadyChart(chartRef.current, fullBarsRef.current.length > 0, (chart) => {
-      const before = getVisibleTimeRange(chart)
+      const beforeRange = chart.getVisibleRange()
+      const beforeFirstBarTime = chart.getDataList()[0]?.timestamp ?? null
       chart.resetData()
-      if (!before) return
-      const centerTime = (before.leftTime + before.rightTime) / 2
-      const newLastBarTime = loadedBarsRef.current[loadedBarsRef.current.length - 1]?.time
-      // Follow ON and the newly-revealed bar would land off the right
-      // edge: nudge just enough to bring it into view -- never a hard
-      // recenter, and no-op (falls through to the plain restore below)
-      // for a backward step, since an earlier bar is never past the old
-      // right edge.
-      if (followLatestBarRef.current && newLastBarTime !== undefined && newLastBarTime > before.rightTime) {
-        chart.scrollToTimestamp((centerTime + (newLastBarTime - before.rightTime)) * 1000, 0)
-      } else {
-        // Follow OFF (or nothing new past the edge): put the camera back
-        // exactly where the user left it -- stepping must never move it.
-        chart.scrollToTimestamp(centerTime * 1000, 0)
-      }
+      const afterList = chart.getDataList()
+      const restoreIndex = cameraRestoreIndex({
+        beforeRealTo: beforeRange.realTo,
+        beforeFirstBarTime,
+        afterFirstBarTime: afterList[0]?.timestamp ?? null,
+        afterBarCount: afterList.length,
+        followLatestBar: followLatestBarRef.current,
+      })
+      if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
     })
   }, [cursorTime])
 
@@ -1427,7 +1429,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
 
     const makeLine = (id: string, price: number, color: string, field: 'entryPrice' | 'slPrice' | 'tpPrice'): OverlayCreate => ({
       id,
-      name: 'horizontalStraightLine',
+      name: KL_ORDER_LINE,
       groupId: TICKET_GROUP_ID,
       lock: false,
       points: [{ timestamp: anchorMs, value: price }],
@@ -1463,7 +1465,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     const anchorMs = (cursorTimeRef.current ?? 0) * 1000
     const line = (id: string, price: number, color: string): OverlayCreate => ({
       id,
-      name: 'horizontalStraightLine',
+      name: KL_ORDER_LINE,
       groupId: WORKING_ORDER_GROUP_ID,
       lock: true,
       points: [{ timestamp: anchorMs, value: price }],
@@ -1508,7 +1510,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
 
     const makeLine = (id: string, price: number, color: string, field: 'slPrice' | 'tpPrice'): OverlayCreate => ({
       id,
-      name: 'horizontalStraightLine',
+      name: KL_ORDER_LINE,
       groupId: OPEN_POS_SLTP_GROUP_ID,
       lock: false,
       points: [{ timestamp: anchorMs, value: price }],

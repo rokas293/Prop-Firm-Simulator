@@ -150,7 +150,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [cursorIndex, setCursorIndexState] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
-  const [followLatestBar, setFollowLatestBar] = useState(false)
+  // ON by default in a REPLAY session (ChartKL's own prop defaults to off,
+  // which is right for reviewing a finished backtest where nothing moves).
+  // With it off, the camera is frozen by design -- correct for panning back
+  // through history, but it means the replay cursor walks off the right
+  // edge after ~5 steps and the user has to pan after every one. Following
+  // keeps the newly revealed bar in view, nudging by exactly one bar only
+  // once it reaches the edge (see chart/kl/cameraPreserve.ts), which is the
+  // behavior FX Replay itself has and what FXR_SPEC section 4A's step/play
+  // loop assumes.
+  const [followLatestBar, setFollowLatestBar] = useState(true)
   const [pickingReplayStart, setPickingReplayStart] = useState(false)
 
   // The logical "current cursor time" this session should be at, kept in
