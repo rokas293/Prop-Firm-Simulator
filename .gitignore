@@ -15,3 +15,4 @@ node_modules/
 app/frontend/dist/
 *.tsbuildinfo
 *.local
+.claude/settings.local.json
