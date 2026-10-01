@@ -5,7 +5,7 @@ import { useThemeStore } from '../state/themeStore'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
 import Card from '../components/Card'
-import { fmtUsd } from '../format'
+import { fmtUsd, fmtUsdWhole } from '../format'
 import { AXIS_TICK_STYLE, AXIS_LINE_STYLE, TOOLTIP_CONTENT_STYLE } from '../chart/rechartsTheme'
 
 // A standalone dockable panel: the full-run equity curve at a glance
@@ -65,7 +65,7 @@ export default function EquityPanel() {
               tickLine={AXIS_LINE_STYLE}
               tickFormatter={(t) => new Date(t * 1000).toISOString().slice(0, 10)}
             />
-            <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} domain={['auto', 'auto']} />
+            <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} domain={['auto', 'auto']} tickFormatter={(v) => fmtUsdWhole(Number(v))} />
             <Tooltip
               contentStyle={TOOLTIP_CONTENT_STYLE}
               labelFormatter={(t) => new Date((t as number) * 1000).toISOString()}

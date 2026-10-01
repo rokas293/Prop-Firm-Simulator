@@ -4,6 +4,7 @@ import RiskChart, { type RiskChartHandle } from '../chart/RiskChart'
 import { useDailyRisk, useEquity, useRun } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { CHART_PANEL_ID } from '../workspace/panelIds'
+import { fmtUsdWhole as fmtUsd } from '../format'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
 import { useThemeStore, useThemeBase } from '../state/themeStore'
@@ -16,9 +17,6 @@ import type { DailyRiskPoint } from '../api/types'
 // just the breach bar (which the backend always protects regardless).
 const RISK_EQUITY_MAX_POINTS = 30000
 
-function fmtUsd(v: number): string {
-  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-}
 
 // Visualization buckets against the MLL's cushion, not a prop rule itself.
 // "Close" stays the theme's fixed `warning` base token -- see RiskChart.tsx's

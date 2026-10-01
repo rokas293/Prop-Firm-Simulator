@@ -7,6 +7,8 @@ import { useChartViewStore } from '../state/chartViewStore'
 import { useUiStore } from '../state/uiStore'
 import { applyCompassFilters, nyHourOfDay } from '../compass/breakdowns'
 import EmptyState from '../components/EmptyState'
+import { FILTER_SELECT, FilterChips, FilterField, FiltersPopover } from '../components/FilterBar'
+import { activeFilterChips } from '../compass/filterChips'
 import Skeleton from '../components/Skeleton'
 import { fmtPoints, fmtPrice, fmtUsd } from '../format'
 
@@ -182,7 +184,11 @@ export default function TradeListPanel() {
   // POLISH_ROADMAP Phase P6: a skeleton of row-shaped bars instead of a
   // blank list while the first fetch is in flight (see EquityPanel.tsx's
   // own comment for why this is rare but real, post Part P4's prefetch).
-  if (rawTrades === undefined) {
+  // Only the very first load swaps the whole panel for a skeleton. A filter
+  // change also makes rawTrades undefined for a moment (new query key); the
+  // toolbar must survive that, or its Filters popover is unmounted -- and so
+  // closed -- the instant you pick a value. The list area shows the skeleton.
+  if (rawTrades === undefined && allTrades === undefined) {
     return (
       <div className="flex h-full w-full flex-col gap-2 p-3">
         {Array.from({ length: 10 }, (_, i) => (
@@ -194,190 +200,195 @@ export default function TradeListPanel() {
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="space-y-2 border-b border-border p-3 text-xs">
-        <div className="flex flex-wrap gap-2">
+      {/* One row (DESIGN_LANGUAGE.md section 1/5): the form lives in a popover,
+          what is applied is always visible as chips, and the count + journal
+          link sit at the right. */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
+        <FiltersPopover count={activeFilterChips(filters).length}>
           {manual ? (
             <>
-              <select
-                value={filters.tag ?? ''}
-                onChange={(e) => setFilter('tag', e.target.value || null)}
-                aria-label="Filter by tag"
-                className="h-7 rounded bg-surface-2 px-2 text-text"
-              >
-                <option value="">Tag: all</option>
-                {tagOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filters.setup ?? ''}
-                onChange={(e) => setFilter('setup', e.target.value || null)}
-                aria-label="Filter by setup"
-                className="h-7 rounded bg-surface-2 px-2 text-text"
-              >
-                <option value="">Setup: all</option>
-                {setupOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filters.grade ?? ''}
-                onChange={(e) => setFilter('grade', e.target.value || null)}
-                aria-label="Filter by grade"
-                className="h-7 rounded bg-surface-2 px-2 text-text"
-              >
-                <option value="">Grade: all</option>
-                {GRADE_OPTIONS.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              {backtestSessionOptions.length > 1 && (
+              <FilterField label="Tag">
                 <select
-                  value={filters.sessionId ?? ''}
-                  onChange={(e) => setFilter('sessionId', e.target.value || null)}
-                  aria-label="Filter by backtest session"
-                  className="h-7 rounded bg-surface-2 px-2 text-text"
+                  value={filters.tag ?? ''}
+                  onChange={(e) => setFilter('tag', e.target.value || null)}
+                  aria-label="Filter by tag"
+                  className={FILTER_SELECT}
                 >
-                  <option value="">Backtest session: all</option>
-                  {backtestSessionOptions.map((v) => (
+                  <option value="">All</option>
+                  {tagOptions.map((v) => (
                     <option key={v} value={v}>
-                      {v.slice(0, 13)}
+                      {v}
                     </option>
                   ))}
                 </select>
+              </FilterField>
+              <FilterField label="Setup">
+                <select
+                  value={filters.setup ?? ''}
+                  onChange={(e) => setFilter('setup', e.target.value || null)}
+                  aria-label="Filter by setup"
+                  className={FILTER_SELECT}
+                >
+                  <option value="">All</option>
+                  {setupOptions.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </FilterField>
+              <FilterField label="Grade">
+                <select
+                  value={filters.grade ?? ''}
+                  onChange={(e) => setFilter('grade', e.target.value || null)}
+                  aria-label="Filter by grade"
+                  className={FILTER_SELECT}
+                >
+                  <option value="">All</option>
+                  {GRADE_OPTIONS.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </FilterField>
+              {backtestSessionOptions.length > 1 && (
+                <FilterField label="Backtest session">
+                  <select
+                    value={filters.sessionId ?? ''}
+                    onChange={(e) => setFilter('sessionId', e.target.value || null)}
+                    aria-label="Filter by backtest session"
+                    className={FILTER_SELECT}
+                  >
+                    <option value="">All</option>
+                    {backtestSessionOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v.slice(0, 13)}
+                      </option>
+                    ))}
+                  </select>
+                </FilterField>
               )}
             </>
           ) : (
+            <FilterField label="Leg">
+              <select
+                value={filters.leg ?? ''}
+                onChange={(e) => setFilter('leg', e.target.value || null)}
+                aria-label="Filter by leg"
+                className={FILTER_SELECT}
+              >
+                <option value="">All</option>
+                {legOptions.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </FilterField>
+          )}
+          <FilterField label="Session">
             <select
-              value={filters.leg ?? ''}
-              onChange={(e) => setFilter('leg', e.target.value || null)}
-              aria-label="Filter by leg"
-              className="h-7 rounded bg-surface-2 px-2 text-text"
+              value={filters.session ?? ''}
+              onChange={(e) => setFilter('session', e.target.value || null)}
+              aria-label="Filter by session"
+              className={FILTER_SELECT}
             >
-              <option value="">Leg: all</option>
-              {legOptions.map((v) => (
+              <option value="">All</option>
+              {sessionOptions.map((v) => (
                 <option key={v} value={v}>
                   {v}
                 </option>
               ))}
             </select>
-          )}
-          <select
-            value={filters.session ?? ''}
-            onChange={(e) => setFilter('session', e.target.value || null)}
-            aria-label="Filter by session"
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          >
-            <option value="">Session: all</option>
-            {sessionOptions.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filters.side ?? ''}
-            onChange={(e) => setFilter('side', e.target.value || null)}
-            aria-label="Filter by side"
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          >
-            <option value="">Side: all</option>
-            {SIDE_OPTIONS.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filters.result ?? ''}
-            onChange={(e) => setFilter('result', (e.target.value || null) as ResultFilter)}
-            aria-label="Filter by result"
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          >
-            <option value="">Result: all</option>
-            <option value="win">Win</option>
-            <option value="loss">Loss</option>
-          </select>
-          <select
-            value={filters.exitType ?? ''}
-            onChange={(e) => setFilter('exitType', e.target.value || null)}
-            aria-label="Filter by exit type"
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          >
-            <option value="">Exit: all</option>
-            {EXIT_TYPE_OPTIONS.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
-            onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
-            aria-label="Filter by entry hour (New York)"
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          >
-            <option value="">Hour: all</option>
-            {hourOptions.map((h) => (
-              <option key={h} value={h}>
-                {String(h).padStart(2, '0')}:00 NY
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Accessibility audit: these labels sat next to their inputs with
-              no htmlFor/id pairing -- confirmed live (input.labels.length
-              was 0), so a screen reader announced the date field with no
-              name at all despite the visible "From"/"To" text right next
-              to it. */}
-          <label htmlFor="trade-list-date-from" className="text-text-muted">
-            From
-          </label>
-          <input
-            id="trade-list-date-from"
-            type="date"
-            value={filters.dateFrom ?? ''}
-            onChange={(e) => setFilter('dateFrom', e.target.value || null)}
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          />
-          <label htmlFor="trade-list-date-to" className="text-text-muted">
-            To
-          </label>
-          <input
-            id="trade-list-date-to"
-            type="date"
-            value={filters.dateTo ?? ''}
-            onChange={(e) => setFilter('dateTo', e.target.value || null)}
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          />
-          {hasFilters && (
-            <button
-              onClick={clearFilters}
-              className="ml-auto h-7 rounded bg-surface-2 px-2 text-text hover:bg-surface-2-hover"
+          </FilterField>
+          <FilterField label="Side">
+            <select
+              value={filters.side ?? ''}
+              onChange={(e) => setFilter('side', e.target.value || null)}
+              aria-label="Filter by side"
+              className={FILTER_SELECT}
             >
-              Clear
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-3 text-text-muted">
-          <span className="tabular-nums">{sorted.length} trades</span>
-          {selectedManualTrade?.session_id && selectedManualTrade.session_trade_id != null && (
-            <button
-              onClick={() => openJournalTrade(selectedManualTrade.session_id!, selectedManualTrade.session_trade_id!)}
-              className="rounded px-2 py-1 text-text-muted hover:bg-surface-2 hover:text-text"
-              title="Open this trade's notes, tags and screenshots in its session's journal"
+              <option value="">All</option>
+              {SIDE_OPTIONS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </FilterField>
+          <FilterField label="Result">
+            <select
+              value={filters.result ?? ''}
+              onChange={(e) => setFilter('result', (e.target.value || null) as ResultFilter)}
+              aria-label="Filter by result"
+              className={FILTER_SELECT}
             >
-              Open in journal
-            </button>
-          )}
-        </div>
+              <option value="">All</option>
+              <option value="win">Win</option>
+              <option value="loss">Loss</option>
+            </select>
+          </FilterField>
+          <FilterField label="Exit">
+            <select
+              value={filters.exitType ?? ''}
+              onChange={(e) => setFilter('exitType', e.target.value || null)}
+              aria-label="Filter by exit type"
+              className={FILTER_SELECT}
+            >
+              <option value="">All</option>
+              {EXIT_TYPE_OPTIONS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </FilterField>
+          <FilterField label="Hour">
+            <select
+              value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
+              onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
+              aria-label="Filter by entry hour (New York)"
+              className={FILTER_SELECT}
+            >
+              <option value="">All</option>
+              {hourOptions.map((h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, '0')}:00 NY
+                </option>
+              ))}
+            </select>
+          </FilterField>
+          <FilterField label="From">
+            <input
+              id="trade-list-date-from"
+              type="date"
+              value={filters.dateFrom ?? ''}
+              onChange={(e) => setFilter('dateFrom', e.target.value || null)}
+              className={FILTER_SELECT}
+            />
+          </FilterField>
+          <FilterField label="To">
+            <input
+              id="trade-list-date-to"
+              type="date"
+              value={filters.dateTo ?? ''}
+              onChange={(e) => setFilter('dateTo', e.target.value || null)}
+              className={FILTER_SELECT}
+            />
+          </FilterField>
+        </FiltersPopover>
+        <FilterChips />
+        <span className="ml-auto flex-none whitespace-nowrap tabular-nums text-text-muted">{sorted.length} trades</span>
+        {selectedManualTrade?.session_id && selectedManualTrade.session_trade_id != null && (
+          <button
+            onClick={() => openJournalTrade(selectedManualTrade.session_id!, selectedManualTrade.session_trade_id!)}
+            className="h-7 flex-none whitespace-nowrap rounded px-2 text-text-muted hover:bg-surface-2 hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            title="Open this trade's notes, tags and screenshots in its session's journal"
+          >
+            Open in journal
+          </button>
+        )}
       </div>
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
@@ -409,7 +420,13 @@ export default function TradeListPanel() {
           })}
         </div>
 
-        {sorted.length === 0 ? (
+        {rawTrades === undefined ? (
+          <div className="flex flex-col gap-2 p-3">
+            {Array.from({ length: 8 }, (_, i) => (
+              <Skeleton key={i} className="h-[26px]" />
+            ))}
+          </div>
+        ) : sorted.length === 0 ? (
           <EmptyState
             title="No trades match the current filters."
             hint={hasFilters ? undefined : 'This run has no trades.'}

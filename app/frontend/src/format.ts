@@ -4,9 +4,25 @@
 // value always reads identically wherever it's shown.
 import { findInstrument, pricePrecisionFromTick } from './chart/kl/instruments'
 
+// Negative money is "-$1,898.75" (sign before the currency symbol), never
+// "$-1,898.75". The sign is taken off first so toLocaleString never has a
+// chance to place it, and a value that rounds to zero ("-0.001") prints as
+// "$0.00", not "-$0.00".
+function money(v: number, digits: number): string {
+  const text = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
+  const rounded = Number(Math.abs(v).toFixed(digits))
+  return `${v < 0 && rounded !== 0 ? '-' : ''}$${text}`
+}
+
 export function fmtUsd(v: number | null | undefined): string {
   if (v === null || v === undefined) return '-'
-  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return money(v, 2)
+}
+
+// Whole-dollar variant for axis ticks and compact labels.
+export function fmtUsdWhole(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '-'
+  return money(v, 0)
 }
 
 export function fmtPct(v: number | null | undefined): string {

@@ -391,7 +391,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
         <KpiTile
           label="Result"
           value={noRuleset ? 'N/A' : result ? resultLabel(result.status) : '-'}
-          sub={noRuleset ? (pooled ? 'per account only' : 'no prop ruleset') : (failReasonLabel(result?.fail_reason) ?? (result?.status === 'incomplete' ? 'Combine still open' : undefined))}
+          sub={noRuleset ? (pooled ? 'per account only' : 'no prop ruleset') : manual ? (result?.status === 'incomplete' ? 'Combine still open' : undefined) : (failReasonLabel(result?.fail_reason) ?? (result?.status === 'incomplete' ? 'Combine still open' : undefined))}
           accent={resultAccent}
         />
         <KpiTile

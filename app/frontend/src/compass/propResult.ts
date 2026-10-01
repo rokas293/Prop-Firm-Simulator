@@ -47,7 +47,8 @@ export function describePropResult(r: StatsResult, totalTrades: number): PropNar
   let headline: string
   if (status === 'failed') {
     const reason = r.fail_reason ? (FAIL_REASON_TEXT[r.fail_reason] ?? r.fail_reason) : 'rule breached'
-    headline = `Failed -- ${reason}`
+    // The verdict word (FAILED) is the hero Result tile's job; this says how.
+    headline = reason.charAt(0).toUpperCase() + reason.slice(1)
     if (where && r.equity_at_result != null && r.mll_floor_at_result != null) {
       details.push(
         `On ${where}, equity fell to ${fmtUsd(r.equity_at_result)}, at or below the ${fmtUsd(r.mll_floor_at_result)} floor.`,
@@ -57,18 +58,18 @@ export function describePropResult(r: StatsResult, totalTrades: number): PropNar
       details.push(`${plural(totalTrades - r.trades_to_result, 'later trade')} journaled after the Combine ended.`)
     }
   } else if (status === 'passed') {
-    headline = 'Passed -- profit target reached, consistency rule satisfied'
+    headline = 'Profit target reached, consistency rule satisfied'
     if (where) details.push(`Reached on ${where}; balance ${fmtUsd(r.final_balance)}.`)
     if (r.trades_to_result != null && totalTrades > r.trades_to_result) {
       details.push(`${plural(totalTrades - r.trades_to_result, 'later trade')} journaled after the pass.`)
     }
   } else if (r.target_hit && r.consistency_passed === false) {
-    headline = 'Incomplete -- target reached, consistency rule not met'
+    headline = 'Target reached, consistency rule not met'
     details.push(
       `The best trading day is more than half of total profit; further profit on other days is needed. Balance ${fmtUsd(r.final_balance)}.`,
     )
   } else {
-    headline = 'Incomplete -- profit target not reached'
+    headline = 'Profit target not yet reached'
     details.push(`Balance ${fmtUsd(r.final_balance)} over ${plural(r.trading_days, 'trading day')}.`)
   }
 

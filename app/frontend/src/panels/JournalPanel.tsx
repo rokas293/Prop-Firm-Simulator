@@ -31,6 +31,8 @@ import { filterManualTrades, nyHourOfDay } from '../compass/breakdowns'
 import { useTradeStore } from '../state/tradeStore'
 import { fmtR, fmtUsd } from '../format'
 import EmptyState from '../components/EmptyState'
+import { FILTER_SELECT, FilterChips, FilterField, FiltersPopover } from '../components/FilterBar'
+import { activeFilterChips } from '../compass/filterChips'
 
 const GRADES = ['A', 'B', 'C'] as const
 type Grade = (typeof GRADES)[number]
@@ -70,7 +72,6 @@ export default function JournalPanel({
 }: JournalPanelProps) {
   const filters = useTradeStore((s) => s.filters)
   const setFilter = useTradeStore((s) => s.setFilter)
-  const clearFilters = useTradeStore((s) => s.clearFilters)
   const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [captureMoment, setCaptureMoment] = useState<CaptureMoment>('entry')
@@ -186,82 +187,92 @@ export default function JournalPanel({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
-        <select
-          value={filters.tag ?? ''}
-          onChange={(e) => setFilter('tag', e.target.value || null)}
-          aria-label="Filter by tag"
-          className="h-7 rounded bg-surface-2 px-2 text-text"
-        >
-          <option value="">Tag: all</option>
-          {tagOptions.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
-        <select
-          value={filters.setup ?? ''}
-          onChange={(e) => setFilter('setup', e.target.value || null)}
-          aria-label="Filter by setup"
-          className="h-7 rounded bg-surface-2 px-2 text-text"
-        >
-          <option value="">Setup: all</option>
-          {setupOptions.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
-        <select
-          value={filters.session ?? ''}
-          onChange={(e) => setFilter('session', e.target.value || null)}
-          aria-label="Filter by session"
-          className="h-7 rounded bg-surface-2 px-2 text-text"
-        >
-          <option value="">Session: all</option>
-          {sessionOptions.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
-        <select
-          value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
-          onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
-          aria-label="Filter by entry hour (New York)"
-          className="h-7 rounded bg-surface-2 px-2 text-text"
-        >
-          <option value="">Hour: all</option>
-          {hourOptions.map((h) => (
-            <option key={h} value={h}>
-              {String(h).padStart(2, '0')}:00 NY
-            </option>
-          ))}
-        </select>
-        <select
-          value={filters.grade ?? ''}
-          onChange={(e) => setFilter('grade', e.target.value || null)}
-          aria-label="Filter by grade"
-          className="h-7 rounded bg-surface-2 px-2 text-text"
-        >
-          <option value="">Grade: all</option>
-          {GRADES.map((g) => (
-            <option key={g} value={g}>
-              {g}
-            </option>
-          ))}
-        </select>
-        {hasFilters && (
-          <>
-            <span className="ml-auto tabular-nums text-text-muted">
-              {filtered.length} of {trades.length}
-            </span>
-            <button onClick={clearFilters} className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
-              Clear
-            </button>
-          </>
-        )}
+      {/* Same Filters popover + chips as the analytics Trade List, because it
+          IS the same filter (state/tradeStore): a filter set there narrows
+          this list, so the chips are what keeps that from being silent. The
+          count sits in the row, not at the end of a wrapped line. */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
+        <FiltersPopover count={activeFilterChips(filters).length}>
+        <FilterField label="Tag">
+  <select
+            value={filters.tag ?? ''}
+            onChange={(e) => setFilter('tag', e.target.value || null)}
+            aria-label="Filter by tag"
+            className={FILTER_SELECT}
+          >
+            <option value="">All</option>
+            {tagOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+</FilterField>
+        <FilterField label="Setup">
+          <select
+            value={filters.setup ?? ''}
+            onChange={(e) => setFilter('setup', e.target.value || null)}
+            aria-label="Filter by setup"
+            className={FILTER_SELECT}
+          >
+            <option value="">All</option>
+            {setupOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        <FilterField label="Session">
+          <select
+            value={filters.session ?? ''}
+            onChange={(e) => setFilter('session', e.target.value || null)}
+            aria-label="Filter by session"
+            className={FILTER_SELECT}
+          >
+            <option value="">All</option>
+            {sessionOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        <FilterField label="Hour">
+          <select
+            value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
+            onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
+            aria-label="Filter by entry hour (New York)"
+            className={FILTER_SELECT}
+          >
+            <option value="">All</option>
+            {hourOptions.map((h) => (
+              <option key={h} value={h}>
+                {String(h).padStart(2, '0')}:00 NY
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        <FilterField label="Grade">
+          <select
+            value={filters.grade ?? ''}
+            onChange={(e) => setFilter('grade', e.target.value || null)}
+            aria-label="Filter by grade"
+            className={FILTER_SELECT}
+          >
+            <option value="">All</option>
+            {GRADES.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        </FiltersPopover>
+        <FilterChips />
+        <span className="ml-auto flex-none whitespace-nowrap tabular-nums text-text-muted">
+          {hasFilters ? `${filtered.length} of ${trades.length}` : `${trades.length} trades`}
+        </span>
       </div>
 
       <div className="min-h-0 flex-[1_1_40%] overflow-auto">

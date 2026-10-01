@@ -28,7 +28,7 @@ describe('describePropResult', () => {
       2,
     )
     expect(n.status).toBe('failed')
-    expect(n.headline).toBe('Failed -- trailing max loss limit breached')
+    expect(n.headline).toBe('Trailing max loss limit breached')
     expect(n.details[0]).toBe(
       'On trade #1 (1 of 2) at 2025-03-11 14:00 UTC, equity fell to $47,950.00, at or below the $48,000.00 floor.',
     )
@@ -49,16 +49,16 @@ describe('describePropResult', () => {
       },
       5,
     )
-    expect(n.headline).toBe('Passed -- profit target reached, consistency rule satisfied')
+    expect(n.headline).toBe('Profit target reached, consistency rule satisfied')
     expect(n.details).toContain('Reached on trade #3 (3 of 5) at 2025-03-13 14:30 UTC; balance $53,000.00.')
     expect(n.details).toContain('2 later trades journaled after the pass.')
   })
 
   it('distinguishes "target hit but consistency not met" from "target not reached"', () => {
     const consistency = describePropResult({ ...base, target_hit: true, consistency_passed: false, final_balance: 53500 }, 4)
-    expect(consistency.headline).toBe('Incomplete -- target reached, consistency rule not met')
+    expect(consistency.headline).toBe('Target reached, consistency rule not met')
     const plain = describePropResult(base, 3)
-    expect(plain.headline).toBe('Incomplete -- profit target not reached')
+    expect(plain.headline).toBe('Profit target not yet reached')
     expect(plain.details[0]).toBe('Balance $50,400.00 over 1 trading day.')
   })
 

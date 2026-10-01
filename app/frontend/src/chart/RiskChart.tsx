@@ -15,6 +15,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import type { DailyRiskPoint, EquityPoint } from '../api/types'
+import { fmtUsdWhole } from '../format'
 import { MllBandPrimitive } from './MllBandPrimitive'
 import { hexToRgba } from './color'
 import { useThemeStore, useThemeBase } from '../state/themeStore'
@@ -34,7 +35,7 @@ export interface RiskChartHandle {
 // numeric doesn't apply to canvas text at all, so number FORMATTING is the
 // lever that's actually available here.
 function fmtAxisPrice(price: number): string {
-  return `$${price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+  return fmtUsdWhole(price)
 }
 
 interface RiskChartProps {
@@ -47,6 +48,14 @@ interface RiskChartProps {
   // squeezed against the right edge. Off by default so engine runs keep the
   // behavior they already had.
   fitOnData?: boolean
+}
+
+// fitContent() packs the last point against the price scale, so a label or
+// marker on the final bar (the breach) has nowhere to draw and is clipped.
+// Fit the same range plus a few empty bars of headroom on the right instead.
+const FIT_RIGHT_PADDING_BARS = 6
+function fitWithRightPadding(chart: IChartApi, points: number): void {
+  chart.timeScale().setVisibleLogicalRange({ from: -1, to: points - 1 + FIT_RIGHT_PADDING_BARS })
 }
 
 const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart({ equity, dailyRisk, fitOnData = false }, ref) {
@@ -76,6 +85,7 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
   const targetLineRef = useRef<IPriceLine | null>(null)
   // Set when a fit is wanted but the pane has no width yet (see fitOnData).
   const pendingFitRef = useRef(false)
+  const equityLenRef = useRef(0)
 
   // Create the chart once; data effects below keep it in sync in place.
   useEffect(() => {
@@ -159,7 +169,7 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
     const onSizeChange = () => {
       if (pendingFitRef.current && chart.timeScale().width() > 0) {
         pendingFitRef.current = false
-        chart.timeScale().fitContent()
+        fitWithRightPadding(chart, equityLenRef.current)
       }
     }
     chart.timeScale().subscribeSizeChange(onSizeChange)
@@ -256,9 +266,10 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
   useEffect(() => {
     const chart = chartRef.current
     if (!fitOnData || equity.length === 0 || !chart) return
+    equityLenRef.current = equity.length
     if (chart.timeScale().width() > 0) {
       pendingFitRef.current = false
-      chart.timeScale().fitContent()
+      fitWithRightPadding(chart, equity.length)
     } else {
       pendingFitRef.current = true
     }
@@ -277,8 +288,10 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
           position: 'aboveBar',
           shape: 'square',
           color: colors.negative,
-          text: `BREACH ${d.trading_day}`,
-          size: 2,
+          // Short on purpose: the date is in the header line and the day
+          // strip; a long label is what used to clip at the right edge.
+          text: 'Breach',
+          size: 1,
           id: `breach-${d.trading_day}`,
         })
       }
@@ -287,8 +300,12 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
           time: d.daily_lock_time as Time,
           position: 'belowBar',
           shape: 'circle',
-          color: base.warning,
-          text: `Daily lock ${d.trading_day}`,
+          // A quiet reference mark, not an alarm: smaller, translucent, no
+          // label (the equity line crossed the old text). The day strip below
+          // carries the same lock as an amber tick with a tooltip, and a
+          // breach (the thing that matters) keeps the loud marker.
+          color: hexToRgba(base.warning, 0.55),
+          size: 0.5,
           id: `lock-${d.trading_day}`,
         })
       }

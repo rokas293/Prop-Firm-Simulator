@@ -26,15 +26,10 @@ export default function PropResultCard({
         <div className="text-base font-medium text-text">Prop-firm result</div>
         <span className="text-xs text-text-muted">{rulesetLabel}</span>
       </div>
-      {/* Semantic colour on the verdict only (data, DESIGN_LANGUAGE.md
-          section 2) -- an incomplete Combine stays neutral. */}
-      <div
-        className={`text-[14px] font-medium ${
-          n.status === 'passed' ? 'text-positive' : n.status === 'failed' ? 'text-negative' : 'text-text'
-        }`}
-      >
-        {n.headline}
-      </div>
+      {/* The verdict itself (PASSED / FAILED / OPEN) is stated once, as the
+          coloured hero Result tile above; this card only explains how it
+          came about, so its headline is neutral text. */}
+      <div className="text-[14px] font-medium text-text">{n.headline}</div>
       <div className="mt-1 space-y-1 text-xs text-text-muted">
         {n.details.map((d) => (
           <p key={d}>{d}</p>

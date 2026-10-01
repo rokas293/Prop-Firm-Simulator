@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtPoints, fmtPrice } from './format'
+import { fmtPoints, fmtPrice, fmtUsd, fmtUsdWhole } from './format'
 
 describe('fmtPrice', () => {
   it('formats MNQ prices at 2dp with a thousands separator (0.25pt ticks)', () => {
@@ -29,5 +29,23 @@ describe('fmtPoints', () => {
   it('returns a dash for null/undefined', () => {
     expect(fmtPoints(null)).toBe('-')
     expect(fmtPoints(undefined)).toBe('-')
+  })
+})
+
+describe('fmtUsd sign placement', () => {
+  it('puts the minus before the dollar sign, never after it', () => {
+    expect(fmtUsd(-1898.75)).toBe('-$1,898.75')
+    expect(fmtUsd(1898.75)).toBe('$1,898.75')
+    expect(fmtUsd(0)).toBe('$0.00')
+  })
+
+  it('does not print a negative zero for a value that rounds to nothing', () => {
+    expect(fmtUsd(-0.001)).toBe('$0.00')
+  })
+
+  it('fmtUsdWhole is the same convention at whole dollars', () => {
+    expect(fmtUsdWhole(-47950)).toBe('-$47,950')
+    expect(fmtUsdWhole(53000)).toBe('$53,000')
+    expect(fmtUsdWhole(null)).toBe('-')
   })
 })

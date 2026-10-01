@@ -83,9 +83,23 @@ export default function Workspace() {
   const scheduleSave = useCallback(() => {
     if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
     saveTimeoutRef.current = window.setTimeout(() => {
-      if (apiRef.current) setLastLayout(apiRef.current.toJSON())
+      const api = apiRef.current
+      // Never persist an empty dock: tearing the workspace down (e.g. "Open in
+      // journal" -> the session view) makes dockview drop its panels, which
+      // fires a layout change; saving THAT would restore blank groups with no
+      // tabs the next time the workspace opens.
+      if (api && api.panels.length > 0) setLastLayout(api.toJSON())
     }, SAVE_DEBOUNCE_MS)
   }, [setLastLayout])
+
+  // And a save still pending when the workspace unmounts must not fire at all.
+  useEffect(
+    () => () => {
+      if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
+      apiRef.current = null
+    },
+    [],
+  )
 
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {

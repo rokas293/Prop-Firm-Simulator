@@ -4,7 +4,7 @@ import { useMonteCarlo } from '../api/hooks'
 import type { TradeQueryParams } from '../state/tradeStore'
 import { useThemeStore } from '../state/themeStore'
 import { actualRankBand, fanRows } from '../compass/monteCarlo'
-import { fmtPct, fmtUsd } from '../format'
+import { fmtPct, fmtUsd, fmtUsdWhole } from '../format'
 import { AXIS_TICK_STYLE, AXIS_LINE_STYLE, TOOLTIP_CONTENT_STYLE } from '../chart/rechartsTheme'
 import Card from './Card'
 import MiniStat from './MiniStat'
@@ -78,7 +78,7 @@ export default function MonteCarloCard({ runId, filters }: { runId: string; filt
                 tickLine={AXIS_LINE_STYLE}
                 label={{ value: 'Trade #', position: 'insideBottom', offset: -5, fill: 'var(--color-text-muted)', fontSize: 11 }}
               />
-              <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
+              <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} tickFormatter={(v) => fmtUsdWhole(Number(v))} />
               <Tooltip
                 contentStyle={TOOLTIP_CONTENT_STYLE}
                 labelFormatter={(t) => `After trade ${t}`}
