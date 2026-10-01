@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import pandas as pd
 import pytest
 
@@ -441,3 +443,254 @@ def test_record_trade_survives_reload(bt_client):
     reloaded_trades = bt_client.get(f"/api/bt-sessions/{session['id']}/trades").json()
     assert len(reloaded_trades) == 1
     assert reloaded_trades[0]["pnl_usd"] == 250.0
+
+
+# --- FXR_SPEC.md section C, phase F5: journaling on top of the auto-logged
+# trade -- notes/tags/setup_name/grade/screenshots, plus session-level notes.
+
+def test_fresh_trade_has_empty_journal_fields(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    assert trade["notes"] == ""
+    assert trade["tags"] == []
+    assert trade["setup_name"] is None
+    assert trade["grade"] is None
+    assert trade["screenshots"] == []
+
+
+def test_update_trade_journal_sets_notes_tags_grade_setup(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+
+    r = bt_client.patch(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}",
+        json={"notes": "Clean break & retest", "tags": ["break_retest", "news_continuation"], "setup_name": "Break & Retest", "grade": "A"},
+    )
+    assert r.status_code == 200
+    updated = r.json()
+    assert updated["notes"] == "Clean break & retest"
+    assert updated["tags"] == ["break_retest", "news_continuation"]
+    assert updated["setup_name"] == "Break & Retest"
+    assert updated["grade"] == "A"
+
+
+def test_update_trade_journal_partial_patch_leaves_other_fields_untouched(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    bt_client.patch(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}",
+        json={"notes": "First note", "tags": ["a"], "grade": "B"},
+    )
+    # A later PATCH that only sets the setup name must not null out the
+    # notes/tags/grade set above -- exclude_unset, not exclude_none.
+    r = bt_client.patch(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}",
+        json={"setup_name": "Break & Retest"},
+    )
+    assert r.status_code == 200
+    updated = r.json()
+    assert updated["notes"] == "First note"
+    assert updated["tags"] == ["a"]
+    assert updated["grade"] == "B"
+    assert updated["setup_name"] == "Break & Retest"
+
+
+def test_update_trade_journal_rejects_bad_grade(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    r = bt_client.patch(f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}", json={"grade": "Z"})
+    assert r.status_code == 400
+
+
+def test_update_trade_journal_unknown_trade_404(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r = bt_client.patch(f"/api/bt-sessions/{session['id']}/trades/999", json={"notes": "x"})
+    assert r.status_code == 404
+
+
+def test_update_trade_journal_unknown_session_404(bt_client):
+    r = bt_client.patch("/api/bt-sessions/does-not-exist/trades/1", json={"notes": "x"})
+    assert r.status_code == 404
+
+
+def test_trade_journal_survives_reload(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    bt_client.patch(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}",
+        json={"notes": "Survives reload", "tags": ["A-setup"], "grade": "A"},
+    )
+    reloaded = bt_client.get(f"/api/bt-sessions/{session['id']}/trades").json()
+    assert reloaded[0]["notes"] == "Survives reload"
+    assert reloaded[0]["tags"] == ["A-setup"]
+    assert reloaded[0]["grade"] == "A"
+
+
+# --- FXR_SPEC.md section C, phase F5: screenshots. Stored as their own file
+# under the session's screenshots/ dir (never embedded in trades.json --
+# see Screenshot's own comment on app/backend/models.py for why), served
+# back through GET .../screenshots/{filename}.
+
+# A real, tiny (1x1 transparent) PNG -- valid base64-encoded image bytes,
+# not just an arbitrary string, since add_trade_screenshot actually decodes
+# and writes it to disk.
+_TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+_TINY_PNG_DATA_URL = f"data:image/png;base64,{_TINY_PNG_B64}"
+
+
+def test_add_trade_screenshot_returns_trade_with_new_screenshot(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+
+    r = bt_client.post(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots",
+        json={"data_url": _TINY_PNG_DATA_URL, "moment": "entry"},
+    )
+    assert r.status_code == 200
+    updated = r.json()
+    assert len(updated["screenshots"]) == 1
+    shot = updated["screenshots"][0]
+    assert shot["moment"] == "entry"
+    assert "data_url" not in shot
+    assert shot["url"].startswith(f"/api/bt-sessions/{session['id']}/screenshots/")
+
+
+def test_add_trade_screenshot_does_not_embed_bytes_in_trades_json(bt_client, tmp_path):
+    # The whole point of moving screenshots to their own files: trades.json
+    # itself must stay small, never growing with the image payload.
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    bt_client.post(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots",
+        json={"data_url": _TINY_PNG_DATA_URL, "moment": "entry"},
+    )
+    trades_json = (tmp_path / "bt_sessions" / session["id"] / "trades.json").read_text(encoding="utf-8")
+    assert _TINY_PNG_B64 not in trades_json
+    screenshots_dir = tmp_path / "bt_sessions" / session["id"] / "screenshots"
+    assert screenshots_dir.is_dir()
+    assert len(list(screenshots_dir.iterdir())) == 1
+
+
+def test_add_trade_screenshot_rejects_non_image_data_url(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    r = bt_client.post(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots",
+        json={"data_url": "not-a-data-url", "moment": "entry"},
+    )
+    assert r.status_code == 400
+
+
+def test_add_trade_screenshot_unknown_trade_404(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r = bt_client.post(
+        f"/api/bt-sessions/{session['id']}/trades/999/screenshots",
+        json={"data_url": _TINY_PNG_DATA_URL, "moment": "entry"},
+    )
+    assert r.status_code == 404
+
+
+def test_add_trade_screenshot_unknown_session_404(bt_client):
+    r = bt_client.post(
+        "/api/bt-sessions/does-not-exist/trades/1/screenshots",
+        json={"data_url": _TINY_PNG_DATA_URL, "moment": "entry"},
+    )
+    assert r.status_code == 404
+
+
+def test_get_screenshot_serves_the_actual_bytes(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    added = bt_client.post(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots",
+        json={"data_url": _TINY_PNG_DATA_URL, "moment": "entry"},
+    ).json()
+    url = added["screenshots"][0]["url"]
+
+    r = bt_client.get(url)
+    assert r.status_code == 200
+    assert r.content == base64.b64decode(_TINY_PNG_B64)
+
+
+def test_get_screenshot_unknown_filename_404(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r = bt_client.get(f"/api/bt-sessions/{session['id']}/screenshots/does-not-exist.png")
+    assert r.status_code == 404
+
+
+def test_delete_trade_screenshot_removes_it_and_the_file(bt_client, tmp_path):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    added = bt_client.post(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots",
+        json={"data_url": _TINY_PNG_DATA_URL, "moment": "entry"},
+    ).json()
+    screenshot_id = added["screenshots"][0]["id"]
+
+    r = bt_client.delete(f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots/{screenshot_id}")
+    assert r.status_code == 200
+    assert r.json()["screenshots"] == []
+
+    screenshots_dir = tmp_path / "bt_sessions" / session["id"] / "screenshots"
+    assert list(screenshots_dir.iterdir()) == []
+
+
+def test_delete_trade_screenshot_unknown_id_404(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    r = bt_client.delete(f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots/does-not-exist")
+    assert r.status_code == 404
+
+
+def test_screenshot_survives_reload(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    trade = bt_client.post(f"/api/bt-sessions/{session['id']}/trades", json=_manual_trade_body()).json()["trade"]
+    added = bt_client.post(
+        f"/api/bt-sessions/{session['id']}/trades/{trade['trade_id']}/screenshots",
+        json={"data_url": _TINY_PNG_DATA_URL, "moment": "exit"},
+    ).json()
+    url = added["screenshots"][0]["url"]
+
+    reloaded_trades = bt_client.get(f"/api/bt-sessions/{session['id']}/trades").json()
+    assert reloaded_trades[0]["screenshots"][0]["url"] == url
+    assert reloaded_trades[0]["screenshots"][0]["moment"] == "exit"
+    r = bt_client.get(url)
+    assert r.status_code == 200
+    assert r.content == base64.b64decode(_TINY_PNG_B64)
+
+
+def test_fresh_session_has_no_notes(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    assert created["notes"] is None
+
+
+def test_update_session_notes_survives_reload(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    r = bt_client.patch(f"/api/bt-sessions/{session['id']}/notes", json={"notes": "Choppy overnight session, mostly fine."})
+    assert r.status_code == 200
+    assert r.json()["notes"] == "Choppy overnight session, mostly fine."
+
+    reloaded = bt_client.get(f"/api/bt-sessions/{session['id']}").json()
+    assert reloaded["notes"] == "Choppy overnight session, mostly fine."
+
+
+def test_update_session_notes_unknown_session_404(bt_client):
+    r = bt_client.patch("/api/bt-sessions/does-not-exist/notes", json={"notes": "x"})
+    assert r.status_code == 404

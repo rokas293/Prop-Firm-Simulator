@@ -91,6 +91,14 @@ export interface ChartKLHandle {
   // in v10.0.3's OverlayView._coordinateToPoint), not anything hand-rolled
   // here. Scoped to this chart instance only (see the prop's own comment).
   setMagnetMode: (on: boolean) => void
+  // FXR_SPEC.md section C, phase F5: "screenshots/chart markup of the
+  // chart ... saved to the trade" -- a plain data URL of the chart's
+  // current canvas (candles, trades, drawings), via klinecharts' own
+  // getConvertPictureUrl. Synchronous and read-only: captures whatever is
+  // currently rendered, no camera move of its own (the caller jumps/pans
+  // first via fitRange, then captures once that's settled). Returns null
+  // if the chart hasn't initialized yet.
+  captureScreenshot: () => string | null
 }
 
 interface ChartKLProps {
@@ -1794,6 +1802,17 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         for (const o of chart.getOverlays({ groupId: DRAWING_GROUP_ID })) {
           chart.overrideOverlay({ id: o.id, mode: magnetModeRef.current })
         }
+      },
+      captureScreenshot: () => {
+        const chart = chartRef.current
+        if (!chart) return null
+        // jpeg (not png): a full candle-pane screenshot is mostly opaque
+        // background, and this gets persisted as a data URL directly in
+        // trades.json (no object storage in this app) -- smaller payload
+        // matters here more than lossless color. includeOverlay=true so
+        // drawings/markup and the trade's own entry/SL/TP lines are baked
+        // into the capture, matching "chart markup ... saved to the trade".
+        return chart.getConvertPictureUrl(true, 'jpeg', baseRef.current.bg)
       },
     }),
     [],

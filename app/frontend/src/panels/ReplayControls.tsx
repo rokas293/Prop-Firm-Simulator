@@ -28,6 +28,14 @@ interface ReplayControlsProps {
   runningPnl: number
   runningR: number
   equity: EquityPoint | null
+  // FXR_SPEC.md section C, phase F5: toggles SessionWorkspace's journal
+  // drawer -- lives here (not a standalone header button) since this is
+  // already the one persistent control row a replay session shows.
+  // Optional/undefined for ChartPanel.tsx's OTHER use of this component (a
+  // completed automated-backtest run's replay, which has no journal
+  // concept at all) -- the button simply doesn't render there.
+  journalOpen?: boolean
+  onToggleJournal?: () => void
 }
 
 export default function ReplayControls({
@@ -46,6 +54,8 @@ export default function ReplayControls({
   runningPnl,
   runningR,
   equity,
+  journalOpen,
+  onToggleJournal,
 }: ReplayControlsProps) {
   const lastIndex = Math.max(0, bars.length - 1)
   const cursorBar = bars[cursorIndex]
@@ -130,6 +140,17 @@ export default function ReplayControls({
 
             {cursorBar && <span className="whitespace-nowrap font-mono text-text-muted">{fmtTime(cursorBar.time)}</span>}
           </>
+        )}
+        {onToggleJournal && (
+          <button
+            onClick={onToggleJournal}
+            aria-pressed={journalOpen}
+            className={`ml-auto rounded px-2 py-1 ${
+              journalOpen ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+            }`}
+          >
+            Journal
+          </button>
         )}
       </div>
 

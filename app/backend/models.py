@@ -229,10 +229,18 @@ class BacktestSessionSummary(BaseModel):
     account: SimAccountModel
     position: Optional[PersistedPosition] = None
     working_orders: List[PersistedWorkingOrder] = Field(default_factory=list)
+    # FXR_SPEC.md section C, phase F5: session-level journal notes (separate
+    # from any one trade's own notes below). Optional/defaulted so every
+    # session.json written before F5 still validates unchanged.
+    notes: Optional[str] = None
 
 
 class BacktestSessionDetail(BacktestSessionSummary):
     pass
+
+
+class UpdateSessionNotesRequest(BaseModel):
+    notes: str
 
 
 class UpdateCursorRequest(BaseModel):
@@ -282,9 +290,65 @@ class CreateManualTradeRequest(BaseModel):
     bars_held: int
 
 
+# --- FXR_SPEC.md section C, phase F5: journaling on top of the auto-logged
+# trade. A screenshot's BYTES live in their own file under the session's
+# directory (bt_session_service._screenshots_dir), served back through a
+# dedicated endpoint -- trades.json (and, via the account-balance write in
+# record_trade, session.json) get rewritten on nearly every journal edit, so
+# embedding a screenshot's data URL directly in either would mean re-writing
+# every OTHER trade's screenshots, in full, on every single journal edit in
+# the session. Only this lightweight reference is persisted in trades.json.
+
+class Screenshot(BaseModel):
+    id: str
+    caption: Optional[str] = None
+    # Which moment of the trade this captures -- "entry"/"exit" per
+    # FXR_SPEC's own wording, or "custom" for any other capture the user
+    # takes while reviewing. Display-only categorization, not enforced
+    # against the trade's actual entry_time/exit_time.
+    moment: str = "custom"
+    # Where the frontend fetches the actual image bytes from (GET, served
+    # by bt_sessions.get_screenshot) -- never the image data itself.
+    url: str
+    created_at: str
+
+
 class ManualTrade(TradeRecord):
     session_id: str
     source: str = "manual"
+    # Journal fields (F5): absent from CreateManualTradeRequest below --
+    # the sim broker journals a bare trade record the moment it closes
+    # (F2), and these are filled in afterward via update_trade_journal (or,
+    # for screenshots, add_trade_screenshot -- see that function's own
+    # comment for why it's a separate endpoint from the rest). Tag taxonomy
+    # is user-editable (FXR_SPEC section C) -- a flat freeform list, not a
+    # fixed enum -- while grade/setup_name get their own dedicated fields
+    # since the UI treats them as single-value pickers, not tags.
+    notes: str = ""
+    tags: List[str] = Field(default_factory=list)
+    setup_name: Optional[str] = None
+    grade: Optional[str] = None  # "A" | "B" | "C" | None, validated in the service layer
+    screenshots: List[Screenshot] = Field(default_factory=list)
+
+
+class UpdateTradeJournalRequest(BaseModel):
+    # Every field optional and merged via exclude_unset (not exclude_none):
+    # a PATCH that only wants to set the grade must never accidentally null
+    # out notes/tags it didn't mean to touch. Screenshots are deliberately
+    # NOT here -- see add_trade_screenshot/delete_trade_screenshot below.
+    notes: Optional[str] = None
+    tags: Optional[List[str]] = None
+    setup_name: Optional[str] = None
+    grade: Optional[str] = None
+
+
+class AddScreenshotRequest(BaseModel):
+    # A data URL (what klinecharts' getConvertPictureUrl returns client-
+    # side) -- decoded and written to its own file server-side; never
+    # stored as-is (see Screenshot's own comment).
+    data_url: str
+    moment: str = "custom"
+    caption: Optional[str] = None
 
 
 class RecordTradeResponse(BaseModel):

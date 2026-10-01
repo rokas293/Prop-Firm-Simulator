@@ -35,18 +35,31 @@ import type { ContextMenuEntry } from '../components/ContextMenu'
 import ReplayControls from '../panels/ReplayControls'
 import PositionTicket, { type WorkingOrderSummary } from '../panels/PositionTicket'
 import TradeTicketPanel, { type TicketReadout } from '../panels/TradeTicketPanel'
+import JournalPanel from '../panels/JournalPanel'
 import {
   useBtSession,
   useBtSessionTrades,
   useBars,
   useCreateManualTrade,
+  useAddTradeScreenshot,
+  useDeleteTradeScreenshot,
   useIndicators,
   useSessions,
   useUpdateBtSessionCursor,
+  useUpdateBtSessionNotes,
+  useUpdateTradeJournal,
 } from '../api/hooks'
 import { useIndicatorStore } from '../state/indicatorStore'
 import { useThemeBase } from '../state/themeStore'
-import type { Bar, CreateManualTradeRequest, IndicatorName, TradeRecord } from '../api/types'
+import type {
+  AddScreenshotRequest,
+  Bar,
+  CreateManualTradeRequest,
+  IndicatorName,
+  ManualTrade,
+  TradeRecord,
+  UpdateTradeJournalRequest,
+} from '../api/types'
 import EmptyState from '../components/EmptyState'
 
 // Sized so the fetched window still resolves at the session's own
@@ -85,6 +98,37 @@ export function defaultFitWindow(anchorTime: number, timeframe: string) {
   return { from: anchorTime - totalSpanSeconds * 0.3, to: anchorTime + totalSpanSeconds * 0.7 }
 }
 
+// FXR_SPEC.md section C, phase F5's trade-review jump: pads a journaled
+// trade's own entry/exit span so both lines are comfortably in view, not
+// pinned to the edges. Deliberately a pure, directly-testable function
+// (same "testable without mounting the workspace" pattern as
+// computeWindow/defaultFitWindow above) -- the caller (handleJumpToTrade)
+// clamps this against whatever bars are ACTUALLY loaded before handing it
+// to ChartKL's fitRange, since a trade from earlier in a long session can
+// fall outside the currently fetched window.
+const REVIEW_PAD_BARS = 15
+
+export function reviewFitWindow(entryTime: number, exitTime: number, timeframe: string) {
+  const barSeconds = BASE_TF_SECONDS[timeframe] ?? 300
+  const pad = barSeconds * REVIEW_PAD_BARS
+  const lo = Math.min(entryTime, exitTime)
+  const hi = Math.max(entryTime, exitTime)
+  return { from: lo - pad, to: hi + pad }
+}
+
+// FXR_SPEC.md section C: auto-tags a journaled trade with the trading
+// session (Asia/London/NY, etc.) its entry falls in -- reuses the exact
+// band data already fetched for the chart's session-band overlay
+// (`sessionsInView` below), rather than re-deriving it. This repoints
+// ManualTrade's pre-existing `session` field (schema-compat with the
+// automated-backtest trade model, FXR_SPEC section 2) to something real
+// instead of always sending null, and is what the journal's "filter by
+// session" reads.
+export function sessionForTime(bands: SessionBand[], time: number): string | null {
+  const band = bands.find((b) => time >= b.start && time < b.end)
+  return band ? band.session : null
+}
+
 export function resyncCursorIndex(bars: Bar[], targetTime: number | null): number {
   if (targetTime === null || bars.length === 0) return 0
   const exact = bars.findIndex((b) => b.time === targetTime)
@@ -119,7 +163,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const { data: manualTrades } = useBtSessionTrades(sessionId)
   const updateCursor = useUpdateBtSessionCursor()
   const createTrade = useCreateManualTrade()
+  const updateSessionNotes = useUpdateBtSessionNotes()
+  const updateTradeJournal = useUpdateTradeJournal()
+  const addTradeScreenshot = useAddTradeScreenshot()
+  const deleteTradeScreenshot = useDeleteTradeScreenshot()
   const themeBase = useThemeBase()
+
+  // FXR_SPEC.md section C, phase F5: the journal drawer -- local UI state,
+  // not persisted (unlike everything it shows, which lives on the backend).
+  const [journalOpen, setJournalOpen] = useState(false)
 
   // FXR_SPEC.md phase F2/F3/F4: the sim broker's single open position and
   // working orders. Local state, mirrored to the backend on every change
@@ -338,7 +390,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       instrument: session.instrument,
       side: trade.side,
       leg: null,
-      session: null,
+      session: sessionForTime(sessionBands, trade.entryTime),
       trading_day: null,
       size_contracts: trade.contracts,
       entry_price: trade.entryPrice,
@@ -443,6 +495,44 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       })),
     [sessionsInView],
   )
+
+  // FXR_SPEC.md section C, phase F5's trade-review jump: a camera-only pan
+  // (fitRange), never a change to replay state (cursorIndex/position/
+  // working orders) -- reviewing an old trade must be side-effect-free, so
+  // it can never re-trigger a fill or desync the cursor from the session's
+  // actual live progress. Clamped to whatever bars are ALREADY loaded (see
+  // reviewFitWindow's own comment) rather than re-anchoring the fetch
+  // window to reach a trade outside it -- that would swap out the loaded
+  // `bars` array under the live cursor's feet, which IS unsafe (advanceTo
+  // indexes into `bars` by position, not time).
+  const handleJumpToTrade = (trade: ManualTrade) => {
+    if (!session || !bars || bars.length === 0) return
+    const fit = reviewFitWindow(trade.entry_time, trade.exit_time, session.base_timeframe)
+    const from = Math.max(fit.from, bars[0].time)
+    const to = Math.min(fit.to, bars[bars.length - 1].time)
+    if (from >= to) return
+    klChartRef.current?.fitRange(from, to)
+  }
+
+  const handleUpdateSessionNotes = (notes: string) => {
+    if (!session) return
+    updateSessionNotes.mutate({ sessionId: session.id, notes })
+  }
+
+  const handleUpdateTradeJournal = (tradeId: number, body: UpdateTradeJournalRequest) => {
+    if (!session) return
+    updateTradeJournal.mutate({ sessionId: session.id, tradeId, body })
+  }
+
+  const handleAddScreenshot = (tradeId: number, body: AddScreenshotRequest) => {
+    if (!session) return
+    addTradeScreenshot.mutate({ sessionId: session.id, tradeId, body })
+  }
+
+  const handleDeleteScreenshot = (tradeId: number, screenshotId: string) => {
+    if (!session) return
+    deleteTradeScreenshot.mutate({ sessionId: session.id, tradeId, screenshotId })
+  }
 
   const indicatorPrefs = useIndicatorStore()
   const enabledIndicators = useMemo(() => {
@@ -790,6 +880,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         runningPnl={replayTotals.pnlUsd}
         runningR={replayTotals.r}
         equity={null}
+        journalOpen={journalOpen}
+        onToggleJournal={() => setJournalOpen((v) => !v)}
       />
       {ticketReadout ? (
         <TradeTicketPanel ticket={ticketReadout} onConfirm={confirmTicket} onCancel={cancelTicket} />
@@ -825,43 +917,66 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           partialCloseDisabled={!position || position.contracts < 2}
         />
       )}
-      <div className="min-h-0 flex-1">
-        <ChartKL
-          ref={klChartRef}
-          instrument={session.instrument}
-          timeframe={session.base_timeframe}
-          from={barsWindow?.from ?? null}
-          to={barsWindow?.to ?? null}
-          trades={chartTrades}
-          selectedTrade={openPositionRecord}
-          indicators={indicators}
-          sessionBands={sessionBands}
-          prefs={indicatorPrefs}
-          loading={barsFetching}
-          cursorTime={cursorTime}
-          followLatestBar={followLatestBar}
-          onCandleBarClick={handleCandleBarClick}
-          onVisibleRangeChange={handleChartVisibleRangeChange}
-          pickMode={pickingReplayStart}
-          slLineColor={themeBase.warning}
-          tradeTicket={ticket}
-          onTradeTicketChange={handleTicketChange}
-          workingOrderView={
-            workingOrders[0]
-              ? {
-                  side: workingOrders[0].side,
-                  price: workingOrders[0].price,
-                  slPrice: workingOrders[0].slPrice,
-                  tpPrice: workingOrders[0].tpPrice,
-                }
-              : null
-          }
-          getEmptyAreaMenuExtraItems={handleEmptyAreaMenuItems}
-          openPositionEditor={
-            position ? { entryTime: position.entryTime, side: position.side, slPrice: position.slPrice, tpPrice: position.tpPrice } : null
-          }
-          onOpenPositionSlTpChange={handleOpenPositionSlTpChange}
-        />
+      <div className="flex min-h-0 flex-1">
+        {/* min-w-0 matters here, not just min-h-0: without it, this flex
+            item's automatic minimum width is its content's min-content size
+            -- klinecharts' canvas still carries its PRE-drawer pixel width
+            until its own ResizeObserver catches up, so on first Journal
+            toggle the flex item refused to shrink for that one frame and
+            the 360px drawer got pushed off the right edge of the viewport
+            entirely (confirmed live: the drawer's DOM/text was present per
+            an accessibility query, just not on-screen). */}
+        <div className="min-h-0 min-w-0 flex-1">
+          <ChartKL
+            ref={klChartRef}
+            instrument={session.instrument}
+            timeframe={session.base_timeframe}
+            from={barsWindow?.from ?? null}
+            to={barsWindow?.to ?? null}
+            trades={chartTrades}
+            selectedTrade={openPositionRecord}
+            indicators={indicators}
+            sessionBands={sessionBands}
+            prefs={indicatorPrefs}
+            loading={barsFetching}
+            cursorTime={cursorTime}
+            followLatestBar={followLatestBar}
+            onCandleBarClick={handleCandleBarClick}
+            onVisibleRangeChange={handleChartVisibleRangeChange}
+            pickMode={pickingReplayStart}
+            slLineColor={themeBase.warning}
+            tradeTicket={ticket}
+            onTradeTicketChange={handleTicketChange}
+            workingOrderView={
+              workingOrders[0]
+                ? {
+                    side: workingOrders[0].side,
+                    price: workingOrders[0].price,
+                    slPrice: workingOrders[0].slPrice,
+                    tpPrice: workingOrders[0].tpPrice,
+                  }
+                : null
+            }
+            getEmptyAreaMenuExtraItems={handleEmptyAreaMenuItems}
+            openPositionEditor={
+              position ? { entryTime: position.entryTime, side: position.side, slPrice: position.slPrice, tpPrice: position.tpPrice } : null
+            }
+            onOpenPositionSlTpChange={handleOpenPositionSlTpChange}
+          />
+        </div>
+        {journalOpen && (
+          <JournalPanel
+            trades={manualTrades ?? []}
+            sessionNotes={session.notes}
+            onUpdateSessionNotes={handleUpdateSessionNotes}
+            onJumpToTrade={handleJumpToTrade}
+            captureScreenshot={() => klChartRef.current?.captureScreenshot() ?? null}
+            onUpdateTradeJournal={handleUpdateTradeJournal}
+            onAddScreenshot={handleAddScreenshot}
+            onDeleteScreenshot={handleDeleteScreenshot}
+            onClose={() => setJournalOpen(false)}
+          />
+        )}
       </div>
     </div>
   )

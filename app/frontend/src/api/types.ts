@@ -181,9 +181,15 @@ export interface BacktestSessionSummary {
   account: SimAccount
   position: PersistedPosition | null
   working_orders: PersistedWorkingOrder[]
+  // FXR_SPEC.md section C, phase F5: session-level journal notes.
+  notes: string | null
 }
 
 export type BacktestSessionDetail = BacktestSessionSummary
+
+export interface UpdateSessionNotesRequest {
+  notes: string
+}
 
 export interface CreateSessionRequest {
   instrument: string
@@ -212,9 +218,42 @@ export interface UpdateSessionStateRequest {
 // session_id/source. ManualTrade structurally satisfies TradeRecord (a
 // superset of its fields), so it can be passed anywhere a TradeRecord[] is
 // expected (ChartKL's `trades` prop) with no adapter.
+// FXR_SPEC.md section C, phase F5: a screenshot captured against a
+// journaled trade. `url` points at the backend's own file-serving endpoint
+// (GET .../screenshots/{filename}) -- the image bytes are never embedded
+// here (mirrors app/backend/models.py's Screenshot exactly; see its own
+// comment for why trades.json only ever holds this lightweight reference).
+export interface JournalScreenshot {
+  id: string
+  caption: string | null
+  moment: 'entry' | 'exit' | 'custom'
+  url: string
+  created_at: string
+}
+
 export interface ManualTrade extends TradeRecord {
   session_id: string
   source: 'manual'
+  notes: string
+  tags: string[]
+  setup_name: string | null
+  grade: 'A' | 'B' | 'C' | null
+  screenshots: JournalScreenshot[]
+}
+
+export interface UpdateTradeJournalRequest {
+  notes?: string
+  tags?: string[]
+  setup_name?: string | null
+  grade?: 'A' | 'B' | 'C' | null
+}
+
+// A data URL (klinecharts' getConvertPictureUrl output) -- decoded and
+// written to its own file server-side; see add_trade_screenshot's comment.
+export interface AddScreenshotRequest {
+  data_url: string
+  moment: 'entry' | 'exit' | 'custom'
+  caption?: string | null
 }
 
 export interface CreateManualTradeRequest {

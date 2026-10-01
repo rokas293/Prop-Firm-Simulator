@@ -3,11 +3,14 @@ import { api } from './client'
 import { fetchBarsInWorker } from '../workers/barsWorkerClient'
 import type { StatsScope, TradeQueryParams } from '../state/tradeStore'
 import type {
+  AddScreenshotRequest,
   CreateManualTradeRequest,
   CreateSessionRequest,
   IndicatorName,
+  ManualTrade,
   PersistedPosition,
   PersistedWorkingOrder,
+  UpdateTradeJournalRequest,
 } from './types'
 
 export type { StatsScope }
@@ -248,5 +251,84 @@ export function useCreateManualTrade() {
       void queryClient.invalidateQueries({ queryKey: ['bt-session-trades', sessionId] })
       void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
     },
+  })
+}
+
+// FXR_SPEC.md section C, phase F5: session-level journal notes.
+export function useUpdateBtSessionNotes() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sessionId, notes }: { sessionId: string; notes: string }) =>
+      api.updateBtSessionNotes(sessionId, notes),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['bt-session', updated.id], updated)
+    },
+  })
+}
+
+// Shared by every mutation below that returns the single updated ManualTrade
+// (updateTradeJournal/addTradeScreenshot/deleteTradeScreenshot) -- splices
+// the server-authoritative trade into the cached list in place rather than
+// invalidating, so an edit doesn't flash a refetch.
+function spliceUpdatedTrade(queryClient: ReturnType<typeof useQueryClient>, sessionId: string, updated: ManualTrade) {
+  queryClient.setQueryData(['bt-session-trades', sessionId], (prev: ManualTrade[] | undefined) =>
+    (prev ?? []).map((t) => (t.trade_id === updated.trade_id ? updated : t)),
+  )
+}
+
+// Notes/tags/setup_name/grade on an already-journaled trade. Screenshots
+// are NOT here -- see useAddTradeScreenshot/useDeleteTradeScreenshot below.
+export function useUpdateTradeJournal() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      tradeId,
+      body,
+    }: {
+      sessionId: string
+      tradeId: number
+      body: UpdateTradeJournalRequest
+    }) => api.updateTradeJournal(sessionId, tradeId, body),
+    onSuccess: (updated, { sessionId }) => spliceUpdatedTrade(queryClient, sessionId, updated),
+  })
+}
+
+// FXR_SPEC.md section C, phase F5: adds/removes one screenshot at a time,
+// each call returning the trade's full, server-authoritative screenshots
+// list -- unlike tags (see JournalPanel.tsx's own comment on why THOSE
+// draft locally to avoid a lost-update race), these never need a client-
+// side "next array" merge: the server always computes the new list itself
+// from whatever it has on disk, so there's nothing for two rapid calls to
+// race over.
+export function useAddTradeScreenshot() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      tradeId,
+      body,
+    }: {
+      sessionId: string
+      tradeId: number
+      body: AddScreenshotRequest
+    }) => api.addTradeScreenshot(sessionId, tradeId, body),
+    onSuccess: (updated, { sessionId }) => spliceUpdatedTrade(queryClient, sessionId, updated),
+  })
+}
+
+export function useDeleteTradeScreenshot() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      tradeId,
+      screenshotId,
+    }: {
+      sessionId: string
+      tradeId: number
+      screenshotId: string
+    }) => api.deleteTradeScreenshot(sessionId, tradeId, screenshotId),
+    onSuccess: (updated, { sessionId }) => spliceUpdatedTrade(queryClient, sessionId, updated),
   })
 }

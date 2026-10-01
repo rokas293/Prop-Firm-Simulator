@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { computeWindow, defaultFitWindow, resyncCursorIndex } from './SessionWorkspace'
+import { computeWindow, defaultFitWindow, resyncCursorIndex, reviewFitWindow, sessionForTime } from './SessionWorkspace'
 import type { Bar } from '../api/types'
+import type { SessionBand } from '../chart/kl/sessionOverlay'
 
 function bar(time: number): Bar {
   return { time, open: 1, high: 1, low: 1, close: 1, volume: 1 }
@@ -79,5 +80,57 @@ describe('resyncCursorIndex', () => {
 
   it('returns the last bar when the target is after every loaded bar', () => {
     expect(resyncCursorIndex(bars, 999)).toBe(3)
+  })
+})
+
+// FXR_SPEC.md section C, phase F5: trade-review jump.
+describe('reviewFitWindow', () => {
+  it('pads a window around the trade entry/exit span', () => {
+    const w = reviewFitWindow(1_000_000, 1_001_500, '5min')
+    expect(w.from).toBeLessThan(1_000_000)
+    expect(w.to).toBeGreaterThan(1_001_500)
+  })
+
+  it('handles a short (long) trade -- entry before exit', () => {
+    const w = reviewFitWindow(1_000_000, 1_002_000, '5min')
+    expect(w.from).toBeLessThan(1_000_000)
+    expect(w.to).toBeGreaterThan(1_002_000)
+  })
+
+  it('handles a short-side trade the same way regardless of argument order', () => {
+    const w1 = reviewFitWindow(1_000_000, 1_002_000, '5min')
+    const w2 = reviewFitWindow(1_002_000, 1_000_000, '5min')
+    expect(w1).toEqual(w2)
+  })
+
+  it('scales the pad with the timeframe bar size', () => {
+    const w1min = reviewFitWindow(1_000_000, 1_001_000, '1min')
+    const w1h = reviewFitWindow(1_000_000, 1_001_000, '1h')
+    expect(w1h.to - w1h.from).toBeGreaterThan(w1min.to - w1min.from)
+  })
+})
+
+describe('sessionForTime', () => {
+  const bands: SessionBand[] = [
+    { start: 1000, end: 2000, session: 'Asia', fairValue: null },
+    { start: 2000, end: 3000, session: 'London', fairValue: null },
+  ]
+
+  it('finds the band containing the given time', () => {
+    expect(sessionForTime(bands, 1500)).toBe('Asia')
+    expect(sessionForTime(bands, 2500)).toBe('London')
+  })
+
+  it('treats the band end as exclusive, matching the NEXT band instead', () => {
+    expect(sessionForTime(bands, 2000)).toBe('London')
+  })
+
+  it('returns null when the time falls in no band', () => {
+    expect(sessionForTime(bands, 500)).toBeNull()
+    expect(sessionForTime(bands, 3500)).toBeNull()
+  })
+
+  it('returns null for an empty bands list', () => {
+    expect(sessionForTime([], 1500)).toBeNull()
   })
 })

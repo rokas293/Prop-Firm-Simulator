@@ -16,9 +16,12 @@ later phase actually needs account reuse across sessions.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import datetime as dt
 import json
 import random
+import re
 import uuid
 from pathlib import Path
 from typing import List, Optional
@@ -51,8 +54,35 @@ class SessionNotFound(Exception):
         self.session_id = session_id
 
 
+class TradeNotFound(Exception):
+    def __init__(self, session_id: str, trade_id: int):
+        super().__init__(f"trade {trade_id} not found in session {session_id!r}")
+        self.session_id = session_id
+        self.trade_id = trade_id
+
+
+class ScreenshotNotFound(Exception):
+    def __init__(self, session_id: str, screenshot_ref: str):
+        super().__init__(f"screenshot {screenshot_ref!r} not found in session {session_id!r}")
+        self.session_id = session_id
+
+
 class InvalidSessionRequest(ValueError):
     """Bad instrument/timeframe/start_time -- a 400, not a 404 or 500."""
+
+
+# FXR_SPEC.md section C: grade is a fixed A/B/C picker in the UI (unlike
+# tags, which are deliberately freeform) -- validated here so a bad value
+# surfaces as a 400 at the journal-update boundary, not a silently stored
+# typo.
+ALLOWED_GRADES = ("A", "B", "C")
+
+# What ChartKL.captureScreenshot's getConvertPictureUrl call can actually
+# produce ("png" | "jpeg" | "webp" per klinecharts' own type declarations,
+# plus "jpg" for a bare-eyes-friendly extension) -- anchored and requiring
+# the "data:image/...;base64," prefix so this can't be tricked into
+# decoding an arbitrary non-image payload as one.
+_DATA_URL_RE = re.compile(r"^data:image/(?P<ext>png|jpe?g|webp);base64,(?P<data>.+)$", re.DOTALL)
 
 
 def _session_dir(session_id: str) -> Path:
@@ -128,6 +158,16 @@ def _trades_path(session_id: str) -> Path:
     return _session_dir(session_id) / "trades.json"
 
 
+def _screenshots_dir(session_id: str) -> Path:
+    d = _session_dir(session_id) / "screenshots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _screenshot_url(session_id: str, filename: str) -> str:
+    return f"/api/bt-sessions/{session_id}/screenshots/{filename}"
+
+
 def _read_trades(session_id: str) -> list:
     path = _trades_path(session_id)
     if not path.exists():
@@ -177,6 +217,7 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         "settings": {"random_start": req.random_start},
         "position": None,
         "working_orders": [],
+        "notes": None,
     }
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)
@@ -239,6 +280,17 @@ def archive_session(session_id: str) -> models.BacktestSessionDetail:
     return models.BacktestSessionDetail.model_validate(data)
 
 
+def update_session_notes(session_id: str, req: models.UpdateSessionNotesRequest) -> models.BacktestSessionDetail:
+    """FXR_SPEC.md section C: "Session-level notes too" -- a free-text
+    field on the session itself, separate from any one trade's journal.
+    """
+    data = _read(session_id)
+    data["notes"] = req.notes
+    data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    _write(session_id, data)
+    return models.BacktestSessionDetail.model_validate(data)
+
+
 def list_trades(session_id: str) -> List[models.ManualTrade]:
     _read(session_id)  # raises SessionNotFound if the session itself doesn't exist
     return [models.ManualTrade.model_validate(t) for t in _read_trades(session_id)]
@@ -274,3 +326,107 @@ def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> model
     _write(session_id, data)
 
     return models.RecordTradeResponse(trade=trade, session=models.BacktestSessionDetail.model_validate(data))
+
+
+def _find_trade_index(session_id: str, trades: list, trade_id: int) -> int:
+    idx = next((i for i, t in enumerate(trades) if t["trade_id"] == trade_id), None)
+    if idx is None:
+        raise TradeNotFound(session_id, trade_id)
+    return idx
+
+
+def update_trade_journal(
+    session_id: str, trade_id: int, req: models.UpdateTradeJournalRequest
+) -> models.ManualTrade:
+    """FXR_SPEC.md section C: notes/tags/setup_name/grade on an already-
+    journaled trade. Merges only the fields the caller actually set
+    (exclude_unset, not exclude_none) -- e.g. a grade-only PATCH must never
+    null out notes/tags it didn't intend to touch. Screenshots are handled
+    by add_trade_screenshot/delete_trade_screenshot below, not here -- see
+    their own comment for why. The frontend is still the one place these
+    values originate (a note the user typed, a tag they added); this is
+    durable storage, same division of responsibility as record_trade.
+    """
+    _read(session_id)  # raises SessionNotFound if the session itself doesn't exist
+    if req.grade is not None and req.grade not in ALLOWED_GRADES:
+        raise InvalidSessionRequest(f"grade must be one of {ALLOWED_GRADES}, got {req.grade!r}")
+
+    trades = _read_trades(session_id)
+    idx = _find_trade_index(session_id, trades, trade_id)
+
+    updates = req.model_dump(exclude_unset=True)
+    trades[idx] = {**trades[idx], **updates}
+    _write_trades(session_id, trades)
+    return models.ManualTrade.model_validate(trades[idx])
+
+
+def add_trade_screenshot(
+    session_id: str, trade_id: int, req: models.AddScreenshotRequest
+) -> models.ManualTrade:
+    """FXR_SPEC.md section C: a screenshot's BYTES are written to their own
+    file under this session's screenshots/ directory -- never embedded in
+    trades.json (see Screenshot's own comment on the model for why: that
+    file gets rewritten on every journal edit for EVERY trade in the
+    session, so embedding image data there would mean re-writing every
+    other trade's screenshots, in full, on every single edit). Only the
+    lightweight Screenshot reference (id/caption/moment/url) lands in
+    trades.json; the bytes are served back by get_screenshot_path below.
+    """
+    _read(session_id)  # raises SessionNotFound if the session itself doesn't exist
+    match = _DATA_URL_RE.match(req.data_url)
+    if not match:
+        raise InvalidSessionRequest("data_url must be a base64-encoded data:image/{png,jpeg,jpg,webp};base64,... URL")
+    ext = "jpg" if match.group("ext") in ("jpg", "jpeg") else match.group("ext")
+    try:
+        raw = base64.b64decode(match.group("data"), validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise InvalidSessionRequest(f"data_url is not valid base64: {e}")
+
+    trades = _read_trades(session_id)
+    idx = _find_trade_index(session_id, trades, trade_id)
+
+    screenshot_id = uuid.uuid4().hex
+    filename = f"{trade_id}_{screenshot_id}.{ext}"
+    (_screenshots_dir(session_id) / filename).write_bytes(raw)
+
+    screenshot = models.Screenshot(
+        id=screenshot_id,
+        caption=req.caption,
+        moment=req.moment,
+        url=_screenshot_url(session_id, filename),
+        created_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+    )
+    trades[idx] = {**trades[idx], "screenshots": [*trades[idx]["screenshots"], screenshot.model_dump()]}
+    _write_trades(session_id, trades)
+    return models.ManualTrade.model_validate(trades[idx])
+
+
+def delete_trade_screenshot(session_id: str, trade_id: int, screenshot_id: str) -> models.ManualTrade:
+    _read(session_id)
+    trades = _read_trades(session_id)
+    idx = _find_trade_index(session_id, trades, trade_id)
+
+    shots = trades[idx]["screenshots"]
+    remaining = [s for s in shots if s["id"] != screenshot_id]
+    if len(remaining) == len(shots):
+        raise ScreenshotNotFound(session_id, screenshot_id)
+
+    removed = next(s for s in shots if s["id"] == screenshot_id)
+    filename = removed["url"].rsplit("/", 1)[-1]
+    (_screenshots_dir(session_id) / filename).unlink(missing_ok=True)
+
+    trades[idx] = {**trades[idx], "screenshots": remaining}
+    _write_trades(session_id, trades)
+    return models.ManualTrade.model_validate(trades[idx])
+
+
+def get_screenshot_path(session_id: str, filename: str) -> Path:
+    _read(session_id)  # raises SessionNotFound if the session itself doesn't exist
+    # Path-traversal guard: strip any directory components so a filename
+    # like "../../secrets.txt" can only ever resolve inside this session's
+    # OWN screenshots dir, never outside it.
+    safe_name = Path(filename).name
+    path = _screenshots_dir(session_id) / safe_name
+    if not path.is_file():
+        raise ScreenshotNotFound(session_id, filename)
+    return path

@@ -1,4 +1,5 @@
 import type {
+  AddScreenshotRequest,
   AiStatusResponse,
   Bar,
   BacktestSessionDetail,
@@ -18,7 +19,9 @@ import type {
   StatsResponse,
   SummarizeResponse,
   TradeRecord,
+  UpdateSessionNotesRequest,
   UpdateSessionStateRequest,
+  UpdateTradeJournalRequest,
 } from './types'
 import { usePerfStore } from '../state/perfStore'
 
@@ -86,6 +89,21 @@ async function sendJson<T, B>(path: string, method: 'POST' | 'PATCH', body: B): 
   return data
 }
 
+// FXR_SPEC.md section C, phase F5: deleting a screenshot has no body at
+// all -- its own tiny method rather than widening sendJson for a no-body
+// case.
+async function deleteRequest<T>(path: string): Promise<T> {
+  const startedAt = performance.now()
+  const res = await fetch(`/api${path}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null)
+    throw new Error(detail?.detail ?? `${res.status} ${res.statusText} for ${path}`)
+  }
+  const data = (await res.json()) as T
+  usePerfStore.getState().recordFetch(path, performance.now() - startedAt)
+  return data
+}
+
 export const api = {
   listRuns: () => request<RunSummary[]>('/runs'),
   getRun: (runId: string) => request<RunMeta>(`/runs/${runId}`),
@@ -123,7 +141,23 @@ export const api = {
       working_orders: workingOrders,
     }),
   archiveBtSession: (sessionId: string) => postRequest<BacktestSessionDetail>(`/bt-sessions/${sessionId}/archive`),
+  updateBtSessionNotes: (sessionId: string, notes: string) =>
+    sendJson<BacktestSessionDetail, UpdateSessionNotesRequest>(`/bt-sessions/${sessionId}/notes`, 'PATCH', { notes }),
   getBtSessionTrades: (sessionId: string) => request<ManualTrade[]>(`/bt-sessions/${sessionId}/trades`),
   createManualTrade: (sessionId: string, body: CreateManualTradeRequest) =>
     sendJson<RecordTradeResponse, CreateManualTradeRequest>(`/bt-sessions/${sessionId}/trades`, 'POST', body),
+  // FXR_SPEC.md section C, phase F5: journal-only fields on an already-
+  // recorded trade -- a separate PATCH from createManualTrade above, which
+  // is purely the sim broker's durable-storage write (never journal data).
+  updateTradeJournal: (sessionId: string, tradeId: number, body: UpdateTradeJournalRequest) =>
+    sendJson<ManualTrade, UpdateTradeJournalRequest>(`/bt-sessions/${sessionId}/trades/${tradeId}`, 'PATCH', body),
+  // Screenshots are their own endpoints, not part of updateTradeJournal --
+  // the backend writes the decoded image to its own file rather than
+  // embedding it in trades.json (see AddScreenshotRequest's own comment).
+  // Both return the updated ManualTrade (server-authoritative, including
+  // the new/remaining screenshots list), same shape as updateTradeJournal.
+  addTradeScreenshot: (sessionId: string, tradeId: number, body: AddScreenshotRequest) =>
+    sendJson<ManualTrade, AddScreenshotRequest>(`/bt-sessions/${sessionId}/trades/${tradeId}/screenshots`, 'POST', body),
+  deleteTradeScreenshot: (sessionId: string, tradeId: number, screenshotId: string) =>
+    deleteRequest<ManualTrade>(`/bt-sessions/${sessionId}/trades/${tradeId}/screenshots/${screenshotId}`),
 }
