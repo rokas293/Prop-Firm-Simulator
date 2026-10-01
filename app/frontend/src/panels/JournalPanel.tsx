@@ -5,7 +5,9 @@
 // panel's table/filter/EmptyState conventions at a narrower width.
 //
 // Two stacked sections: a compact trade list (top, filterable by tag/
-// session/grade) and the selected trade's editor (bottom: notes, tags,
+// setup/session/grade/hour -- the SAME shared filter set (state/tradeStore)
+// the analytics workspace's trade list, chart and Dashboard cross-filter
+// use, so a filter set there narrows this list too, FXR_SPEC.md phase F6) and the selected trade's editor (bottom: notes, tags,
 // setup name, grade, screenshots). Session-level notes sit above both.
 // This panel holds no journal data of its own beyond in-progress drafts, so
 // a reload always reflects exactly what the backend has.
@@ -25,6 +27,8 @@
 // client-computed array to race over -- rendered straight off `selected`.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AddScreenshotRequest, ManualTrade, UpdateTradeJournalRequest } from '../api/types'
+import { filterManualTrades, nyHourOfDay } from '../compass/breakdowns'
+import { useTradeStore } from '../state/tradeStore'
 import { fmtR, fmtUsd } from '../format'
 import EmptyState from '../components/EmptyState'
 
@@ -47,6 +51,9 @@ interface JournalPanelProps {
   onAddScreenshot: (tradeId: number, body: AddScreenshotRequest) => void
   onDeleteScreenshot: (tradeId: number, screenshotId: string) => void
   onClose: () => void
+  // Opens with this trade selected (handed over from the analytics
+  // workspace's "Open in journal") -- applied once, on mount/when it changes.
+  initialSelectedId?: number | null
 }
 
 export default function JournalPanel({
@@ -59,11 +66,12 @@ export default function JournalPanel({
   onAddScreenshot,
   onDeleteScreenshot,
   onClose,
+  initialSelectedId = null,
 }: JournalPanelProps) {
-  const [filterTag, setFilterTag] = useState<string | null>(null)
-  const [filterSession, setFilterSession] = useState<string | null>(null)
-  const [filterGrade, setFilterGrade] = useState<Grade | null>(null)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const filters = useTradeStore((s) => s.filters)
+  const setFilter = useTradeStore((s) => s.setFilter)
+  const clearFilters = useTradeStore((s) => s.clearFilters)
+  const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [captureMoment, setCaptureMoment] = useState<CaptureMoment>('entry')
 
@@ -72,23 +80,18 @@ export default function JournalPanel({
     () => [...new Set(trades.map((t) => t.session).filter((v): v is string => v !== null))].sort(),
     [trades],
   )
+  const setupOptions = useMemo(
+    () => [...new Set(trades.map((t) => t.setup_name).filter((v): v is string => !!v))].sort(),
+    [trades],
+  )
+  const hourOptions = useMemo(() => [...new Set(trades.map((t) => nyHourOfDay(t.entry_time)))].sort((a, b) => a - b), [trades])
 
   const filtered = useMemo(
-    () =>
-      trades
-        .filter((t) => !filterTag || t.tags.includes(filterTag))
-        .filter((t) => !filterSession || t.session === filterSession)
-        .filter((t) => !filterGrade || t.grade === filterGrade)
-        .sort((a, b) => b.entry_time - a.entry_time),
-    [trades, filterTag, filterSession, filterGrade],
+    () => [...filterManualTrades(trades, filters)].sort((a, b) => b.entry_time - a.entry_time),
+    [trades, filters],
   )
 
-  const hasFilters = filterTag !== null || filterSession !== null || filterGrade !== null
-  const clearFilters = () => {
-    setFilterTag(null)
-    setFilterSession(null)
-    setFilterGrade(null)
-  }
+  const hasFilters = Object.values(filters).some((v) => v !== null)
 
   const selected = trades.find((t) => t.trade_id === selectedId) ?? null
 
@@ -106,6 +109,11 @@ export default function JournalPanel({
   const seededForRef = useRef<number | null>(null)
   useEffect(() => {
     if (seededForRef.current === selectedId) return
+    // A trade preselected from outside (initialSelectedId) can arrive before
+    // `trades` has loaded -- seeding then would stamp empty drafts and, since
+    // this effect never re-seeds for the same id, hide the trade's real
+    // notes/tags/setup. Wait until it's actually found.
+    if (selectedId !== null && !selected) return
     seededForRef.current = selectedId
     setDraftNotes(selected?.notes ?? '')
     setDraftSetup(selected?.setup_name ?? '')
@@ -180,8 +188,8 @@ export default function JournalPanel({
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
         <select
-          value={filterTag ?? ''}
-          onChange={(e) => setFilterTag(e.target.value || null)}
+          value={filters.tag ?? ''}
+          onChange={(e) => setFilter('tag', e.target.value || null)}
           aria-label="Filter by tag"
           className="h-7 rounded bg-surface-2 px-2 text-text"
         >
@@ -193,8 +201,21 @@ export default function JournalPanel({
           ))}
         </select>
         <select
-          value={filterSession ?? ''}
-          onChange={(e) => setFilterSession(e.target.value || null)}
+          value={filters.setup ?? ''}
+          onChange={(e) => setFilter('setup', e.target.value || null)}
+          aria-label="Filter by setup"
+          className="h-7 rounded bg-surface-2 px-2 text-text"
+        >
+          <option value="">Setup: all</option>
+          {setupOptions.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.session ?? ''}
+          onChange={(e) => setFilter('session', e.target.value || null)}
           aria-label="Filter by session"
           className="h-7 rounded bg-surface-2 px-2 text-text"
         >
@@ -206,8 +227,21 @@ export default function JournalPanel({
           ))}
         </select>
         <select
-          value={filterGrade ?? ''}
-          onChange={(e) => setFilterGrade((e.target.value || null) as Grade | null)}
+          value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
+          onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
+          aria-label="Filter by entry hour (New York)"
+          className="h-7 rounded bg-surface-2 px-2 text-text"
+        >
+          <option value="">Hour: all</option>
+          {hourOptions.map((h) => (
+            <option key={h} value={h}>
+              {String(h).padStart(2, '0')}:00 NY
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.grade ?? ''}
+          onChange={(e) => setFilter('grade', e.target.value || null)}
           aria-label="Filter by grade"
           className="h-7 rounded bg-surface-2 px-2 text-text"
         >
@@ -219,9 +253,14 @@ export default function JournalPanel({
           ))}
         </select>
         {hasFilters && (
-          <button onClick={clearFilters} className="ml-auto rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
-            Clear
-          </button>
+          <>
+            <span className="ml-auto tabular-nums text-text-muted">
+              {filtered.length} of {trades.length}
+            </span>
+            <button onClick={clearFilters} className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover">
+              Clear
+            </button>
+          </>
         )}
       </div>
 

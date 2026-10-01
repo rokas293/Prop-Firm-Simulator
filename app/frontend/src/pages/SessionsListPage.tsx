@@ -4,6 +4,7 @@ import { useUiStore } from '../state/uiStore'
 import Skeleton from '../components/Skeleton'
 import NewSessionModal from '../components/NewSessionModal'
 import { fmtUsd } from '../format'
+import { manualAllRunId, manualRunId } from '../api/types'
 
 function fmtDate(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toISOString().slice(0, 16).replace('T', ' ')
@@ -16,6 +17,7 @@ function fmtDate(unixSeconds: number): string {
 export default function SessionsListPage() {
   const { data: sessions, isLoading, isError, error } = useBtSessions()
   const selectSession = useUiStore((s) => s.selectSession)
+  const selectRun = useUiStore((s) => s.selectRun)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
 
   if (isLoading) {
@@ -43,12 +45,28 @@ export default function SessionsListPage() {
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Sessions</h1>
-        <button
-          onClick={() => setNewSessionOpen(true)}
-          className="h-8 rounded bg-accent px-3 text-xs text-white hover:opacity-90"
-        >
-          New session
-        </button>
+        <div className="flex items-center gap-2">
+          {/* FXR_SPEC.md phase F6: every session of one instrument, pooled
+              (per instrument -- the chart plots a single price scale). */}
+          {(['MNQ', 'MES'] as const)
+            .filter((sym) => sessions?.some((s) => s.instrument === sym))
+            .map((sym) => (
+              <button
+                key={sym}
+                onClick={() => selectRun(manualAllRunId(sym))}
+                title={`Analytics across all ${sym} sessions combined`}
+                className="h-8 rounded bg-surface-2 px-3 text-xs text-text hover:bg-surface-2-hover"
+              >
+                All {sym} analytics
+              </button>
+            ))}
+          <button
+            onClick={() => setNewSessionOpen(true)}
+            className="h-8 rounded bg-accent px-3 text-xs text-white hover:opacity-90"
+          >
+            New session
+          </button>
+        </div>
       </div>
 
       {!sessions || sessions.length === 0 ? (
@@ -62,7 +80,9 @@ export default function SessionsListPage() {
               <th className="micro-label py-1 pr-4 text-left">Start</th>
               <th className="micro-label py-1 pr-4 text-left">Cursor</th>
               <th className="num micro-label py-1 pr-4">Balance</th>
+              <th className="micro-label py-1 pr-4 text-left">Rules</th>
               <th className="micro-label py-1 pr-4 text-left">Status</th>
+              <th className="py-1 pr-4"></th>
             </tr>
           </thead>
           <tbody>
@@ -77,19 +97,50 @@ export default function SessionsListPage() {
                     selectSession(session.id)
                   }
                 }}
-                className="cursor-pointer border-b border-border hover:bg-surface"
+                className="group cursor-pointer border-b border-border hover:bg-surface"
               >
                 <td className="py-1 pr-4 text-text">{session.instrument}</td>
                 <td className="py-1 pr-4 text-text-muted">{session.base_timeframe}</td>
                 <td className="py-1 pr-4 font-mono text-xs text-text-muted">{fmtDate(session.start_time)}</td>
                 <td className="py-1 pr-4 font-mono text-xs text-text-muted">{fmtDate(session.cursor_time)}</td>
                 <td className="num py-1 pr-4 text-text">{fmtUsd(session.account.balance)}</td>
+                <td className="py-1 pr-4 text-text-muted">
+                  {session.account.prop_ruleset === 'topstep_50k' ? 'Topstep $50k' : '-'}
+                  {session.prop_status && (
+                    // Semantic colour on the verdict only; an open Combine stays muted.
+                    <span
+                      className={`ml-2 ${
+                        session.prop_status.status === 'passed'
+                          ? 'text-positive'
+                          : session.prop_status.status === 'failed'
+                            ? 'text-negative'
+                            : 'text-text-muted'
+                      }`}
+                    >
+                      {session.prop_status.status === 'passed' ? 'Pass' : session.prop_status.status === 'failed' ? 'Fail' : 'Open'}
+                    </span>
+                  )}
+                </td>
                 <td className="py-1 pr-4">
                   {session.status === 'active' ? (
                     <span className="text-positive">ACTIVE</span>
                   ) : (
                     <span className="text-text-muted">ARCHIVED</span>
                   )}
+                </td>
+                <td className="py-1 pr-4 text-right">
+                  {/* Revealed on row hover/focus (DESIGN_LANGUAGE.md: controls
+                      that could reveal on hover shouldn't be always visible). */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      selectRun(manualRunId(session.id))
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="rounded px-2 py-1 text-xs text-text-muted opacity-0 hover:bg-surface-2 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
+                  >
+                    Analytics
+                  </button>
                 </td>
               </tr>
             ))}

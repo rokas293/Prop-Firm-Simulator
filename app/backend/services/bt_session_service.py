@@ -29,6 +29,7 @@ from typing import List, Optional
 from app.backend import models
 from app.backend.config import get_bt_sessions_dir
 from app.backend.services import bar_service
+from propbt.config import load_prop_rules
 
 # FXR_SPEC.md section 1: "scoped to MNQ + MES (expandable later)" -- this
 # platform's own restriction, independent of data.yaml's active symbols
@@ -39,6 +40,10 @@ ALLOWED_INSTRUMENTS = ("MNQ", "MES")
 # Matches uiStore.ts's Timeframe union exactly -- the base timeframe a
 # session replays at must be one the chart can actually render.
 ALLOWED_TIMEFRAMES = ("1min", "5min", "15min", "1h")
+
+# FXR_SPEC.md phase F6: the one prop ruleset propbt/config/prop_rules.yaml
+# defines today (Topstep $50k Combine).
+ALLOWED_PROP_RULESETS = ("topstep_50k",)
 
 # Random start deliberately never lands in the data's own final stretch --
 # otherwise "kill snooping bias" (FXR_SPEC section F) could hand back a
@@ -141,6 +146,25 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
         raise InvalidSessionRequest("default_contracts must be at least 1")
     if req.commission_per_contract < 0:
         raise InvalidSessionRequest("commission_per_contract cannot be negative")
+    if req.prop_ruleset is not None:
+        if req.prop_ruleset not in ALLOWED_PROP_RULESETS:
+            raise InvalidSessionRequest(f"prop_ruleset must be one of {ALLOWED_PROP_RULESETS}, got {req.prop_ruleset!r}")
+        # The rule tracker's floors/target are absolute dollar levels off the
+        # ruleset's own start_balance -- a session on a different balance
+        # would silently report a nonsense pass/fail.
+        rules = load_prop_rules()
+        if req.starting_balance != rules.start_balance:
+            raise InvalidSessionRequest(
+                f"{req.prop_ruleset} requires starting_balance == {rules.start_balance:g}, got {req.starting_balance:g}"
+            )
+
+    max_contracts = None
+    if req.prop_ruleset is not None:
+        max_contracts = load_prop_rules().max_open_contracts
+        if req.default_contracts > max_contracts:
+            raise InvalidSessionRequest(
+                f"default_contracts {req.default_contracts} exceeds the {req.prop_ruleset} position limit of {max_contracts} contracts"
+            )
 
     return models.SimAccountModel(
         id=uuid.uuid4().hex,
@@ -151,7 +175,29 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
         risk_per_trade_usd=req.risk_per_trade_usd,
         default_contracts=req.default_contracts,
         commission_per_contract=req.commission_per_contract,
+        prop_ruleset=req.prop_ruleset,
+        max_contracts=max_contracts,
     )
+
+
+def _contract_cap(data: dict):
+    """The session's position limit, or None. Falls back to the ruleset's own
+    limit so a session saved before max_contracts existed is still capped."""
+    account = data["account"]
+    if account.get("max_contracts") is not None:
+        return account["max_contracts"]
+    if account.get("prop_ruleset"):
+        return load_prop_rules().max_open_contracts
+    return None
+
+
+def _check_cap(data: dict, contracts: int, what: str) -> None:
+    cap = _contract_cap(data)
+    if cap is not None and contracts > cap:
+        raise InvalidSessionRequest(
+            f"{what} of {contracts} contracts would put the position over this session's "
+            f"{data['account'].get('prop_ruleset')} limit of {cap} contracts"
+        )
 
 
 def _trades_path(session_id: str) -> Path:
@@ -264,6 +310,13 @@ def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.Ba
         raise InvalidSessionRequest(
             f"cursor_time {req.cursor_time} is before this session's start_time {data['start_time']}"
         )
+    # Defense in depth: the sim broker lives in the browser and refuses an
+    # over-cap order itself (positionCap.ts); this keeps a hand-built or
+    # stale client from persisting one anyway.
+    if req.position is not None:
+        _check_cap(data, req.position.contracts, "position")
+    for o in req.working_orders:
+        _check_cap(data, o.contracts, "working order")
     data["cursor_time"] = req.cursor_time
     data["position"] = req.position.model_dump() if req.position is not None else None
     data["working_orders"] = [o.model_dump() for o in req.working_orders]
@@ -311,6 +364,8 @@ def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> model
         )
     if req.side not in ("long", "short"):
         raise InvalidSessionRequest(f"side must be 'long' or 'short', got {req.side!r}")
+
+    _check_cap(data, req.size_contracts, "trade")
 
     existing = _read_trades(session_id)
     trade = models.ManualTrade(

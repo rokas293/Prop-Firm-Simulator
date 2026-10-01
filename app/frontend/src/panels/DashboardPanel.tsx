@@ -3,12 +3,16 @@ import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer,
 import type { IDockviewPanelProps } from 'dockview-react'
 import { useAiStatus, useRun, useStats, useSummarizeRun, useTrades, type StatsScope } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
-import { scopeTradeParams, useTradeStore, type TradeFilters } from '../state/tradeStore'
+import { filtersToStatsParams, scopeTradeParams, useTradeStore, type TradeFilters } from '../state/tradeStore'
 import { CHART_PANEL_ID, PROP_RISK_PANEL_ID } from '../workspace/panelIds'
 import { bySessionHour, byHoldTime, byHourOfDay, byWeekday, sessionsPresent, summarizeStreaks, type BucketStats, type StreakSummary } from '../compass/breakdowns'
 import { computeMaeMfeRegime, isClippedStop } from '../compass/regime'
+import { heatSummary } from '../compass/heat'
 import { computeCompassScore, type CompassScore } from '../compass/score'
 import KpiTile from '../components/KpiTile'
+import MiniStat from '../components/MiniStat'
+import MonteCarloCard from '../components/MonteCarloCard'
+import PropResultCard from '../components/PropResultCard'
 import Card from '../components/Card'
 import BreakdownTable from '../components/BreakdownTable'
 import EmptyState from '../components/EmptyState'
@@ -84,24 +88,6 @@ function BucketBarChart({
         </Bar>
       </BarChart>
     </ResponsiveContainer>
-  )
-}
-
-// A borderless label+value pair for secondary stats that sit INSIDE an
-// already-bordered Card (DESIGN_AUDIT.md: flatten nesting -- a stat next to
-// three siblings inside a card that's already framed doesn't need its own
-// KpiTile border on top of that, per DESIGN_LANGUAGE.md section 5: "a KPI
-// doesn't need a bordered card if whitespace + a muted label already
-// separate it"). Distinct from KpiTile, which is reserved for the
-// hero/section-KPI rows that stand on their own.
-function MiniStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div>
-      <div className="micro-label">{label}</div>
-      <div className={`tabular-nums text-sm font-medium ${accent === undefined ? 'text-text' : accent ? 'text-positive' : 'text-negative'}`}>
-        {value}
-      </div>
-    </div>
   )
 }
 
@@ -206,6 +192,10 @@ export function describeFilters(filters: TradeFilters): string {
   if (filters.session !== null && filters.entryHourNy !== null) {
     return `session = ${filters.session}, hour = ${String(filters.entryHourNy).padStart(2, '0')}:00 NY`
   }
+  if (filters.tag !== null) return `tag = ${filters.tag}`
+  if (filters.setup !== null) return `setup = ${filters.setup}`
+  if (filters.grade !== null) return `grade = ${filters.grade}`
+  if (filters.sessionId !== null) return `backtest session = ${filters.sessionId.slice(0, 13)}`
   if (filters.leg !== null) return `leg = ${filters.leg}`
   if (filters.session !== null) return `session = ${filters.session}`
   if (filters.side !== null) return `side = ${filters.side}`
@@ -219,11 +209,23 @@ export function describeFilters(filters: TradeFilters): string {
   return ''
 }
 
-type TabKey = 'overview' | 'breakdowns' | 'distributions' | 'score'
+// A manual session's Combine can still be in progress ("incomplete"), which
+// at the 20px KPI size is too wide for its tile -- say what it means instead.
+function failReasonLabel(reason: string | null | undefined): string | undefined {
+  if (!reason) return undefined
+  return reason === 'mll_breach' ? 'Max loss limit breached' : reason
+}
+
+function resultLabel(status: string): string {
+  return status === 'incomplete' ? 'OPEN' : status.toUpperCase()
+}
+
+type TabKey = 'overview' | 'breakdowns' | 'distributions' | 'montecarlo' | 'score'
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'breakdowns', label: 'Breakdowns' },
   { key: 'distributions', label: 'Distributions' },
+  { key: 'montecarlo', label: 'Monte Carlo' },
   { key: 'score', label: 'Score & AI' },
 ]
 
@@ -245,8 +247,23 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
   const colors = useThemeStore((s) => s.colors)
 
   const { data: run } = useRun(runId)
-  const { data: stats } = useStats(runId, scope)
-  const tradeParams = useMemo(() => scopeTradeParams(scope, run?.is_oos_split_date ?? null), [scope, run])
+  // FXR_SPEC.md phase F6: a manual session (or all of an instrument's
+  // sessions) is served through the same endpoints under a "bt:" run id.
+  // It has no IS/OOS split, so the scope toggle is hidden for it, and its
+  // stats can optionally be narrowed to the active journal filter (tag/
+  // setup/grade/session/hour) -- off by default so the breakdown tables keep
+  // showing every slice side by side.
+  const manual = run?.source === 'manual'
+  const [alsoFilterStats, setAlsoFilterStats] = useState(false)
+  const statsFilters = useMemo(
+    () => (manual && alsoFilterStats ? filtersToStatsParams(filters) : undefined),
+    [manual, alsoFilterStats, filters],
+  )
+  const { data: stats } = useStats(runId, scope, statsFilters)
+  const tradeParams = useMemo(
+    () => ({ ...scopeTradeParams(scope, run?.is_oos_split_date ?? null), ...statsFilters }),
+    [scope, run, statsFilters],
+  )
   const { data: scopedTrades } = useTrades(runId, tradeParams)
   const trades = useMemo(() => scopedTrades ?? [], [scopedTrades])
 
@@ -261,6 +278,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
   const holdTimeBuckets = useMemo(() => byHoldTime(trades), [trades])
   const streaks = useMemo(() => summarizeStreaks(trades), [trades])
   const regime = useMemo(() => computeMaeMfeRegime(trades), [trades])
+  const heat = useMemo(() => heatSummary(trades), [trades])
   const score = useMemo(() => (stats ? computeCompassScore(stats.overall, trades) : null), [stats, trades])
 
   // "Would've won but got stopped": exited at SL yet still traveled at
@@ -323,41 +341,59 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
   const { overall, by_leg, by_session, result } = stats
   const resultAccent = !result ? undefined : result.status === 'passed' ? true : result.status === 'failed' ? false : undefined
   const drawdownPctOfMll = Math.round((Math.abs(overall.max_drawdown_usd) / DEFAULT_MLL_USD) * 100)
+  const noRuleset = manual && !run?.prop_ruleset
+  // A pooled scope spans several accounts, so "no ruleset" would mislead.
+  const pooled = manual && (run?.session_ids?.length ?? 0) > 1
 
   return (
     <div className="h-full overflow-auto p-4">
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-text-muted">Scope:</span>
-        {SCOPES.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => setScope(s.key)}
-            aria-pressed={scope === s.key}
-            className={`rounded px-3 py-1 text-sm ${
-              scope === s.key ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
-            }`}
-          >
-            {s.label}
-            {s.key === 'oos' && <span className="ml-1 text-[11px] opacity-70">(headline)</span>}
-          </button>
-        ))}
-        {!run?.is_oos_split_date && (
-          <span className="text-xs text-text-muted">this run has no IS/OOS split date -- scope has no effect</span>
+        {!manual && (
+          <>
+            <span className="text-xs text-text-muted">Scope:</span>
+            {SCOPES.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setScope(s.key)}
+                aria-pressed={scope === s.key}
+                className={`rounded px-3 py-1 text-sm ${
+                  scope === s.key ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                }`}
+              >
+                {s.label}
+                {s.key === 'oos' && <span className="ml-1 text-[11px] opacity-70">(headline)</span>}
+              </button>
+            ))}
+            {!run?.is_oos_split_date && (
+              <span className="text-xs text-text-muted">this run has no IS/OOS split date -- scope has no effect</span>
+            )}
+          </>
         )}
         {hasActiveFilter && (
           <span className="flex items-center gap-1 rounded bg-accent/15 px-2 py-1 text-xs text-accent">
-            Trade List + Chart filtered by {activeFilterDescription}
-            <button onClick={clearFilters} className="text-accent hover:text-text">
+            Trade List + Chart{manual ? ' + Journal' : ''} filtered by {activeFilterDescription}
+            <button onClick={clearFilters} aria-label="Clear filter" className="text-accent hover:text-text">
               &times;
             </button>
           </span>
+        )}
+        {manual && hasActiveFilter && (
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            <input type="checkbox" checked={alsoFilterStats} onChange={(e) => setAlsoFilterStats(e.target.checked)} />
+            Also filter these stats
+          </label>
         )}
       </div>
 
       {/* Hero row: the 5 numbers this dashboard leads with. Everything else
           is one click away in a tab below (REDESIGN_APPROACH.md Phase B2). */}
       <div className="mb-2 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <KpiTile label="Result" value={result ? result.status.toUpperCase() : '-'} sub={result?.fail_reason ?? undefined} accent={resultAccent} />
+        <KpiTile
+          label="Result"
+          value={noRuleset ? 'N/A' : result ? resultLabel(result.status) : '-'}
+          sub={noRuleset ? (pooled ? 'per account only' : 'no prop ruleset') : (failReasonLabel(result?.fail_reason) ?? (result?.status === 'incomplete' ? 'Combine still open' : undefined))}
+          accent={resultAccent}
+        />
         <KpiTile
           label="Net P&L"
           value={fmtUsd(overall.net_pnl_usd)}
@@ -366,8 +402,8 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
         />
         <KpiTile
           label="Max drawdown"
-          value={fmtUsd(overall.max_drawdown_usd)}
-          sub={`${drawdownPctOfMll}% of $2k MLL`}
+          value={fmtUsd(Math.abs(overall.max_drawdown_usd))}
+          sub={noRuleset ? undefined : `${drawdownPctOfMll}% of $2k MLL`}
           accent={false}
         />
         <KpiTile label="Expectancy" value={overall.expectancy_r !== null ? fmtR(overall.expectancy_r) : '-'} accent={(overall.expectancy_r ?? 0) >= 0} />
@@ -378,7 +414,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
         />
       </div>
       <div className="mb-4 text-xs text-text-muted">
-        {overall.trades} trades · {result ? result.trading_days : '-'} trading days
+        {overall.trades} trades{result ? ` · ${result.trading_days} trading days` : ''}
       </div>
 
       {/* Accessibility audit: this is semantically a tablist (one panel
@@ -411,7 +447,22 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             <KpiTile label="Win rate" value={fmtPct(overall.win_rate)} />
             {run?.result.days_to_fail != null && <KpiTile label="Days to fail" value={String(run.result.days_to_fail)} accent={false} />}
           </div>
-          {result && (
+          {manual && result && (
+            <PropResultCard
+              result={result}
+              totalTrades={overall.trades}
+              rulesetLabel={run?.prop_ruleset === 'topstep_50k' ? 'Topstep $50k Combine' : (run?.prop_ruleset ?? '')}
+              onViewRisk={revealPropRisk}
+            />
+          )}
+          {noRuleset && (
+            <p className="text-xs text-text-muted">
+              {run?.session_ids && run.session_ids.length > 1
+                ? 'Prop-firm results are per account, so they are not shown across pooled sessions -- open a single Topstep session to see one.'
+                : 'This session ran without a prop ruleset. Tick "Topstep $50k Combine rules" when creating a session to get a pass/fail result here.'}
+            </p>
+          )}
+          {!manual && result && (
             <div className="text-xs text-text-muted">
               target hit: {result.target_hit ? 'yes' : 'no'} · consistency:{' '}
               {result.consistency_passed === null ? 'n/a' : result.consistency_passed ? 'passed' : 'failed'} · final balance:{' '}
@@ -419,7 +470,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             </div>
           )}
           <Card>
-            <EquitySparkline runId={runId} onViewFull={revealPropRisk} />
+            <EquitySparkline runId={runId} onViewFull={manual && noRuleset ? undefined : revealPropRisk} />
           </Card>
         </div>
       )}
@@ -431,8 +482,34 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           aria-labelledby="dashboard-tab-breakdowns"
           className="grid grid-cols-1 gap-4 lg:grid-cols-2"
         >
-          <BreakdownTable title="By leg" rows={by_leg} onRowClick={(k) => crossFilter({ leg: k })} />
-          <BreakdownTable title="By session" rows={by_session} onRowClick={(k) => crossFilter({ session: k })} />
+          {manual ? (
+            <>
+              <BreakdownTable
+                title="By setup"
+                rows={stats.by_setup ?? {}}
+                onRowClick={(k) => k !== '(no setup)' && crossFilter({ setup: k })}
+              />
+              <BreakdownTable title="By tag" rows={stats.by_tag ?? {}} onRowClick={(k) => crossFilter({ tag: k })} />
+              <BreakdownTable
+                title="By grade"
+                rows={stats.by_grade ?? {}}
+                onRowClick={(k) => k !== 'ungraded' && crossFilter({ grade: k })}
+              />
+              <BreakdownTable title="By trading session" rows={by_session} onRowClick={(k) => crossFilter({ session: k })} />
+              {stats.by_backtest_session && Object.keys(stats.by_backtest_session).length > 0 && (
+                <BreakdownTable
+                  title="By backtest session"
+                  rows={stats.by_backtest_session}
+                  onRowClick={(k) => crossFilter({ sessionId: k })}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              <BreakdownTable title="By leg" rows={by_leg} onRowClick={(k) => crossFilter({ leg: k })} />
+              <BreakdownTable title="By session" rows={by_session} onRowClick={(k) => crossFilter({ session: k })} />
+            </>
+          )}
         </div>
       )}
 
@@ -511,6 +588,41 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             </Card>
           </div>
 
+          <Card title="Heat -- adverse excursion before resolution (R)">
+            {heat.sample === 0 ? (
+              <p className="text-xs text-text-muted">
+                No trades with a defined stop in this scope, so adverse excursion cannot be expressed in R.
+              </p>
+            ) : (
+              <>
+                <p className="mb-2 text-xs text-text-muted">
+                  How far each trade went against its entry, in multiples of its planned risk (MAE / stop distance). Winners
+                  took a median {heat.winnersMedianR !== null ? fmtR(heat.winnersMedianR) : '-'} of heat before working;
+                  losers {heat.losersMedianR !== null ? fmtR(heat.losersMedianR) : '-'}.
+                </p>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={heat.buckets}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
+                    <XAxis dataKey="r" tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} tickFormatter={(v) => `${v}R`} />
+                    <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} labelFormatter={(v) => `${v}R and beyond`} />
+                    <Bar dataKey="winners" name="Winners" stackId="heat" fill={colors.positive} />
+                    <Bar dataKey="losers" name="Losers" stackId="heat" fill={colors.negative} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="mt-2 flex items-center gap-4 text-[11px] text-text-muted">
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.positive }} /> Winners
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-2 w-2 rounded-sm" style={{ background: colors.negative }} /> Losers
+                  </span>
+                  <span className="ml-auto tabular-nums">{heat.sample} trades</span>
+                </div>
+              </>
+            )}
+          </Card>
+
           {/* Merged (DESIGN_AUDIT.md DI3): pooled hour-of-day and the
               per-session hour facet used to be two full Card borders for
               the same underlying dimension. One card now, with a muted
@@ -566,6 +678,12 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
               </span>
             </div>
           </Card>
+        </div>
+      )}
+
+      {activeTab === 'montecarlo' && (
+        <div id="dashboard-tabpanel-montecarlo" role="tabpanel" aria-labelledby="dashboard-tab-montecarlo">
+          <MonteCarloCard runId={runId} filters={statsFilters} />
         </div>
       )}
 

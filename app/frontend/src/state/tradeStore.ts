@@ -32,6 +32,17 @@ export interface TradeFilters {
   weekday: string | null
   holdTimeBucket: string | null
   streakSelector: { type: 'win' | 'loss'; length: number } | null
+  // Manual-run journal filters (FXR_SPEC.md phase F6). Unlike the Compass
+  // ones above these ARE backend-filterable (tag/setup/grade/session_id are
+  // stored per trade), so they go out as query params and ALSO apply
+  // client-side wherever a panel already holds a trade array (the journal
+  // drawer reads the session's own /bt-sessions/.../trades, not /runs/...).
+  // On an automated run no trade carries these fields, so they never match
+  // anything and are simply not offered in the UI.
+  tag: string | null
+  setup: string | null
+  grade: string | null
+  sessionId: string | null
 }
 
 export const EMPTY_FILTERS: TradeFilters = {
@@ -46,6 +57,10 @@ export const EMPTY_FILTERS: TradeFilters = {
   weekday: null,
   holdTimeBucket: null,
   streakSelector: null,
+  tag: null,
+  setup: null,
+  grade: null,
+  sessionId: null,
 }
 
 // Extends the index signature so this is directly usable as fetch query
@@ -58,6 +73,11 @@ export interface TradeQueryParams extends Record<string, string | number | undef
   exit_type?: string
   from?: number
   to?: number
+  tag?: string
+  setup?: string
+  grade?: string
+  session_id?: string
+  hour_ny?: number
 }
 
 // Converts the UI filter shape to /api/trades query params. The date ->
@@ -72,6 +92,28 @@ export function filtersToParams(f: TradeFilters): TradeQueryParams {
     exit_type: f.exitType ?? undefined,
     from: f.dateFrom ? Math.floor(Date.parse(`${f.dateFrom}T00:00:00Z`) / 1000) : undefined,
     to: f.dateTo ? Math.floor(Date.parse(`${f.dateTo}T23:59:59Z`) / 1000) : undefined,
+    tag: f.tag ?? undefined,
+    setup: f.setup ?? undefined,
+    grade: f.grade ?? undefined,
+    session_id: f.sessionId ?? undefined,
+    // Same NY-hour the client-side compass filter computes; sending it lets
+    // the server narrow too (identical result, applied again client-side).
+    hour_ny: f.entryHourNy ?? undefined,
+  }
+}
+
+// The subset of a filter set the /stats and /monte-carlo endpoints accept
+// (manual runs only -- they ignore it for automated runs). Deliberately NOT
+// date/side/result/exit: those narrow the trade list/chart, and the stats
+// panel only offers the journal slices that are also separately broken down.
+export function filtersToStatsParams(f: TradeFilters): TradeQueryParams {
+  return {
+    tag: f.tag ?? undefined,
+    setup: f.setup ?? undefined,
+    grade: f.grade ?? undefined,
+    session: f.session ?? undefined,
+    session_id: f.sessionId ?? undefined,
+    hour_ny: f.entryHourNy ?? undefined,
   }
 }
 
@@ -127,6 +169,13 @@ export const useTradeStore = create<TradeState>()(
     {
       name: 'propbt-viz:trade-filters',
       partialize: (s) => ({ filters: s.filters }),
+      // A filter set persisted before F6 has no tag/setup/grade/sessionId
+      // keys; without this merge they'd be `undefined`, and every
+      // `v !== null` "is a filter active" check would read that as active.
+      merge: (persisted, current) => ({
+        ...current,
+        filters: { ...EMPTY_FILTERS, ...((persisted as Partial<TradeState> | undefined)?.filters ?? {}) },
+      }),
     },
   ),
 )

@@ -36,6 +36,9 @@ interface ReplayControlsProps {
   // concept at all) -- the button simply doesn't render there.
   journalOpen?: boolean
   onToggleJournal?: () => void
+  // FXR_SPEC.md phase F6: opens this session's analytics (Dashboard, equity,
+  // Monte Carlo, prop result) -- same optional/manual-session-only deal.
+  onOpenAnalytics?: () => void
 }
 
 export default function ReplayControls({
@@ -56,6 +59,7 @@ export default function ReplayControls({
   equity,
   journalOpen,
   onToggleJournal,
+  onOpenAnalytics,
 }: ReplayControlsProps) {
   const lastIndex = Math.max(0, bars.length - 1)
   const cursorBar = bars[cursorIndex]
@@ -141,11 +145,20 @@ export default function ReplayControls({
             {cursorBar && <span className="whitespace-nowrap font-mono text-text-muted">{fmtTime(cursorBar.time)}</span>}
           </>
         )}
+        {onOpenAnalytics && (
+          <button
+            onClick={onOpenAnalytics}
+            title="Open this session's analytics: stats, equity, Monte Carlo, prop-firm result"
+            className="ml-auto rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+          >
+            Analytics
+          </button>
+        )}
         {onToggleJournal && (
           <button
             onClick={onToggleJournal}
             aria-pressed={journalOpen}
-            className={`ml-auto rounded px-2 py-1 ${
+            className={`${onOpenAnalytics ? '' : 'ml-auto '}rounded px-2 py-1 ${
               journalOpen ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
             }`}
           >
@@ -167,15 +180,19 @@ export default function ReplayControls({
             <span>
               Equity: <span className="tabular-nums text-text">{fmtUsd(equity.equity)}</span>
             </span>
-            <span>
-              MLL floor: <span className="tabular-nums text-text">{fmtUsd(equity.mll_floor)}</span>
-            </span>
-            <span>
-              Distance to breach:{' '}
-              <span className={`tabular-nums ${equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}`}>
-                {fmtUsd(equity.equity - equity.mll_floor)}
-              </span>
-            </span>
+            {equity.mll_floor !== null && (
+              <>
+                <span>
+                  MLL floor: <span className="tabular-nums text-text">{fmtUsd(equity.mll_floor)}</span>
+                </span>
+                <span>
+                  Distance to breach:{' '}
+                  <span className={`tabular-nums ${equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}`}>
+                    {fmtUsd(equity.equity - equity.mll_floor)}
+                  </span>
+                </span>
+              </>
+            )}
           </>
         ) : (
           <span className="text-text-muted">No equity data at cursor</span>

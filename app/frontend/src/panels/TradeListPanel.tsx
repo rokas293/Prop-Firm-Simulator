@@ -1,11 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useTrades } from '../api/hooks'
+import { useRun, useTrades } from '../api/hooks'
 import type { TradeRecord } from '../api/types'
 import { EXIT_TYPE_OPTIONS, SIDE_OPTIONS, filtersToParams, useTradeStore, type ResultFilter } from '../state/tradeStore'
 import { useChartViewStore } from '../state/chartViewStore'
 import { useUiStore } from '../state/uiStore'
-import { applyCompassFilters } from '../compass/breakdowns'
+import { applyCompassFilters, nyHourOfDay } from '../compass/breakdowns'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
 import { fmtPoints, fmtPrice, fmtUsd } from '../format'
@@ -23,6 +23,9 @@ type SortColumn =
   | 'r_multiple'
   | 'mae_points'
   | 'mfe_points'
+  | 'setup_name'
+  | 'grade'
+  | 'tags'
 
 // Width lives with the column definition (not a separate Tailwind class per
 // cell) so the header row and every virtualized body row derive their grid
@@ -46,8 +49,18 @@ const COLUMNS: { key: SortColumn; label: string; width: number; numeric?: boolea
   { key: 'mae_points', label: 'MAE', width: 64, numeric: true },
   { key: 'mfe_points', label: 'MFE', width: 64, numeric: true },
 ]
-const GRID_TEMPLATE = COLUMNS.map((c) => `${c.width}px`).join(' ')
-const GRID_TOTAL_WIDTH = COLUMNS.reduce((sum, c) => sum + c.width, 0)
+
+// FXR_SPEC.md phase F6: a manual run's trades have no strategy "leg", so that
+// column becomes the journal's setup name, and grade + tags are added -- the
+// same table, the journal's own dimensions.
+const MANUAL_COLUMNS: typeof COLUMNS = [
+  ...COLUMNS.slice(0, 1),
+  { key: 'setup_name', label: 'Setup', width: 128 },
+  ...COLUMNS.slice(2),
+  { key: 'grade', label: 'Grade', width: 56 },
+  { key: 'tags', label: 'Tags', width: 160 },
+]
+const GRADE_OPTIONS = ['A', 'B', 'C'] as const
 const ROW_HEIGHT = 28
 
 function fmtTime(unixSeconds: number): string {
@@ -55,7 +68,8 @@ function fmtTime(unixSeconds: number): string {
 }
 
 function sortValue(t: TradeRecord, col: SortColumn): string | number | null {
-  return t[col]
+  if (col === 'tags') return t.tags && t.tags.length > 0 ? t.tags.join(', ') : null
+  return t[col] ?? null
 }
 
 // A standalone dockable panel (POLISH_ROADMAP Phase P1): no props from a
@@ -71,6 +85,13 @@ export default function TradeListPanel() {
   const selectTrade = useTradeStore((s) => s.selectTrade)
   const setTradeNavFocused = useTradeStore((s) => s.setTradeNavFocused)
   const selectTradeView = useChartViewStore((s) => s.selectTradeView)
+  const openJournalTrade = useUiStore((s) => s.openJournalTrade)
+
+  const { data: run } = useRun(runId)
+  const manual = run?.source === 'manual'
+  const columns = manual ? MANUAL_COLUMNS : COLUMNS
+  const gridTemplate = columns.map((c) => `${c.width}px`).join(' ')
+  const gridTotalWidth = columns.reduce((sum, c) => sum + c.width, 0)
 
   const filterParams = useMemo(() => filtersToParams(filters), [filters])
   const { data: rawTrades } = useTrades(runId, filterParams)
@@ -94,6 +115,21 @@ export default function TradeListPanel() {
     () => [...new Set((allTrades ?? []).map((t) => t.session).filter((v): v is string => v !== null))].sort(),
     [allTrades],
   )
+  // Journal dimensions (manual runs) + time of day (any run).
+  const tagOptions = useMemo(() => [...new Set((allTrades ?? []).flatMap((t) => t.tags ?? []))].sort(), [allTrades])
+  const setupOptions = useMemo(
+    () => [...new Set((allTrades ?? []).map((t) => t.setup_name).filter((v): v is string => !!v))].sort(),
+    [allTrades],
+  )
+  const backtestSessionOptions = useMemo(
+    () => [...new Set((allTrades ?? []).map((t) => t.session_id).filter((v): v is string => !!v))].sort(),
+    [allTrades],
+  )
+  const hourOptions = useMemo(
+    () => [...new Set((allTrades ?? []).map((t) => nyHourOfDay(t.entry_time)))].sort((a, b) => a - b),
+    [allTrades],
+  )
+  const selectedManualTrade = manual ? ((allTrades ?? []).find((t) => t.trade_id === selectedTradeId) ?? null) : null
 
   const [sortCol, setSortCol] = useState<SortColumn>('entry_time')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -160,19 +196,78 @@ export default function TradeListPanel() {
     <div className="flex h-full w-full flex-col">
       <div className="space-y-2 border-b border-border p-3 text-xs">
         <div className="flex flex-wrap gap-2">
-          <select
-            value={filters.leg ?? ''}
-            onChange={(e) => setFilter('leg', e.target.value || null)}
-            aria-label="Filter by leg"
-            className="h-7 rounded bg-surface-2 px-2 text-text"
-          >
-            <option value="">Leg: all</option>
-            {legOptions.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+          {manual ? (
+            <>
+              <select
+                value={filters.tag ?? ''}
+                onChange={(e) => setFilter('tag', e.target.value || null)}
+                aria-label="Filter by tag"
+                className="h-7 rounded bg-surface-2 px-2 text-text"
+              >
+                <option value="">Tag: all</option>
+                {tagOptions.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.setup ?? ''}
+                onChange={(e) => setFilter('setup', e.target.value || null)}
+                aria-label="Filter by setup"
+                className="h-7 rounded bg-surface-2 px-2 text-text"
+              >
+                <option value="">Setup: all</option>
+                {setupOptions.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.grade ?? ''}
+                onChange={(e) => setFilter('grade', e.target.value || null)}
+                aria-label="Filter by grade"
+                className="h-7 rounded bg-surface-2 px-2 text-text"
+              >
+                <option value="">Grade: all</option>
+                {GRADE_OPTIONS.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              {backtestSessionOptions.length > 1 && (
+                <select
+                  value={filters.sessionId ?? ''}
+                  onChange={(e) => setFilter('sessionId', e.target.value || null)}
+                  aria-label="Filter by backtest session"
+                  className="h-7 rounded bg-surface-2 px-2 text-text"
+                >
+                  <option value="">Backtest session: all</option>
+                  {backtestSessionOptions.map((v) => (
+                    <option key={v} value={v}>
+                      {v.slice(0, 13)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
+          ) : (
+            <select
+              value={filters.leg ?? ''}
+              onChange={(e) => setFilter('leg', e.target.value || null)}
+              aria-label="Filter by leg"
+              className="h-7 rounded bg-surface-2 px-2 text-text"
+            >
+              <option value="">Leg: all</option>
+              {legOptions.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          )}
           <select
             value={filters.session ?? ''}
             onChange={(e) => setFilter('session', e.target.value || null)}
@@ -222,6 +317,19 @@ export default function TradeListPanel() {
               </option>
             ))}
           </select>
+          <select
+            value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
+            onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
+            aria-label="Filter by entry hour (New York)"
+            className="h-7 rounded bg-surface-2 px-2 text-text"
+          >
+            <option value="">Hour: all</option>
+            {hourOptions.map((h) => (
+              <option key={h} value={h}>
+                {String(h).padStart(2, '0')}:00 NY
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex items-center gap-2">
           {/* Accessibility audit: these labels sat next to their inputs with
@@ -258,15 +366,26 @@ export default function TradeListPanel() {
             </button>
           )}
         </div>
-        <div className="text-text-muted">{sorted.length} trades</div>
+        <div className="flex items-center gap-3 text-text-muted">
+          <span className="tabular-nums">{sorted.length} trades</span>
+          {selectedManualTrade?.session_id && selectedManualTrade.session_trade_id != null && (
+            <button
+              onClick={() => openJournalTrade(selectedManualTrade.session_id!, selectedManualTrade.session_trade_id!)}
+              className="rounded px-2 py-1 text-text-muted hover:bg-surface-2 hover:text-text"
+              title="Open this trade's notes, tags and screenshots in its session's journal"
+            >
+              Open in journal
+            </button>
+          )}
+        </div>
       </div>
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
         <div
           className="sticky top-0 z-10 grid border-b border-border bg-bg"
-          style={{ gridTemplateColumns: GRID_TEMPLATE, minWidth: GRID_TOTAL_WIDTH }}
+          style={{ gridTemplateColumns: gridTemplate, minWidth: gridTotalWidth }}
         >
-          {COLUMNS.map((c) => {
+          {columns.map((c) => {
             const active = sortCol === c.key
             return (
               <div
@@ -303,7 +422,7 @@ export default function TradeListPanel() {
           </EmptyState>
         ) : (
           <div
-            style={{ height: rowVirtualizer.getTotalSize(), minWidth: GRID_TOTAL_WIDTH, position: 'relative' }}
+            style={{ height: rowVirtualizer.getTotalSize(), minWidth: gridTotalWidth, position: 'relative' }}
           >
             {rowVirtualizer.getVirtualItems().map((vRow) => {
               const t = sorted[vRow.index]
@@ -334,7 +453,7 @@ export default function TradeListPanel() {
                     right: 0,
                     height: vRow.size,
                     transform: `translateY(${vRow.start}px)`,
-                    gridTemplateColumns: GRID_TEMPLATE,
+                    gridTemplateColumns: gridTemplate,
                   }}
                   // No row border (DESIGN_LANGUAGE.md section 6: "zebra-free
                   // (use hover)... hover is a subtle background step, not a
@@ -347,7 +466,11 @@ export default function TradeListPanel() {
                   <div className="truncate whitespace-nowrap px-2 font-mono text-text">
                     {fmtTime(t.entry_time)}
                   </div>
-                  <div className="truncate px-2 text-text">{t.leg ?? '-'}</div>
+                  {manual ? (
+                    <div className="truncate px-2 text-text">{t.setup_name ?? '-'}</div>
+                  ) : (
+                    <div className="truncate px-2 text-text">{t.leg ?? '-'}</div>
+                  )}
                   <div className="truncate px-2 text-text">{t.session ?? '-'}</div>
                   <div className="truncate px-2 text-text">{t.side}</div>
                   <div className="num truncate px-2 text-text">{t.size_contracts}</div>
@@ -362,6 +485,12 @@ export default function TradeListPanel() {
                   </div>
                   <div className="num truncate px-2 text-text">{fmtPoints(t.mae_points)}</div>
                   <div className="num truncate px-2 text-text">{fmtPoints(t.mfe_points)}</div>
+                  {manual && (
+                    <>
+                      <div className="truncate px-2 text-text">{t.grade ?? '-'}</div>
+                      <div className="truncate px-2 text-text-muted">{t.tags && t.tags.length > 0 ? t.tags.join(', ') : '-'}</div>
+                    </>
+                  )}
                 </div>
               )
             })}

@@ -200,6 +200,26 @@ export function tradesInStreaksOfLength(trades: TradeRecord[], type: 'win' | 'lo
 // server-side via filtersToParams, so this only ever narrows further.
 export function applyCompassFilters(trades: TradeRecord[], filters: TradeFilters): TradeRecord[] {
   let out = trades
+  // Manual-run journal filters (FXR_SPEC.md phase F6). Also sent to the
+  // server, so this only ever re-narrows an already-narrowed set -- but it's
+  // what makes them work for a caller that holds an unfiltered array (the
+  // journal drawer). A trade without the field never matches a set filter.
+  if (filters.tag !== null) {
+    const tag = filters.tag
+    out = out.filter((t) => t.tags?.includes(tag) ?? false)
+  }
+  if (filters.setup !== null) {
+    const setup = filters.setup
+    out = out.filter((t) => t.setup_name === setup)
+  }
+  if (filters.grade !== null) {
+    const grade = filters.grade
+    out = out.filter((t) => t.grade === grade)
+  }
+  if (filters.sessionId !== null) {
+    const sessionId = filters.sessionId
+    out = out.filter((t) => t.session_id === sessionId)
+  }
   if (filters.entryHourNy !== null) {
     const hour = filters.entryHourNy
     out = out.filter((t) => nyHourOfDay(t.entry_time) === hour)
@@ -223,4 +243,30 @@ export function applyCompassFilters(trades: TradeRecord[], filters: TradeFilters
     out = out.filter((t) => ids.has(t.trade_id))
   }
   return out
+}
+
+// The WHOLE filter set applied client-side to an array that was NOT fetched
+// through /api/runs/{id}/trades -- i.e. the journal drawer's own session
+// trades. Mirrors bundle_reader.filter_trades_frame (server) field for field
+// for the dimensions a manual trade has, then the compass dimensions, so a
+// filter chosen in the analytics workspace narrows the journal list to
+// exactly the trades the analytics trade list shows. (leg is always null on
+// a manual trade, so a leg filter never matches -- same as the server.)
+export function filterManualTrades<T extends TradeRecord>(trades: T[], filters: TradeFilters): T[] {
+  let out = trades
+  if (filters.leg !== null) out = out.filter((t) => t.leg === filters.leg)
+  if (filters.session !== null) out = out.filter((t) => t.session === filters.session)
+  if (filters.side !== null) out = out.filter((t) => t.side === filters.side)
+  if (filters.result === 'win') out = out.filter((t) => t.pnl_usd > 0)
+  if (filters.result === 'loss') out = out.filter((t) => t.pnl_usd <= 0)
+  if (filters.exitType !== null) out = out.filter((t) => t.exit_type === filters.exitType)
+  if (filters.dateFrom !== null) {
+    const from = Math.floor(Date.parse(`${filters.dateFrom}T00:00:00Z`) / 1000)
+    out = out.filter((t) => t.entry_time >= from)
+  }
+  if (filters.dateTo !== null) {
+    const to = Math.floor(Date.parse(`${filters.dateTo}T23:59:59Z`) / 1000)
+    out = out.filter((t) => t.entry_time <= to)
+  }
+  return applyCompassFilters(out, filters) as T[]
 }

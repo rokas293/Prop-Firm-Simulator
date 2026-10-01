@@ -47,6 +47,10 @@ def list_runs() -> List[models.RunSummary]:
 
 
 def get_run_meta(run_id: str) -> models.RunMetaResponse:
+    from app.backend.services import manual_analytics as ma
+
+    if ma.is_manual_run_id(run_id):
+        return ma.get_meta(run_id)
     try:
         meta = rb.read_meta(run_id, get_runs_dir())
     except FileNotFoundError:
@@ -81,11 +85,18 @@ def _trade_row(row: pd.Series) -> models.TradeRecord:
         mae_r=_opt_float(row["mae_r"]),
         mfe_r=_opt_float(row["mfe_r"]),
         bars_held=int(row["bars_held"]),
+        # Manual-run columns (F6) -- absent from every engine bundle.
+        source=_opt_str(row["source"]) if "source" in row.index else None,
+        session_id=_opt_str(row["session_id"]) if "session_id" in row.index else None,
+        session_trade_id=int(row["session_trade_id"]) if "session_trade_id" in row.index else None,
+        tags=list(row["tags"]) if "tags" in row.index else None,
+        setup_name=_opt_str(row["setup_name"]) if "setup_name" in row.index else None,
+        grade=_opt_str(row["grade"]) if "grade" in row.index else None,
     )
 
 
-def list_trades(
-    run_id: str,
+def filter_trades_frame(
+    df: pd.DataFrame,
     leg: Optional[str] = None,
     session: Optional[str] = None,
     side: Optional[str] = None,
@@ -93,12 +104,17 @@ def list_trades(
     exit_type: Optional[str] = None,
     ts_from: Optional[int] = None,
     ts_to: Optional[int] = None,
-) -> List[models.TradeRecord]:
-    try:
-        df = rb.read_trades(run_id, get_runs_dir())
-    except FileNotFoundError:
-        raise RunNotFound(run_id)
-
+    tag: Optional[str] = None,
+    setup: Optional[str] = None,
+    grade: Optional[str] = None,
+    session_id: Optional[str] = None,
+    hour_ny: Optional[int] = None,
+) -> pd.DataFrame:
+    """The one trade-filter implementation shared by /trades and (for manual
+    runs) /stats and /monte-carlo, so a filter can never mean two things in
+    two panels. tag/setup/grade/session_id only exist on manual frames and
+    are ignored (not an error) when the column is absent.
+    """
     if leg:
         df = df[df["leg"] == leg]
     if session:
@@ -115,7 +131,48 @@ def list_trades(
         df = df[df["entry_time"] >= pd.Timestamp(ts_from, unit="s", tz="UTC")]
     if ts_to is not None:
         df = df[df["entry_time"] <= pd.Timestamp(ts_to, unit="s", tz="UTC")]
+    if tag and "tags" in df.columns:
+        df = df[df["tags"].map(lambda ts: tag in ts)]
+    if setup and "setup_name" in df.columns:
+        df = df[df["setup_name"] == setup]
+    if grade and "grade" in df.columns:
+        df = df[df["grade"] == grade]
+    if session_id and "session_id" in df.columns:
+        df = df[df["session_id"] == session_id]
+    if hour_ny is not None and len(df):
+        df = df[df["entry_time"].dt.tz_convert("America/New_York").dt.hour == hour_ny]
+    return df
 
+
+def list_trades(
+    run_id: str,
+    leg: Optional[str] = None,
+    session: Optional[str] = None,
+    side: Optional[str] = None,
+    result: Optional[str] = None,
+    exit_type: Optional[str] = None,
+    ts_from: Optional[int] = None,
+    ts_to: Optional[int] = None,
+    tag: Optional[str] = None,
+    setup: Optional[str] = None,
+    grade: Optional[str] = None,
+    session_id: Optional[str] = None,
+    hour_ny: Optional[int] = None,
+) -> List[models.TradeRecord]:
+    from app.backend.services import manual_analytics as ma
+
+    if ma.is_manual_run_id(run_id):
+        df = ma.load_trades_frame(run_id)
+    else:
+        try:
+            df = rb.read_trades(run_id, get_runs_dir())
+        except FileNotFoundError:
+            raise RunNotFound(run_id)
+
+    df = filter_trades_frame(
+        df, leg=leg, session=session, side=side, result=result, exit_type=exit_type, ts_from=ts_from, ts_to=ts_to,
+        tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny,
+    )
     return [_trade_row(row) for _, row in df.iterrows()]
 
 
@@ -125,9 +182,9 @@ def _equity_row(row: pd.Series) -> models.EquityPoint:
         balance=float(row["balance"]),
         open_pnl=float(row["open_pnl"]),
         equity=float(row["equity"]),
-        mll_floor=float(row["mll_floor"]),
-        daily_loss_floor=float(row["daily_loss_floor"]),
-        target_level=float(row["target_level"]),
+        mll_floor=_opt_float(row["mll_floor"]),
+        daily_loss_floor=_opt_float(row["daily_loss_floor"]),
+        target_level=_opt_float(row["target_level"]),
         trading_day=_opt_str(row["trading_day"]),
         day_start_balance=float(row["day_start_balance"]),
         breached=bool(row["breached"]),
@@ -174,11 +231,24 @@ def list_equity(
     ts_to: Optional[int] = None,
     max_points: int = 5000,
 ) -> List[models.EquityPoint]:
-    try:
-        df = rb.read_equity(run_id, get_runs_dir())
-    except FileNotFoundError:
-        raise RunNotFound(run_id)
+    from app.backend.services import manual_analytics as ma
 
+    if ma.is_manual_run_id(run_id):
+        df = ma.build_equity_frame(run_id)
+    else:
+        try:
+            df = rb.read_equity(run_id, get_runs_dir())
+        except FileNotFoundError:
+            raise RunNotFound(run_id)
+    return equity_points_from_frame(df, ts_from, ts_to, max_points)
+
+
+def equity_points_from_frame(
+    df: pd.DataFrame,
+    ts_from: Optional[int] = None,
+    ts_to: Optional[int] = None,
+    max_points: int = 5000,
+) -> List[models.EquityPoint]:
     # Drawdown-from-peak is computed on the full, unfiltered series first --
     # "peak equity to date" must reflect the run's real history even if the
     # caller only asked for a later window, and doing it here (not in the
@@ -204,6 +274,10 @@ def list_daily_risk(run_id: str) -> List[models.DailyRiskPoint]:
     the trailing MLL floor (CLAUDE.md section 3: breach is live intraday
     equity touching the floor), so 0 or below means that day breached.
     """
+    from app.backend.services import manual_analytics as ma
+
+    if ma.is_manual_run_id(run_id):
+        return ma.list_daily_risk(run_id)
     try:
         df = rb.read_equity(run_id, get_runs_dir())
     except FileNotFoundError:
@@ -247,9 +321,16 @@ def _group_stats(d: dict) -> models.GroupStats:
     return models.GroupStats(**d)
 
 
-def get_stats(run_id: str, scope: str = "all") -> models.StatsResponse:
+def get_stats(run_id: str, scope: str = "all", **filters) -> models.StatsResponse:
     if scope not in ("all", "is", "oos"):
         raise ValueError(f"scope must be one of all/is/oos, got {scope!r}")
+
+    from app.backend.services import manual_analytics as ma
+
+    if ma.is_manual_run_id(run_id):
+        # Manual runs have no IS/OOS split -- scope is accepted and ignored,
+        # exactly like an engine run whose meta has no split date.
+        return ma.get_stats(run_id, **filters)
 
     runs_dir = get_runs_dir()
     try:
@@ -273,4 +354,46 @@ def get_stats(run_id: str, scope: str = "all") -> models.StatsResponse:
         by_leg={k: _group_stats(v) for k, v in stats["by_leg"].items()},
         by_session={k: _group_stats(v) for k, v in stats["by_session"].items()},
         result=models.StatsResult(**result) if result else None,
+    )
+
+
+def get_monte_carlo(
+    run_id: str,
+    n_sims: int = 1000,
+    method: str = "bootstrap",
+    seed: int = 0,
+    drawdown_budget_usd: Optional[float] = None,
+    **filters,
+) -> models.MonteCarloResponse:
+    """Monte Carlo over a run's (or manual scope's) realized trade sequence --
+    propbt.sim.monte_carlo.run_trade_sequence_monte_carlo. Works on any run id;
+    for manual scopes `filters` narrow the sequence first (tag/setup/grade/...),
+    which is what answers "what if I had only taken my A setups". The drawdown
+    budget defaults to the Topstep MLL distance (prop_rules.yaml)."""
+    from app.backend.services import manual_analytics as ma
+    from propbt.config import load_prop_rules
+    from propbt.sim.monte_carlo import run_trade_sequence_monte_carlo
+
+    if ma.is_manual_run_id(run_id):
+        df = ma.load_trades_frame(run_id)
+        df = filter_trades_frame(df, **filters)
+    else:
+        try:
+            df = rb.read_trades(run_id, get_runs_dir())
+        except FileNotFoundError:
+            raise RunNotFound(run_id)
+
+    if len(df) == 0:
+        raise ValueError("no trades to simulate in this scope")
+    budget = drawdown_budget_usd if drawdown_budget_usd is not None else load_prop_rules().mll_initial_offset
+    pnls = df.sort_values("exit_time", kind="stable")["pnl_usd"].astype(float).tolist()
+    mc = run_trade_sequence_monte_carlo(pnls, n_sims=n_sims, method=method, seed=seed, drawdown_budget_usd=budget)  # type: ignore[arg-type]
+    return models.MonteCarloResponse(
+        method=mc.method, n_trades=mc.n_trades, n_sims=mc.n_sims, seed=mc.seed,
+        drawdown_budget_usd=mc.drawdown_budget_usd,
+        final_pnl_pct={str(k): v for k, v in mc.final_pnl_pct.items()},
+        max_drawdown_pct={str(k): v for k, v in mc.max_drawdown_pct.items()},
+        prob_profit=mc.prob_profit, prob_drawdown_breach=mc.prob_drawdown_breach,
+        actual_final_pnl=mc.actual_final_pnl, actual_max_drawdown=mc.actual_max_drawdown,
+        fan={str(k): v for k, v in mc.fan.items()}, actual_path=mc.actual_path,
     )

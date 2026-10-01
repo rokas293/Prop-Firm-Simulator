@@ -75,7 +75,7 @@ export default function ComparePage() {
           a: statsA.overall.profit_factor?.toFixed(2) ?? '-',
           b: statsB.overall.profit_factor?.toFixed(2) ?? '-',
         },
-        { label: 'Max drawdown', a: fmtUsd(statsA.overall.max_drawdown_usd), b: fmtUsd(statsB.overall.max_drawdown_usd) },
+        { label: 'Max drawdown', a: fmtUsd(Math.abs(statsA.overall.max_drawdown_usd)), b: fmtUsd(Math.abs(statsB.overall.max_drawdown_usd)) },
         { label: 'Trades', a: String(statsA.overall.trades), b: String(statsB.overall.trades) },
         {
           label: 'Trading days',

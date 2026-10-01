@@ -38,6 +38,13 @@ interface UiState {
   selectSession: (sessionId: string | null) => void
   landingTab: 'runs' | 'sessions'
   setLandingTab: (tab: 'runs' | 'sessions') => void
+  // FXR_SPEC.md phase F6: the analytics workspace's "Open in journal" hands
+  // SessionWorkspace one trade to open selected (the journal's own trade id,
+  // see TradeRecord.session_trade_id). One-shot, never persisted -- same
+  // pattern as pendingDayJump above.
+  pendingJournalTrade: number | null
+  openJournalTrade: (sessionId: string, tradeId: number) => void
+  consumeJournalTrade: () => void
 }
 
 // Persisted to localStorage (Phase V7: "persist view state -- selected
@@ -65,6 +72,10 @@ export const useUiStore = create<UiState>()(
         set((s) => ({ selectedSessionId: sessionId, selectedRunId: sessionId ? null : s.selectedRunId })),
       landingTab: 'runs',
       setLandingTab: (tab) => set({ landingTab: tab }),
+      pendingJournalTrade: null,
+      openJournalTrade: (sessionId, tradeId) =>
+        set({ selectedSessionId: sessionId, selectedRunId: null, pendingJournalTrade: tradeId }),
+      consumeJournalTrade: () => set({ pendingJournalTrade: null }),
     }),
     {
       name: 'propbt-viz:ui-state',

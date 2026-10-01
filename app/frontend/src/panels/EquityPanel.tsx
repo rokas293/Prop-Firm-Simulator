@@ -17,6 +17,9 @@ export default function EquityPanel() {
   const { data: run } = useRun(runId)
   const { data: equity } = useEquity(runId)
   const colors = useThemeStore((s) => s.colors)
+  // A manual session without a prop ruleset has no MLL floor to plot (null
+  // on every row) -- an all-null Line would just be an empty legend entry.
+  const hasMllFloor = (equity ?? []).some((p) => p.mll_floor !== null)
 
   if (!runId) {
     return <EmptyState title="No run selected" hint="Pick a run from the Runs list, or press Ctrl/Cmd+K to open one." />
@@ -43,7 +46,15 @@ export default function EquityPanel() {
         {run ? `${run.instrument} · ${run.date_from} → ${run.date_to}` : 'Loading…'}
       </div>
 
-      <Card title="Equity & trailing MLL (full run)">
+      <Card
+        title={
+          hasMllFloor
+            ? 'Equity & trailing MLL (full run)'
+            : (run?.session_ids?.length ?? 0) > 1
+              ? 'Cumulative net P&L (pooled sessions)'
+              : 'Equity (full run)'
+        }
+      >
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={equity ?? []}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-grid)" />
@@ -61,7 +72,9 @@ export default function EquityPanel() {
               formatter={(v) => fmtUsd(Number(v))}
             />
             <Line type="stepAfter" dataKey="equity" stroke={colors.accent} dot={false} strokeWidth={1.5} />
-            <Line type="stepAfter" dataKey="mll_floor" stroke={colors.negative} dot={false} strokeWidth={1} strokeDasharray="4 3" />
+            {hasMllFloor && (
+              <Line type="stepAfter" dataKey="mll_floor" stroke={colors.negative} dot={false} strokeWidth={1} strokeDasharray="4 3" />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </Card>

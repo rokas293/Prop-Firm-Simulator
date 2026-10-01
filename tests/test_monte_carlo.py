@@ -7,7 +7,12 @@ import pytest
 
 from propbt.config import load_contracts, load_prop_rules, load_sessions
 from propbt.engine.events import Order, OrderType, Side
-from propbt.sim.monte_carlo import available_trading_days, run_monte_carlo, sample_start_dates
+from propbt.sim.monte_carlo import (
+    available_trading_days,
+    run_monte_carlo,
+    run_trade_sequence_monte_carlo,
+    sample_start_dates,
+)
 from propbt.strategy.placeholder import AlwaysFlatStrategy
 from tests.conftest import make_ohlcv
 
@@ -116,3 +121,45 @@ def test_monte_carlo_aggregates_mll_breach_fail_reasons(sessions_cfg, contracts,
     assert mc.fail_reasons == {"mll_breach": mc.n_attempts}
     assert mc.pass_rate == 0.0
     assert mc.resolved_pass_rate == 0.0
+
+
+# --- trade-sequence Monte Carlo (resamples realized per-trade PnL) ---
+
+def test_trade_sequence_mc_shuffle_keeps_terminal_pnl_and_reports_actual_path():
+    # Hand check: cumulative PnL after each trade is 100, 50, 250; worst
+    # peak-to-trough drop in the realized order is 100 -> 50 = 50.
+    mc = run_trade_sequence_monte_carlo([100.0, -50.0, 200.0], n_sims=200, method="shuffle", seed=1)
+    assert mc.actual_path == [0.0, 100.0, 50.0, 250.0]
+    assert mc.actual_final_pnl == 250.0
+    assert mc.actual_max_drawdown == 50.0
+    # A permutation never changes the sum, so every percentile of the terminal PnL is 250.
+    assert set(mc.final_pnl_pct.values()) == {250.0}
+    assert mc.prob_profit == 1.0
+    # Every ordering of these three trades has a max drawdown of exactly 50
+    # except [-50, ...] (0 -> -50 = 50) -- all equal 50, none worse.
+    assert set(mc.max_drawdown_pct.values()) == {50.0}
+
+
+def test_trade_sequence_mc_is_deterministic_for_a_seed():
+    pnls = [120.0, -80.0, 45.0, -200.0, 310.0, -60.0]
+    a = run_trade_sequence_monte_carlo(pnls, n_sims=300, method="bootstrap", seed=7)
+    b = run_trade_sequence_monte_carlo(pnls, n_sims=300, method="bootstrap", seed=7)
+    c = run_trade_sequence_monte_carlo(pnls, n_sims=300, method="bootstrap", seed=8)
+    assert a == b
+    assert a.final_pnl_pct != c.final_pnl_pct
+
+
+def test_trade_sequence_mc_bootstrap_of_constant_trades_and_breach_probability():
+    mc = run_trade_sequence_monte_carlo([-300.0, -300.0, -300.0], n_sims=50, method="bootstrap", seed=0,
+                                         drawdown_budget_usd=800.0)
+    assert set(mc.final_pnl_pct.values()) == {-900.0}
+    assert mc.prob_profit == 0.0
+    assert mc.prob_drawdown_breach == 1.0       # 900 drawdown >= 800 budget in every sim
+    assert len(mc.fan[50]) == 4                  # starting 0 + one point per trade
+
+
+def test_trade_sequence_mc_rejects_empty_and_unknown_method():
+    with pytest.raises(ValueError):
+        run_trade_sequence_monte_carlo([], n_sims=10)
+    with pytest.raises(ValueError):
+        run_trade_sequence_monte_carlo([1.0], n_sims=10, method="nope")  # type: ignore[arg-type]

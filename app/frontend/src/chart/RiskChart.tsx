@@ -40,9 +40,16 @@ function fmtAxisPrice(price: number): string {
 interface RiskChartProps {
   equity: EquityPoint[]
   dailyRisk: DailyRiskPoint[]
+  // Fit the whole series into view whenever a new equity array arrives.
+  // Lightweight Charts spaces points by index (~6px each), so an automated
+  // run's thousands of bars fill the pane on their own -- but a manual
+  // session's trade-resolution timeline is a few dozen points and would sit
+  // squeezed against the right edge. Off by default so engine runs keep the
+  // behavior they already had.
+  fitOnData?: boolean
 }
 
-const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart({ equity, dailyRisk }, ref) {
+const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart({ equity, dailyRisk, fitOnData = false }, ref) {
   // Equity line = accent, MLL floor = negative, target = positive
   // (REDESIGN_APPROACH.md Part C1: "chart... follow the theme"). Daily-loss/
   // lock stay the theme's fixed `warning` base token -- a caution outside
@@ -67,6 +74,8 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const bandRef = useRef<MllBandPrimitive | null>(null)
   const targetLineRef = useRef<IPriceLine | null>(null)
+  // Set when a fit is wanted but the pane has no width yet (see fitOnData).
+  const pendingFitRef = useRef(false)
 
   // Create the chart once; data effects below keep it in sync in place.
   useEffect(() => {
@@ -144,6 +153,17 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
     const band = new MllBandPrimitive(equitySeries, [], hexToRgba(colorsRef.current.negative, 0.15))
     chart.panes()[0].attachPrimitive(band)
 
+    // A fit requested while this pane was hidden (a background dock tab has
+    // zero width, and fitContent() against zero width collapses the bar
+    // spacing to nothing) runs the first time the pane gets a real size.
+    const onSizeChange = () => {
+      if (pendingFitRef.current && chart.timeScale().width() > 0) {
+        pendingFitRef.current = false
+        chart.timeScale().fitContent()
+      }
+    }
+    chart.timeScale().subscribeSizeChange(onSizeChange)
+
     chartRef.current = chart
     equitySeriesRef.current = equitySeries
     mllSeriesRef.current = mllSeries
@@ -152,6 +172,7 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
     bandRef.current = band
 
     return () => {
+      chart.timeScale().unsubscribeSizeChange(onSizeChange)
       chart.remove()
       chartRef.current = null
       equitySeriesRef.current = null
@@ -199,18 +220,25 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
     mllSeries.applyOptions({ color: colors.negative })
     band.setColor(hexToRgba(colors.negative, 0.15))
 
+    // Floors are null only on a manual run with no prop ruleset (F6) -- the
+    // Prop Risk panel doesn't mount this chart for those, but the type is
+    // honest about it, so rows without a floor are simply skipped.
     equitySeries.setData(equity.map((e): LineData<Time> => ({ time: e.time as Time, value: e.equity })))
-    mllSeries.setData(equity.map((e): LineData<Time> => ({ time: e.time as Time, value: e.mll_floor })))
-    dailyLossSeries.setData(
-      equity.map((e): LineData<Time> => ({ time: e.time as Time, value: e.daily_loss_floor })),
+    mllSeries.setData(
+      equity.flatMap((e): LineData<Time>[] => (e.mll_floor === null ? [] : [{ time: e.time as Time, value: e.mll_floor }])),
     )
-    band.setPoints(equity.map((e) => ({ time: e.time, equity: e.equity, floor: e.mll_floor })))
+    dailyLossSeries.setData(
+      equity.flatMap((e): LineData<Time>[] =>
+        e.daily_loss_floor === null ? [] : [{ time: e.time as Time, value: e.daily_loss_floor }],
+      ),
+    )
+    band.setPoints(equity.flatMap((e) => (e.mll_floor === null ? [] : [{ time: e.time, equity: e.equity, floor: e.mll_floor }])))
 
     if (targetLineRef.current) {
       equitySeries.removePriceLine(targetLineRef.current)
       targetLineRef.current = null
     }
-    if (equity.length > 0) {
+    if (equity.length > 0 && equity[0].target_level !== null) {
       targetLineRef.current = equitySeries.createPriceLine({
         price: equity[0].target_level,
         color: colors.positive,
@@ -221,6 +249,20 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
       })
     }
   }, [equity, colors])
+
+  // Separate from the data effect above so a theme change (which re-runs
+  // that one) never throws away a zoom/pan the user made -- this only fires
+  // when the equity array itself is new.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!fitOnData || equity.length === 0 || !chart) return
+    if (chart.timeScale().width() > 0) {
+      pendingFitRef.current = false
+      chart.timeScale().fitContent()
+    } else {
+      pendingFitRef.current = true
+    }
+  }, [equity, fitOnData])
 
   // Breach + daily-lock markers, from the exact (non-decimated) per-day
   // aggregate rather than the equity series' own (possibly-decimated) rows

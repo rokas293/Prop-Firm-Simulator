@@ -37,6 +37,45 @@ npm --prefix app/frontend run dev
 The frontend's Vite dev server proxies `/api/*` to `:8000`, so the
 frontend never needs to know the backend's port/host beyond dev config.
 
+## Manual-session analytics (FXR phase F6)
+
+The existing run analytics are pointed at manual (replay) trades, not
+duplicated. A manual scope is a *virtual run*, addressed by a run id the
+`/api/runs/{id}/...` endpoints already understand:
+
+| run id | scope |
+|---|---|
+| `bt:<session_id>` | one manual session |
+| `bt:all:<MNQ\|MES>` | every session of one instrument, pooled (per instrument: the chart plots a single price scale) |
+
+`bundle_reader` dispatches `bt:` ids to `services/manual_analytics.py`, which
+only *adapts*: it turns a session's `trades.json` into the same trades frame a
+run bundle's `trades.parquet` is (plus `source`, `session_id`,
+`session_trade_id`, `tags`, `setup_name`, `grade`; `trading_day` is derived),
+then reuses `run_bundle.compute_run_stats`, the equity compression, and
+`propbt.engine.prop_rules.PropRulesTracker`. Nothing about a trade's
+fill/PnL/R/MAE/MFE is recomputed.
+
+- **Filters** (`tag`, `setup`, `grade`, `session`, `session_id`, `hour_ny`) are
+  one implementation, `bundle_reader.filter_trades_frame`, used by `/trades`,
+  `/stats` and `/monte-carlo`. In the UI they are the shared `tradeStore`
+  filter set, so the Dashboard cross-filter, Trade List, Chart and the
+  Journal drawer all narrow together.
+- **Prop result** exists only for a session created with
+  `prop_ruleset: "topstep_50k"` (balance must equal the ruleset's $50k). The
+  sim journals closed trades, not a per-bar equity log, so the tracker is fed
+  at trade resolution: entry, the trade's worst point (pre-trade balance minus
+  MAE in dollars) and the realized exit. That reaches the same MLL verdict a
+  per-bar replay would; it cannot say *when inside the trade* the low
+  happened, so an intratrade breach is stamped at the trade's exit time. MAE
+  excludes commission. Pooled scopes have no single account, so no result and
+  no floors (equity is cumulative net P&L).
+- **Monte Carlo** (`GET /api/runs/{id}/monte-carlo`) resamples the realized
+  per-trade P&L (`propbt.sim.monte_carlo.run_trade_sequence_monte_carlo`:
+  bootstrap or shuffle, seeded). It works for any run id. The engine's other
+  Monte Carlo (Combine attempts from many start dates) needs a strategy to
+  re-run, which a fixed trade list does not have.
+
 ## Tests
 
 ```

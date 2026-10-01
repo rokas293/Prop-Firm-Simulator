@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { EMPTY_FILTERS, filtersToParams, useTradeStore } from './tradeStore'
+import { EMPTY_FILTERS, filtersToParams, filtersToStatsParams, useTradeStore } from './tradeStore'
 
 beforeEach(() => {
   useTradeStore.setState({ filters: EMPTY_FILTERS, selectedTradeId: null })
@@ -73,5 +73,36 @@ describe('filtersToParams', () => {
     expect(params.from).toBe(Date.UTC(2024, 0, 1, 0, 0, 0) / 1000)
     expect(params.to).toBe(Date.UTC(2024, 0, 1, 23, 59, 59) / 1000)
     expect(params.to).toBeGreaterThan(params.from as number)
+  })
+})
+
+describe('manual-run (journal) filters', () => {
+  it('sends tag/setup/grade/backtest-session and the NY entry hour to the server', () => {
+    expect(
+      filtersToParams({ ...EMPTY_FILTERS, tag: 'breakout', setup: 'Fade', grade: 'A', sessionId: 's1', entryHourNy: 10 }),
+    ).toEqual({ tag: 'breakout', setup: 'Fade', grade: 'A', session_id: 's1', hour_ny: 10 })
+  })
+
+  it('keeps hour 0 (midnight NY) as a real filter value, not unset', () => {
+    expect(filtersToParams({ ...EMPTY_FILTERS, entryHourNy: 0 }).hour_ny).toBe(0)
+  })
+
+  it('filtersToStatsParams carries only the journal slices the stats endpoint understands', () => {
+    expect(
+      filtersToStatsParams({ ...EMPTY_FILTERS, tag: 't', session: 'ny', side: 'long', result: 'win', dateFrom: '2024-01-01' }),
+    ).toEqual({ tag: 't', session: 'ny' })
+  })
+
+  it('a filter set persisted before F6 (no journal keys) rehydrates with them null, not undefined', async () => {
+    localStorage.setItem(
+      'propbt-viz:trade-filters',
+      JSON.stringify({ state: { filters: { leg: 'continuation', side: null } }, version: 0 }),
+    )
+    await useTradeStore.persist.rehydrate()
+    const f = useTradeStore.getState().filters
+    expect(f.leg).toBe('continuation')
+    expect(f.tag).toBeNull()
+    expect(f.sessionId).toBeNull()
+    localStorage.clear()
   })
 })

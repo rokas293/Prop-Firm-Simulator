@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import type { IDockviewPanelProps } from 'dockview-react'
 import RiskChart, { type RiskChartHandle } from '../chart/RiskChart'
-import { useDailyRisk, useEquity } from '../api/hooks'
+import { useDailyRisk, useEquity, useRun } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { CHART_PANEL_ID } from '../workspace/panelIds'
 import EmptyState from '../components/EmptyState'
@@ -39,11 +39,28 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
   const colors = useThemeStore((s) => s.colors)
   const base = useThemeBase()
 
+  const { data: run } = useRun(runId)
   const { data: equity } = useEquity(runId, RISK_EQUITY_MAX_POINTS)
   const { data: dailyRisk } = useDailyRisk(runId)
 
   if (!runId) {
     return <EmptyState title="No run selected" hint="Pick a run from the Runs list, or press Ctrl/Cmd+K to open one." />
+  }
+
+  // FXR_SPEC.md phase F6: the MLL / daily-loss / target view is the prop
+  // rule engine's output -- a manual session only has one if it ran under a
+  // ruleset (and a pooled all-sessions scope has no single account to judge).
+  if (run?.source === 'manual' && !run.prop_ruleset) {
+    return (
+      <EmptyState
+        title="No prop ruleset on this scope"
+        hint={
+          run.session_ids && run.session_ids.length > 1
+            ? 'Prop risk is per account. Open a single Topstep session from the Sessions list.'
+            : 'Start a session with "Topstep $50k Combine rules" to see the trailing MLL, daily loss floor and profit target here.'
+        }
+      />
+    )
   }
 
   // POLISH_ROADMAP Phase P6 / DESIGN_AUDIT.md P1: skeleton while EITHER
@@ -86,7 +103,7 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
       </div>
 
       <div className="min-h-0 flex-1">
-        <RiskChart ref={chartRef} equity={equity ?? []} dailyRisk={dailyRisk ?? []} />
+        <RiskChart ref={chartRef} equity={equity ?? []} dailyRisk={dailyRisk ?? []} fitOnData={run?.source === 'manual'} />
       </div>
 
       <div className="border-t border-border px-4 py-3">

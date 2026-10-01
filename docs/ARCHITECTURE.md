@@ -30,7 +30,8 @@ propbt/
     news_spike.py
   sim/
     combine.py       # simulate a full Combine attempt from a start date
-    monte_carlo.py   # many attempts over rolling/sampled start dates -> pass %
+    monte_carlo.py   # many attempts over rolling/sampled start dates -> pass %;
+                     # also resamples a *realized* trade sequence (no strategy to re-run)
     walk_forward.py  # in-sample optimize, out-of-sample validate
   reporting/
     metrics.py       # expectancy, win rate, per-session/per-leg breakdown, fail reasons

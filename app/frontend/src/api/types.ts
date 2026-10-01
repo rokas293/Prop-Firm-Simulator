@@ -23,7 +23,18 @@ export interface RunSummary {
 
 export interface RunMeta extends RunSummary {
   config_hash: string
+  // FXR_SPEC.md phase F6: a manual session (run id "bt:<session_id>") or all
+  // of one instrument's sessions ("bt:all:<INSTRUMENT>") is served through
+  // the same run endpoints as an automated run -- see manualRunId() below.
+  source?: 'engine' | 'manual'
+  prop_ruleset?: string | null
+  session_ids?: string[]
 }
+
+export const MANUAL_RUN_PREFIX = 'bt:'
+export const manualRunId = (sessionId: string) => `${MANUAL_RUN_PREFIX}${sessionId}`
+export const manualAllRunId = (instrument: string) => `${MANUAL_RUN_PREFIX}all:${instrument}`
+export const isManualRunId = (runId: string | null): runId is string => runId !== null && runId.startsWith(MANUAL_RUN_PREFIX)
 
 export interface TradeRecord {
   trade_id: number
@@ -51,6 +62,15 @@ export interface TradeRecord {
   mae_r: number | null
   mfe_r: number | null
   bars_held: number
+  // Populated only on manual-run trades (FXR_SPEC section 2 schema compat).
+  source?: string | null
+  session_id?: string | null
+  // The journal's own trade id within session_id (trade_id itself is
+  // renumbered in a pooled all-sessions scope) -- links back to the journal.
+  session_trade_id?: number | null
+  tags?: string[] | null
+  setup_name?: string | null
+  grade?: string | null
 }
 
 export interface EquityPoint {
@@ -58,9 +78,10 @@ export interface EquityPoint {
   balance: number
   open_pnl: number
   equity: number
-  mll_floor: number
-  daily_loss_floor: number
-  target_level: number
+  // null on a manual run without a prop ruleset (no floors exist to draw).
+  mll_floor: number | null
+  daily_loss_floor: number | null
+  target_level: number | null
   trading_day: string | null
   day_start_balance: number
   breached: boolean
@@ -86,6 +107,13 @@ export interface StatsResult {
   consistency_passed: boolean | null
   final_balance: number
   trading_days: number
+  // Manual runs only (F6): how/when the Combine resolved.
+  resolved_time?: number | null
+  resolved_trade_id?: number | null
+  trades_to_result?: number | null
+  equity_at_result?: number | null
+  mll_floor_at_result?: number | null
+  daily_loss_lock_days?: number | null
 }
 
 export interface StatsResponse {
@@ -93,7 +121,29 @@ export interface StatsResponse {
   overall: GroupStats
   by_leg: Record<string, GroupStats>
   by_session: Record<string, GroupStats>
+  // Manual runs only (F6) -- the journal's own dimensions.
+  by_setup?: Record<string, GroupStats>
+  by_tag?: Record<string, GroupStats>
+  by_grade?: Record<string, GroupStats>
+  by_backtest_session?: Record<string, GroupStats>
   result: StatsResult | null
+}
+
+// Percentile keys are strings on the wire ("5", "25", "50", "75", "95").
+export interface MonteCarloResponse {
+  method: 'bootstrap' | 'shuffle'
+  n_trades: number
+  n_sims: number
+  seed: number
+  drawdown_budget_usd: number
+  final_pnl_pct: Record<string, number>
+  max_drawdown_pct: Record<string, number>
+  prob_profit: number
+  prob_drawdown_breach: number
+  actual_final_pnl: number
+  actual_max_drawdown: number
+  fan: Record<string, number[]>
+  actual_path: number[]
 }
 
 export interface Bar {
@@ -138,6 +188,10 @@ export interface SimAccount {
   risk_per_trade_usd: number | null
   default_contracts: number
   commission_per_contract: number
+  // F6: "topstep_50k" = the Topstep Combine ruleset; null/absent = practice account.
+  prop_ruleset?: string | null
+  // Position limit in contracts (Topstep: 5); null/absent = uncapped.
+  max_contracts?: number | null
 }
 
 // FXR_SPEC.md section B/3, phase F4: the sim broker's open position and
@@ -169,6 +223,13 @@ export interface PersistedWorkingOrder {
   placed_time: number
 }
 
+export interface PropStatus {
+  status: 'passed' | 'failed' | 'incomplete'
+  fail_reason: string | null
+  resolved_trade_id: number | null
+  trades_to_result: number | null
+}
+
 export interface BacktestSessionSummary {
   id: string
   instrument: string
@@ -183,6 +244,8 @@ export interface BacktestSessionSummary {
   working_orders: PersistedWorkingOrder[]
   // FXR_SPEC.md section C, phase F5: session-level journal notes.
   notes: string | null
+  // Only on the sessions LIST, for Topstep sessions.
+  prop_status?: PropStatus | null
 }
 
 export type BacktestSessionDetail = BacktestSessionSummary
@@ -201,6 +264,7 @@ export interface CreateSessionRequest {
   risk_per_trade_usd?: number | null
   default_contracts: number
   commission_per_contract: number
+  prop_ruleset?: string | null
 }
 
 // F4: every cursor update carries the FULL current broker state, never a

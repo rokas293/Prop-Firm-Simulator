@@ -9,6 +9,7 @@ import { useUiStore } from '../state/uiStore'
 import type { Timeframe } from '../state/uiStore'
 
 const INSTRUMENTS = ['MNQ', 'MES'] as const
+const TOPSTEP_BALANCE = 50000
 const TIMEFRAMES: Timeframe[] = ['1min', '5min', '15min', '1h']
 
 // datetime-local has no timezone of its own -- treated as UTC (append 'Z'),
@@ -34,6 +35,11 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
   const [riskPercent, setRiskPercent] = useState(1)
   const [defaultContracts, setDefaultContracts] = useState(1)
   const [commission, setCommission] = useState(1.3)
+  // FXR_SPEC.md phase F6: run the session as a Topstep $50k Combine sim --
+  // the rule engine (target/MLL/daily loss/consistency) judges the session's
+  // trades in its analytics. Locks the balance to the ruleset's own $50k;
+  // the backend rejects any other balance.
+  const [topstep, setTopstep] = useState(false)
 
   if (!open) return null
 
@@ -48,10 +54,11 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
         base_timeframe: baseTimeframe,
         start_time: startTime,
         random_start: randomStart,
-        starting_balance: startingBalance,
+        starting_balance: topstep ? TOPSTEP_BALANCE : startingBalance,
         risk_per_trade_percent: riskPercent,
         default_contracts: defaultContracts,
         commission_per_contract: commission,
+        prop_ruleset: topstep ? 'topstep_50k' : null,
       },
       {
         onSuccess: (session) => {
@@ -139,9 +146,10 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
               <span className="micro-label">Starting balance</span>
               <input
                 type="number"
-                value={startingBalance}
+                value={topstep ? TOPSTEP_BALANCE : startingBalance}
+                disabled={topstep}
                 onChange={(e) => setStartingBalance(Number(e.target.value))}
-                className="h-8 rounded border border-border bg-surface-2 px-2 text-xs text-text"
+                className="h-8 rounded border border-border bg-surface-2 px-2 text-xs text-text disabled:opacity-40"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -175,6 +183,16 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
               />
             </label>
           </div>
+
+          <label className="flex items-start gap-2 text-xs text-text-muted">
+            <input type="checkbox" checked={topstep} onChange={(e) => setTopstep(e.target.checked)} className="mt-0.5" />
+            <span>
+              <span className="text-text">Topstep $50k Combine rules</span>
+              <br />
+              Judges this session against the profit target, trailing max loss, daily loss limit and consistency rule.
+              Locks the balance to $50,000.
+            </span>
+          </label>
 
           {createSession.isError && (
             <div className="text-xs text-negative">{(createSession.error as Error).message}</div>

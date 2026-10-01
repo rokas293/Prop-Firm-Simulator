@@ -114,3 +114,100 @@ def run_monte_carlo(
         fail_reasons=fail_reasons,
         attempts=attempts,
     )
+
+
+# --------------------------- trade-sequence Monte Carlo ---------------------------
+#
+# The Combine-attempt Monte Carlo above needs a *strategy* it can re-run from
+# many start dates. A fixed, already-realized trade list (a discretionary
+# session's journaled trades, or any run's trades.parquet) has no strategy to
+# re-run -- the only honest question left is "how much of this equity curve
+# was ordering/sampling luck?", answered by resampling the realized per-trade
+# PnLs. It reads pnl_usd only; nothing about fills/PnL is recomputed here.
+
+TradeResampleMethod = Literal["bootstrap", "shuffle"]
+
+FAN_PERCENTILES = (5, 25, 50, 75, 95)
+SUMMARY_PERCENTILES = (5, 25, 50, 75, 95)
+
+
+@dataclass(frozen=True)
+class TradeSequenceMonteCarlo:
+    method: str
+    n_trades: int
+    n_sims: int
+    seed: int
+    drawdown_budget_usd: float
+    final_pnl_pct: Dict[int, float]          # percentile -> terminal cumulative PnL
+    max_drawdown_pct: Dict[int, float]       # percentile -> worst peak-to-trough drop (positive USD)
+    prob_profit: float                        # share of sims ending > 0
+    prob_drawdown_breach: float               # share of sims whose max drawdown >= budget
+    actual_final_pnl: float
+    actual_max_drawdown: float
+    fan: Dict[int, List[float]] = field(default_factory=dict)   # percentile -> cum PnL after trade 0..n
+    actual_path: List[float] = field(default_factory=list)       # realized cum PnL after trade 0..n
+
+
+def _max_drawdown_rows(paths: "np.ndarray") -> "np.ndarray":
+    """Worst peak-to-trough drop per row of a (sims x steps) cumulative-PnL
+    matrix whose first column is the starting 0."""
+    import numpy as np
+
+    peaks = np.maximum.accumulate(paths, axis=1)
+    return (peaks - paths).max(axis=1)
+
+
+def run_trade_sequence_monte_carlo(
+    pnls: List[float],
+    n_sims: int = 1000,
+    method: TradeResampleMethod = "bootstrap",
+    seed: int = 0,
+    drawdown_budget_usd: float = 2000.0,
+) -> TradeSequenceMonteCarlo:
+    """Resample the realized per-trade PnL sequence `n_sims` times.
+
+    - "bootstrap": draw n_trades with replacement (the terminal PnL varies).
+    - "shuffle":   permute the same trades (terminal PnL is fixed; only the
+                   path / drawdown depend on ordering).
+    Deterministic for a given seed. The realized path is reported alongside
+    so the UI can show where the real run sits inside the distribution.
+    """
+    import numpy as np
+
+    if method not in ("bootstrap", "shuffle"):
+        raise ValueError(f"Unknown resample method {method!r}")
+    if n_sims < 1:
+        raise ValueError("n_sims must be >= 1")
+    n = len(pnls)
+    if n == 0:
+        raise ValueError("cannot run a Monte Carlo over zero trades")
+
+    arr = np.asarray(pnls, dtype="float64")
+    rng = np.random.default_rng(seed)
+    if method == "bootstrap":
+        samples = arr[rng.integers(0, n, size=(n_sims, n))]
+    else:
+        samples = np.stack([rng.permutation(arr) for _ in range(n_sims)])
+
+    paths = np.concatenate([np.zeros((n_sims, 1)), np.cumsum(samples, axis=1)], axis=1)
+    finals = paths[:, -1]
+    drawdowns = _max_drawdown_rows(paths)
+
+    actual = np.concatenate([[0.0], np.cumsum(arr)])
+    actual_dd = float((np.maximum.accumulate(actual) - actual).max())
+
+    return TradeSequenceMonteCarlo(
+        method=method,
+        n_trades=n,
+        n_sims=n_sims,
+        seed=seed,
+        drawdown_budget_usd=drawdown_budget_usd,
+        final_pnl_pct={p: float(np.percentile(finals, p)) for p in SUMMARY_PERCENTILES},
+        max_drawdown_pct={p: float(np.percentile(drawdowns, p)) for p in SUMMARY_PERCENTILES},
+        prob_profit=float((finals > 0).mean()),
+        prob_drawdown_breach=float((drawdowns >= drawdown_budget_usd).mean()),
+        actual_final_pnl=float(actual[-1]),
+        actual_max_drawdown=actual_dd,
+        fan={p: [float(v) for v in np.percentile(paths, p, axis=0)] for p in FAN_PERCENTILES},
+        actual_path=[float(v) for v in actual],
+    )

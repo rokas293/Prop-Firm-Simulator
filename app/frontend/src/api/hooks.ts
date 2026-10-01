@@ -82,11 +82,31 @@ export function useSessions(instrument: string | null, from: number | null, to: 
   })
 }
 
-export function useStats(runId: string | null, scope: StatsScope) {
+// `filters` (F6) only does anything for a manual run: the backend narrows the
+// stats to the same journal slice (tag/setup/grade/session/hour) the trade
+// list is filtered to. Part of the query key, so each slice caches on its own.
+export function useStats(runId: string | null, scope: StatsScope, filters?: TradeQueryParams) {
   return useQuery({
-    queryKey: ['stats', runId, scope],
-    queryFn: () => api.getStats(runId as string, scope),
+    queryKey: filters && Object.values(filters).some((v) => v !== undefined) ? ['stats', runId, scope, filters] : ['stats', runId, scope],
+    queryFn: () => api.getStats(runId as string, scope, filters),
     enabled: runId !== null,
+  })
+}
+
+// FXR_SPEC.md phase F6: Monte Carlo over a run's/session's realized trade
+// sequence (propbt.sim.monte_carlo.run_trade_sequence_monte_carlo). Seeded,
+// so the same inputs always return the same distribution.
+export function useMonteCarlo(
+  runId: string | null,
+  params: { method: 'bootstrap' | 'shuffle'; n_sims: number; seed: number } & TradeQueryParams,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['monte-carlo', runId, params],
+    queryFn: () => api.getMonteCarlo(runId as string, params),
+    enabled: runId !== null && enabled,
+    // A 400 here means "no trades in this scope" -- not worth retrying.
+    retry: false,
   })
 }
 
@@ -249,6 +269,8 @@ export function useCreateManualTrade() {
     onSuccess: (result, { sessionId }) => {
       queryClient.setQueryData(['bt-session', sessionId], result.session)
       void queryClient.invalidateQueries({ queryKey: ['bt-session-trades', sessionId] })
+      // A closed trade can resolve a Topstep Combine -- refresh its verdict.
+      void queryClient.invalidateQueries({ queryKey: ['stats'] })
       void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
     },
   })

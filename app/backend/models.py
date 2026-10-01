@@ -31,6 +31,14 @@ class RunSummary(BaseModel):
 
 class RunMetaResponse(RunSummary):
     config_hash: str
+    # FXR_SPEC.md phase F6: a manual session (or all of an instrument's
+    # sessions) is served through the same /api/runs/{id}/... endpoints as a
+    # completed automated run, under a "bt:" id (see manual_analytics.py) --
+    # these let the frontend tell them apart without parsing the id. Defaults
+    # keep every real run bundle's meta response unchanged.
+    source: str = "engine"                      # "engine" | "manual"
+    prop_ruleset: Optional[str] = None           # manual runs only: e.g. "topstep_50k"
+    session_ids: List[str] = Field(default_factory=list)  # manual runs only
 
 
 class TradeRecord(BaseModel):
@@ -59,6 +67,17 @@ class TradeRecord(BaseModel):
     mae_r: Optional[float] = None
     mfe_r: Optional[float] = None
     bars_held: int
+    # FXR_SPEC.md section 2 schema-compat: only populated on manual-run
+    # trades (see manual_analytics.py); None/absent on every engine run.
+    source: Optional[str] = None
+    session_id: Optional[str] = None
+    # The journal's own trade id inside session_id. Equals trade_id for a
+    # single-session scope; a pooled (all-sessions) scope renumbers trade_id
+    # to stay unique across sessions, so this is what links back to the journal.
+    session_trade_id: Optional[int] = None
+    tags: Optional[List[str]] = None
+    setup_name: Optional[str] = None
+    grade: Optional[str] = None
 
 
 class EquityPoint(BaseModel):
@@ -66,9 +85,10 @@ class EquityPoint(BaseModel):
     balance: float
     open_pnl: float
     equity: float
-    mll_floor: float
-    daily_loss_floor: float
-    target_level: float
+    # None on a manual run that didn't use a prop ruleset (no floors exist).
+    mll_floor: Optional[float] = None
+    daily_loss_floor: Optional[float] = None
+    target_level: Optional[float] = None
     trading_day: Optional[str] = None
     day_start_balance: float
     breached: bool
@@ -94,6 +114,15 @@ class StatsResult(BaseModel):
     consistency_passed: Optional[bool] = None
     final_balance: float
     trading_days: int
+    # Manual runs only (F6): how/when the Combine resolved, so the dashboard
+    # can say more than PASSED/FAILED. All None for engine runs and while
+    # a manual session is still "incomplete".
+    resolved_time: Optional[int] = None
+    resolved_trade_id: Optional[int] = None
+    trades_to_result: Optional[int] = None
+    equity_at_result: Optional[float] = None
+    mll_floor_at_result: Optional[float] = None
+    daily_loss_lock_days: Optional[int] = None
 
 
 class StatsResponse(BaseModel):
@@ -101,7 +130,28 @@ class StatsResponse(BaseModel):
     overall: GroupStats
     by_leg: Dict[str, GroupStats]
     by_session: Dict[str, GroupStats]
+    # Manual runs only (F6): breakdowns along the journal's own dimensions.
+    by_setup: Dict[str, GroupStats] = Field(default_factory=dict)
+    by_tag: Dict[str, GroupStats] = Field(default_factory=dict)
+    by_grade: Dict[str, GroupStats] = Field(default_factory=dict)
+    by_backtest_session: Dict[str, GroupStats] = Field(default_factory=dict)
     result: Optional[StatsResult] = None
+
+
+class MonteCarloResponse(BaseModel):
+    method: str
+    n_trades: int
+    n_sims: int
+    seed: int
+    drawdown_budget_usd: float
+    final_pnl_pct: Dict[str, float]
+    max_drawdown_pct: Dict[str, float]
+    prob_profit: float
+    prob_drawdown_breach: float
+    actual_final_pnl: float
+    actual_max_drawdown: float
+    fan: Dict[str, List[float]]
+    actual_path: List[float]
 
 
 class Bar(BaseModel):
@@ -165,6 +215,14 @@ class SimAccountModel(BaseModel):
     risk_per_trade_usd: Optional[float] = None
     default_contracts: int
     commission_per_contract: float
+    # FXR_SPEC.md section 2/B, phase F6: optional prop ruleset ("topstep_50k"
+    # = propbt/config/prop_rules.yaml). None = a plain practice account.
+    # Optional/defaulted so every session.json written before F6 validates.
+    prop_ruleset: Optional[str] = None
+    # Max contracts in one position, set from the ruleset's position limit
+    # (prop_rules.yaml max_open_contracts) when prop_ruleset is set; None =
+    # uncapped practice account.
+    max_contracts: Optional[int] = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -180,6 +238,7 @@ class CreateSessionRequest(BaseModel):
     risk_per_trade_usd: Optional[float] = None
     default_contracts: int = 1
     commission_per_contract: float = 1.0
+    prop_ruleset: Optional[str] = None
 
 
 # --- FXR_SPEC.md section B/3, phase F4: the sim broker's open position and
@@ -217,6 +276,15 @@ class PersistedWorkingOrder(BaseModel):
     placed_time: int
 
 
+class PropStatus(BaseModel):
+    """Where a Topstep session's Combine stands (propbt's PropRulesTracker,
+    via manual_analytics.prop_status): passed | failed | incomplete."""
+    status: str
+    fail_reason: Optional[str] = None
+    resolved_trade_id: Optional[int] = None
+    trades_to_result: Optional[int] = None
+
+
 class BacktestSessionSummary(BaseModel):
     id: str
     instrument: str
@@ -233,6 +301,8 @@ class BacktestSessionSummary(BaseModel):
     # from any one trade's own notes below). Optional/defaulted so every
     # session.json written before F5 still validates unchanged.
     notes: Optional[str] = None
+    # Filled only by GET /bt-sessions (the list), for prop sessions.
+    prop_status: Optional[PropStatus] = None
 
 
 class BacktestSessionDetail(BacktestSessionSummary):

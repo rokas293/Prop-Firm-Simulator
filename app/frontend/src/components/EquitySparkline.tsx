@@ -1,4 +1,4 @@
-import { Line, LineChart, ResponsiveContainer } from 'recharts'
+import { Line, LineChart, ResponsiveContainer, YAxis } from 'recharts'
 import { useEquity } from '../api/hooks'
 import { useThemeStore } from '../state/themeStore'
 import { fmtUsd } from '../format'
@@ -34,6 +34,10 @@ export default function EquitySparkline({ runId, onViewFull }: { runId: string |
         <>
           <ResponsiveContainer width="100%" height={80}>
             <LineChart data={equity}>
+              {/* Hidden axis, but with an explicit domain: recharts' default
+                  for an axis-less chart starts at zero, which flattens a
+                  $50k account's +/-$500 swings into a straight line. */}
+              <YAxis hide domain={['auto', 'auto']} />
               <Line
                 type="monotone"
                 dataKey="equity"

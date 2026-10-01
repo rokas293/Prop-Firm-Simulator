@@ -11,6 +11,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { runningTotals } from '../chart/replay'
+import { positionCapMessage } from '../chart/positionCap'
+import { combineBanner } from '../compass/propResult'
 import {
   advanceReplay,
   closePosition,
@@ -45,20 +47,23 @@ import {
   useDeleteTradeScreenshot,
   useIndicators,
   useSessions,
+  useStats,
   useUpdateBtSessionCursor,
   useUpdateBtSessionNotes,
   useUpdateTradeJournal,
 } from '../api/hooks'
 import { useIndicatorStore } from '../state/indicatorStore'
+import { useUiStore } from '../state/uiStore'
 import { useThemeBase } from '../state/themeStore'
-import type {
-  AddScreenshotRequest,
-  Bar,
-  CreateManualTradeRequest,
-  IndicatorName,
-  ManualTrade,
-  TradeRecord,
-  UpdateTradeJournalRequest,
+import {
+  manualRunId,
+  type AddScreenshotRequest,
+  type Bar,
+  type CreateManualTradeRequest,
+  type IndicatorName,
+  type ManualTrade,
+  type TradeRecord,
+  type UpdateTradeJournalRequest,
 } from '../api/types'
 import EmptyState from '../components/EmptyState'
 
@@ -172,6 +177,25 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // FXR_SPEC.md section C, phase F5: the journal drawer -- local UI state,
   // not persisted (unlike everything it shows, which lives on the backend).
   const [journalOpen, setJournalOpen] = useState(false)
+  // Why the last order was refused (Topstep position cap) -- quiet, dismissible.
+  const [orderNotice, setOrderNotice] = useState<string | null>(null)
+  // A Topstep session's Combine verdict (the same PropRulesTracker result the
+  // analytics Dashboard shows); disabled (null run id) for a practice session.
+  const propRunId = session?.account.prop_ruleset ? manualRunId(session.id) : null
+  const { data: propStats } = useStats(propRunId, 'all')
+  const banner = combineBanner(propStats?.result)
+  // FXR_SPEC.md phase F6: "Open in journal" from the analytics workspace
+  // lands here with one trade to show -- opens the drawer on it, once.
+  const selectRun = useUiStore((s) => s.selectRun)
+  const pendingJournalTrade = useUiStore((s) => s.pendingJournalTrade)
+  const consumeJournalTrade = useUiStore((s) => s.consumeJournalTrade)
+  const [journalInitialTrade, setJournalInitialTrade] = useState<number | null>(null)
+  useEffect(() => {
+    if (pendingJournalTrade === null) return
+    setJournalInitialTrade(pendingJournalTrade)
+    setJournalOpen(true)
+    consumeJournalTrade()
+  }, [pendingJournalTrade, consumeJournalTrade])
 
   // FXR_SPEC.md phase F2/F3/F4: the sim broker's single open position and
   // working orders. Local state, mirrored to the backend on every change
@@ -571,6 +595,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // both read `bars[cursorIndex]` only, never a bar beyond it.
   const enterPosition = (side: Side) => {
     if (!session || !bars || !bars[cursorIndex] || !flat) return
+    const capMsg = positionCapMessage(session.account.default_contracts, session.account.max_contracts, 'Market order')
+    if (capMsg) {
+      setOrderNotice(capMsg)
+      return
+    }
+    setOrderNotice(null)
     const entryBar = bars[cursorIndex]
     const newPosition: OpenPosition = {
       side,
@@ -683,6 +713,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const side: Side = ticket.tpPrice >= ticket.entryPrice ? 'long' : 'short'
     const riskUsd = riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd)
     const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec)
+    const capMsg = positionCapMessage(contracts, session.account.max_contracts, 'Auto-sized order')
+    if (capMsg) {
+      // Keep the ticket open so the lines can be dragged to a size that fits.
+      setOrderNotice(capMsg)
+      return
+    }
+    setOrderNotice(null)
     const marketBar = bars[cursorIndex]
 
     if (ticket.entryPrice === marketBar.close) {
@@ -751,6 +788,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
     const place = (side: Side, orderType: PendingOrderType) => () => {
       if (!bars[cursorIndex]) return
+      const capMsg = positionCapMessage(session.account.default_contracts, session.account.max_contracts, 'Order')
+      if (capMsg) {
+        setOrderNotice(capMsg)
+        return
+      }
+      setOrderNotice(null)
       const order: WorkingOrder = {
         id: crypto.randomUUID(),
         side,
@@ -882,6 +925,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         equity={null}
         journalOpen={journalOpen}
         onToggleJournal={() => setJournalOpen((v) => !v)}
+        onOpenAnalytics={() => selectRun(manualRunId(session.id))}
       />
       {ticketReadout ? (
         <TradeTicketPanel ticket={ticketReadout} onConfirm={confirmTicket} onCancel={cancelTicket} />
@@ -916,6 +960,23 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onPartialClose={handlePartialClose}
           partialCloseDisabled={!position || position.contracts < 2}
         />
+      )}
+      {(orderNotice || banner) && (
+        <div className="flex flex-col gap-1 bg-surface px-4 py-2 text-xs text-text-muted">
+          {banner && <p>{banner}</p>}
+          {orderNotice && (
+            <p className="flex items-start gap-2" role="status">
+              <span>{orderNotice}</span>
+              <button
+                onClick={() => setOrderNotice(null)}
+                aria-label="Dismiss"
+                className="rounded px-1 text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                &times;
+              </button>
+            </p>
+          )}
+        </div>
       )}
       <div className="flex min-h-0 flex-1">
         {/* min-w-0 matters here, not just min-h-0: without it, this flex
@@ -975,6 +1036,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             onAddScreenshot={handleAddScreenshot}
             onDeleteScreenshot={handleDeleteScreenshot}
             onClose={() => setJournalOpen(false)}
+            initialSelectedId={journalInitialTrade}
           />
         )}
       </div>

@@ -12,6 +12,7 @@ import ShortcutsOverlay from './components/ShortcutsOverlay'
 import SettingsPanel from './components/SettingsPanel'
 import LiveRegion from './components/LiveRegion'
 import { useUiStore } from './state/uiStore'
+import { isManualRunId } from './api/types'
 import { usePerfStore } from './state/perfStore'
 import { applyThemeToDocument, useThemeBase, useThemeStore } from './state/themeStore'
 import { isShortcut } from './keyboard/shortcuts'
@@ -24,6 +25,7 @@ export default function App() {
   const landingTab = useUiStore((s) => s.landingTab)
   const setLandingTab = useUiStore((s) => s.setLandingTab)
   const compareRunIds = useUiStore((s) => s.compareRunIds)
+  const setLandingTabFromRun = useUiStore((s) => s.setLandingTab)
   const distractionFree = useUiStore((s) => s.distractionFree)
   const { data: run } = useRun(selectedRunId)
   const { data: btSession } = useBtSession(selectedSessionId)
@@ -77,13 +79,32 @@ export default function App() {
             <>
               <div className="h-4 w-px bg-surface-2" />
               <button
-                onClick={() => selectRun(null)}
+                onClick={() => {
+                  // A manual scope's "back" is the Sessions list, not Runs.
+                  if (isManualRunId(selectedRunId)) setLandingTabFromRun('sessions')
+                  selectRun(null)
+                }}
                 className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
               >
-                &larr; Runs
+                &larr; {isManualRunId(selectedRunId) ? 'Sessions' : 'Runs'}
               </button>
-              <span className="font-mono text-xs text-text-muted">{selectedRunId}</span>
+              {isManualRunId(selectedRunId) ? (
+                <>
+                  <span className="text-xs text-text">{run?.config_name ?? 'Manual analytics'}</span>
+                  <span className="text-xs text-text-muted">analytics</span>
+                </>
+              ) : (
+                <span className="font-mono text-xs text-text-muted">{selectedRunId}</span>
+              )}
               {run && <span className="text-xs text-text-muted">{run.instrument}</span>}
+              {run?.source === 'manual' && run.session_ids?.length === 1 && (
+                <button
+                  onClick={() => selectSession(run.session_ids![0])}
+                  className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
+                >
+                  Open session
+                </button>
+              )}
             </>
           )}
           {!compareRunIds && selectedSessionId && (

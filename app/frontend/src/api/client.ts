@@ -10,6 +10,7 @@ import type {
   EquityPoint,
   IndicatorResponse,
   ManualTrade,
+  MonteCarloResponse,
   PersistedPosition,
   PersistedWorkingOrder,
   RecordTradeResponse,
@@ -110,8 +111,10 @@ export const api = {
   getTrades: <P extends QueryParams>(runId: string, params?: P) =>
     request<TradeRecord[], P>(`/runs/${runId}/trades`, params),
   getEquity: (runId: string, params?: QueryParams) => request<EquityPoint[]>(`/runs/${runId}/equity`, params),
-  getStats: (runId: string, scope: 'all' | 'is' | 'oos' = 'all') =>
-    request<StatsResponse>(`/runs/${runId}/stats`, { scope }),
+  getStats: (runId: string, scope: 'all' | 'is' | 'oos' = 'all', filters?: QueryParams) =>
+    request<StatsResponse>(`/runs/${runId}/stats`, { scope, ...filters }),
+  getMonteCarlo: (runId: string, params?: QueryParams) =>
+    request<MonteCarloResponse>(`/runs/${runId}/monte-carlo`, params),
   getBars: (params: QueryParams) => request<Bar[]>('/bars', params),
   getSessions: (params: QueryParams) => request<SessionWindow[]>('/sessions', params),
   getDailyRisk: (runId: string) => request<DailyRiskPoint[]>(`/runs/${runId}/daily_risk`),

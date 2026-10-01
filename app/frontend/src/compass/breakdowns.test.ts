@@ -8,6 +8,7 @@ import {
   bySessionHour,
   byWeekday,
   computeStreakRuns,
+  filterManualTrades,
   nyHourOfDay,
   sessionsPresent,
   summarizeStreaks,
@@ -259,5 +260,53 @@ describe('applyCompassFilters', () => {
   it('composes multiple compass filters (AND)', () => {
     const result = applyCompassFilters(trades, { ...EMPTY_FILTERS, weekday: 'Fri', entryHourNy: 15 })
     expect(result.map((t) => t.trade_id)).toEqual([2])
+  })
+})
+
+// FXR_SPEC.md phase F6: manual-run journal filters.
+describe('journal filters (manual runs)', () => {
+  const a = makeTrade({ trade_id: 1, tags: ['breakout', 'london-sweep'], setup_name: 'Break & Retest', grade: 'A', session_id: 's1' })
+  const b = makeTrade({
+    trade_id: 2,
+    tags: ['breakout'],
+    setup_name: 'Fade',
+    grade: 'C',
+    session_id: 's1',
+    pnl_usd: -20,
+    entry_time: 1626467460 - 3600,
+  })
+  const c = makeTrade({ trade_id: 3, tags: [], setup_name: null, grade: null, session_id: 's2' })
+  const trades = [a, b, c]
+
+  it('applyCompassFilters narrows by tag, setup, grade and backtest session', () => {
+    const ids = (f: Partial<typeof EMPTY_FILTERS>) =>
+      applyCompassFilters(trades, { ...EMPTY_FILTERS, ...f }).map((t) => t.trade_id)
+    expect(ids({ tag: 'breakout' })).toEqual([1, 2])
+    expect(ids({ tag: 'london-sweep' })).toEqual([1])
+    expect(ids({ setup: 'Fade' })).toEqual([2])
+    expect(ids({ grade: 'A' })).toEqual([1])
+    expect(ids({ sessionId: 's2' })).toEqual([3])
+    expect(ids({ tag: 'breakout', grade: 'C' })).toEqual([2])
+  })
+
+  it('a trade without journal fields never matches a journal filter (e.g. an automated-run trade)', () => {
+    const engine = makeTrade({ trade_id: 9 })
+    expect(applyCompassFilters([engine], { ...EMPTY_FILTERS, tag: 'x' })).toEqual([])
+    expect(applyCompassFilters([engine], { ...EMPTY_FILTERS, grade: 'A' })).toEqual([])
+  })
+
+  it('filterManualTrades applies the whole filter set, mirroring the server filters', () => {
+    const f = (patch: Partial<typeof EMPTY_FILTERS>) =>
+      filterManualTrades(trades, { ...EMPTY_FILTERS, ...patch }).map((t) => t.trade_id)
+    expect(f({})).toEqual([1, 2, 3])
+    expect(f({ result: 'loss' })).toEqual([2])
+    expect(f({ result: 'win' })).toEqual([1, 3])
+    expect(f({ session: 'ny' })).toEqual([1, 2, 3])
+    expect(f({ session: 'asia' })).toEqual([])
+    expect(f({ side: 'short' })).toEqual([])
+    expect(f({ entryHourNy: 16 })).toEqual([1, 3]) // b is one hour earlier (NY hour 15)
+    expect(f({ entryHourNy: 15, tag: 'breakout' })).toEqual([2])
+    expect(f({ dateFrom: '2021-07-17' })).toEqual([])
+    expect(f({ dateFrom: '2021-07-16', dateTo: '2021-07-16' })).toEqual([1, 2, 3])
   })
 })

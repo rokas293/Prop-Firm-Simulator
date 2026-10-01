@@ -24,7 +24,13 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
 
 @router.get("", response_model=List[models.BacktestSessionSummary])
 def list_sessions(include_archived: bool = False) -> List[models.BacktestSessionSummary]:
-    return bt_session_service.list_sessions(include_archived=include_archived)
+    from app.backend.services import manual_analytics
+
+    sessions = bt_session_service.list_sessions(include_archived=include_archived)
+    for s in sessions:
+        if s.account.prop_ruleset:
+            s.prop_status = manual_analytics.prop_status(s.id)
+    return sessions
 
 
 @router.get("/{session_id}", response_model=models.BacktestSessionDetail)
