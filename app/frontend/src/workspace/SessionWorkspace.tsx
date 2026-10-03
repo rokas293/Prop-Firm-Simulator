@@ -7,7 +7,7 @@
 // user steps (F1), drives the sim broker's market Buy/Sell/Close (F2), and
 // (F3) the "New Trade" drag ticket + right-click limit/stop orders against
 // chart/simBroker.ts's pure fill logic, journaling each closed trade.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { runningTotals } from '../chart/replay'
@@ -37,7 +37,6 @@ import type { ContextMenuEntry } from '../components/ContextMenu'
 import ReplayControls from '../panels/ReplayControls'
 import PositionTicket, { type WorkingOrderSummary } from '../panels/PositionTicket'
 import TradeTicketPanel, { type TicketReadout } from '../panels/TradeTicketPanel'
-import JournalPanel from '../panels/JournalPanel'
 import {
   useBtSession,
   useBtSessionTrades,
@@ -67,23 +66,60 @@ import {
 } from '../api/types'
 import EmptyState from '../components/EmptyState'
 
-// Sized so the fetched window still resolves at the session's own
-// base_timeframe (bar_service.get_bars silently steps to a COARSER
-// timeframe if a window would exceed max_points -- see its own comment --
-// so this stays comfortably under that ceiling rather than right at it).
+// The journal drawer loads on first open, not in the entry chunk.
+const JournalPanel = lazy(() => import('../panels/JournalPanel'))
+
+// Sized so the fetched window can NEVER make bar_service.get_bars step to a
+// COARSER timeframe (it does that silently when a window would hold more than
+// max_points bars, which would change the session's bars under the replay).
+// computeWindow spans at most MAX_POINTS - 1 base-timeframe intervals, i.e. at
+// most MAX_POINTS bars even counting both inclusive ends (session gaps only
+// ever remove bars), so the limit is never exceeded at the session's own
+// timeframe.
 const MAX_POINTS = 3000
 const BASE_TF_SECONDS: Record<string, number> = { '1min': 60, '5min': 300, '15min': 900, '1h': 3600 }
+
+// Mid-replay re-anchor: when the cursor is within REANCHOR_TRIGGER_BARS of the
+// last loaded bar, the window is rebuilt with the cursor REANCHOR_LOOKAHEAD_BARS
+// from its far end -- most of the budget stays as history behind the cursor
+// (so the user's view survives the swap), with a margin of lookahead so the
+// next trigger is a long way off. LOOKAHEAD must stay > TRIGGER.
+const REANCHOR_TRIGGER_BARS = 20
+const REANCHOR_LOOKAHEAD_BARS = 200
 
 // Exported for direct unit testing (same pattern as client.ts's buildQuery)
 // -- this is the exact-cursor-restore logic the F1 verification scenario
 // depends on, so it's worth testing without mounting the whole workspace.
-export function computeWindow(anchorTime: number, timeframe: string) {
+// `lookaheadBars` omitted = the open/resume window (weighted 30/70 toward the
+// future); given = a re-anchor window ending that many bars after the anchor.
+export function computeWindow(anchorTime: number, timeframe: string, lookaheadBars?: number) {
   const barSeconds = BASE_TF_SECONDS[timeframe] ?? 300
-  const totalSpanSeconds = barSeconds * MAX_POINTS
+  const totalSpanSeconds = barSeconds * (MAX_POINTS - 1)
+  if (lookaheadBars !== undefined) {
+    const to = anchorTime + barSeconds * lookaheadBars
+    return { from: to - totalSpanSeconds, to }
+  }
   // More room ahead than behind -- replay only ever moves forward from the
   // anchor, so most of the budget should be spent on not needing a refetch
   // as the cursor advances.
   return { from: anchorTime - totalSpanSeconds * 0.3, to: anchorTime + totalSpanSeconds * 0.7 }
+}
+
+// Whether advancing the cursor should re-anchor the fetch window: the cursor
+// is within `triggerBars` of the last loaded bar. `lastReanchoredAtBarTime` is
+// the last bar a re-anchor was already requested for -- if the last loaded bar
+// is still that one, the data has run out (end of the dataset), so asking again
+// would just refetch the same window on every step.
+export function shouldReanchor(
+  cursorIndex: number,
+  barCount: number,
+  lastBarTime: number | undefined,
+  lastReanchoredAtBarTime: number | null,
+  triggerBars = REANCHOR_TRIGGER_BARS,
+): boolean {
+  if (barCount === 0 || lastBarTime === undefined) return false
+  if (cursorIndex < barCount - 1 - triggerBars) return false
+  return lastBarTime !== lastReanchoredAtBarTime
 }
 
 // The CAMERA's default view is deliberately much tighter than the FETCH
@@ -101,6 +137,13 @@ export function defaultFitWindow(anchorTime: number, timeframe: string) {
   const barSeconds = BASE_TF_SECONDS[timeframe] ?? 300
   const totalSpanSeconds = barSeconds * DEFAULT_FIT_BARS
   return { from: anchorTime - totalSpanSeconds * 0.3, to: anchorTime + totalSpanSeconds * 0.7 }
+}
+
+// A window load refits the camera to the default window only for a fresh
+// anchor (open / resume / session switch). A mid-replay re-anchor keeps the
+// view where it is, so long sessions never hop.
+export function shouldRefitOnLoad(windowReanchored: boolean): boolean {
+  return !windowReanchored
 }
 
 // FXR_SPEC.md section C, phase F5's trade-review jump: pads a journaled
@@ -223,6 +266,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [armedTrailingPoints, setArmedTrailingPoints] = useState<number | null>(null)
 
   const [windowAnchor, setWindowAnchor] = useState<number | null>(null)
+  // null = the open/resume window shape; a number = a re-anchor window ending
+  // that many bars past windowAnchor (see computeWindow).
+  const [windowLookahead, setWindowLookahead] = useState<number | null>(null)
+  const lastReanchoredAtBarTimeRef = useRef<number | null>(null)
   const [cursorIndex, setCursorIndexState] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -268,6 +315,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     restoredForSessionRef.current = null
     cursorTimeRef.current = session.cursor_time
     setWindowAnchor(session.cursor_time)
+    setWindowLookahead(null)
+    lastReanchoredAtBarTimeRef.current = null
+    reanchoredAnchorRef.current = null
     setIsPlaying(false)
     setPosition(null)
     positionRef.current = null
@@ -277,8 +327,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }, [session])
 
   const barsWindow = useMemo(
-    () => (windowAnchor !== null && session ? computeWindow(windowAnchor, session.base_timeframe) : null),
-    [windowAnchor, session?.base_timeframe],
+    () => (windowAnchor !== null && session ? computeWindow(windowAnchor, session.base_timeframe, windowLookahead ?? undefined) : null),
+    [windowAnchor, windowLookahead, session?.base_timeframe],
   )
 
   const { data: bars, isFetching: barsFetching } = useBars(
@@ -357,6 +407,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // actually rendered (its own auto-range on load included) -- a reliable
   // "child is ready" signal the imperative handle has no callback for.
   const initialFitAppliedRef = useRef(false)
+  // Set when the fetch window is re-anchored mid-replay (advanceTo). The new
+  // window's load must NOT refit the camera to the default window -- ChartKL
+  // keeps the view on the same bars (preserveViewOnWindowChange), so a refit
+  // would be the visible hop. Keyed to the anchor (not cleared on first use)
+  // because the parent's bars query lands after ChartKL's own load and fires
+  // a later range event for the same window.
+  const reanchoredAnchorRef = useRef<number | null>(null)
   useEffect(() => {
     initialFitAppliedRef.current = false
   }, [bars])
@@ -365,6 +422,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     // handleVisibleRangeChange) -- not yet the "real data is ready" signal.
     if (!range || initialFitAppliedRef.current || windowAnchor === null || !session) return
     initialFitAppliedRef.current = true
+    if (!shouldRefitOnLoad(reanchoredAnchorRef.current === windowAnchor)) return
     const fit = defaultFitWindow(windowAnchor, session.base_timeframe)
     klChartRef.current?.fitRange(fit.from, fit.to)
   }
@@ -478,11 +536,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     // last, rather than racing and possibly being silently overwritten.
     for (const trade of result.closedTrades) await journalClosedTrade(trade)
     if (t !== undefined) persist(t)
-    // Nearing the end of the loaded window -- shift the anchor forward so
-    // continued stepping/playback keeps having bars to advance into,
-    // instead of running off the end of a static window.
-    if (newIndex >= bars.length - 20 && bars.length === MAX_POINTS) {
+    // Nearing the end of the loaded window -- rebuild it around the cursor
+    // (history behind, a small lookahead margin ahead) so continued
+    // stepping/playback keeps having bars to advance into, instead of running
+    // off the end of a static window.
+    if (shouldReanchor(newIndex, bars.length, bars[bars.length - 1]?.time, lastReanchoredAtBarTimeRef.current)) {
+      lastReanchoredAtBarTimeRef.current = bars[bars.length - 1].time
+      reanchoredAnchorRef.current = bars[newIndex].time
       setWindowAnchor(bars[newIndex].time)
+      setWindowLookahead(REANCHOR_LOOKAHEAD_BARS)
     }
   }
 
@@ -502,7 +564,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, bars, speed])
 
-  const cursorTime = bars && bars[cursorIndex] ? bars[cursorIndex].time : null
+  // While the window swaps (bars briefly undefined) keep the logical cursor
+  // time, never null: a null cursor means "no replay", which would reveal
+  // every bar of the incoming window (look-ahead).
+  const cursorTime = bars ? (bars[cursorIndex]?.time ?? null) : cursorTimeRef.current
 
   const { data: sessionsInView } = useSessions(
     session?.instrument ?? null,
@@ -1000,6 +1065,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             sessionBands={sessionBands}
             prefs={indicatorPrefs}
             loading={barsFetching}
+            preserveViewOnWindowChange
             cursorTime={cursorTime}
             followLatestBar={followLatestBar}
             onCandleBarClick={handleCandleBarClick}
@@ -1026,18 +1092,20 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           />
         </div>
         {journalOpen && (
-          <JournalPanel
-            trades={manualTrades ?? []}
-            sessionNotes={session.notes}
-            onUpdateSessionNotes={handleUpdateSessionNotes}
-            onJumpToTrade={handleJumpToTrade}
-            captureScreenshot={() => klChartRef.current?.captureScreenshot() ?? null}
-            onUpdateTradeJournal={handleUpdateTradeJournal}
-            onAddScreenshot={handleAddScreenshot}
-            onDeleteScreenshot={handleDeleteScreenshot}
-            onClose={() => setJournalOpen(false)}
-            initialSelectedId={journalInitialTrade}
-          />
+          <Suspense fallback={null}>
+            <JournalPanel
+              trades={manualTrades ?? []}
+              sessionNotes={session.notes}
+              onUpdateSessionNotes={handleUpdateSessionNotes}
+              onJumpToTrade={handleJumpToTrade}
+              captureScreenshot={() => klChartRef.current?.captureScreenshot() ?? null}
+              onUpdateTradeJournal={handleUpdateTradeJournal}
+              onAddScreenshot={handleAddScreenshot}
+              onDeleteScreenshot={handleDeleteScreenshot}
+              onClose={() => setJournalOpen(false)}
+              initialSelectedId={journalInitialTrade}
+            />
+          </Suspense>
         )}
       </div>
     </div>

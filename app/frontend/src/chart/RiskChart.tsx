@@ -18,6 +18,7 @@ import type { DailyRiskPoint, EquityPoint } from '../api/types'
 import { fmtUsdWhole } from '../format'
 import { MllBandPrimitive } from './MllBandPrimitive'
 import { hexToRgba } from './color'
+import { fmtEtDateTime, fmtEtTick } from '../timeFormat'
 import { useThemeStore, useThemeBase } from '../state/themeStore'
 
 export interface RiskChartHandle {
@@ -61,8 +62,7 @@ function fitWithRightPadding(chart: IChartApi, points: number): void {
 const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart({ equity, dailyRisk, fitOnData = false }, ref) {
   // Equity line = accent, MLL floor = negative, target = positive
   // (REDESIGN_APPROACH.md Part C1: "chart... follow the theme"). Daily-loss/
-  // lock stay the theme's fixed `warning` base token -- a caution outside
-  // the tunable accent/positive/negative model (Part C1 audit risk #2).
+  // lock use the muted base token (F7a: no third semantic hue on non-PnL data).
   const colors = useThemeStore((s) => s.colors)
   const base = useThemeBase()
   // Read inside the mount-only effect below (empty deps -- the initial
@@ -109,9 +109,19 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
       // documented `attributionLogo` option.
       layout: { background: { color: b.bg }, textColor: b.text, attributionLogo: false },
       grid: { vertLines: { color: b.grid }, horzLines: { color: b.grid } },
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: b.border },
-      rightPriceScale: { borderColor: b.border },
-      localization: { priceFormatter: fmtAxisPrice },
+      // Axis and crosshair read in Eastern Time like every other surface
+      // (lightweight-charts would otherwise print UTC); the "ET" caption is
+      // the pane's own overlay in RiskPanel.
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        borderColor: b.border,
+        tickMarkFormatter: (time: Time, kind: number) => fmtEtTick(time as number, kind),
+      },
+      // Headroom above and below so a marker or its label on the highest or
+      // lowest point (the breach) is never clipped, even in a short pane.
+      rightPriceScale: { borderColor: b.border, scaleMargins: { top: 0.25, bottom: 0.2 } },
+      localization: { priceFormatter: fmtAxisPrice, timeFormatter: (time: Time) => fmtEtDateTime(time as number) },
       // Part C3 audit gap: only `mode` was ever set here, leaving both
       // crosshair lines and their axis-label backgrounds at lightweight-
       // charts' own fixed default colors (see CrosshairLineOptions in its
@@ -149,7 +159,7 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
     const dailyLossSeries = chart.addSeries(
       LineSeries,
       {
-        color: b.warning,
+        color: b.textMuted,
         lineWidth: 1,
         lineStyle: LineStyle.Dotted,
         lineType: LineType.WithSteps,
@@ -210,7 +220,7 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
         horzLine: { color: base.textMuted, labelBackgroundColor: base.surface },
       },
     })
-    dailyLossSeriesRef.current?.applyOptions({ color: base.warning })
+    dailyLossSeriesRef.current?.applyOptions({ color: base.textMuted })
   }, [base])
 
   // Equity / MLL floor / daily-loss floor lines + the distance-to-breach
@@ -286,12 +296,14 @@ const RiskChart = forwardRef<RiskChartHandle, RiskChartProps>(function RiskChart
         markers.push({
           time: d.breach_time as Time,
           position: 'aboveBar',
-          shape: 'square',
-          color: colors.negative,
+          shape: 'circle',
+          // Quieter than a solid square: a smaller, translucent dot -- the
+          // label and the header line already say it is a breach.
+          color: hexToRgba(colors.negative, 0.5),
           // Short on purpose: the date is in the header line and the day
           // strip; a long label is what used to clip at the right edge.
           text: 'Breach',
-          size: 1,
+          size: 0.5,
           id: `breach-${d.trading_day}`,
         })
       }

@@ -5,6 +5,7 @@
 // without mounting a Lightweight Charts instance. Every value comes
 // straight off the TradeRecord -- no recomputation (VIZ_SPEC section 0).
 import type { TradeRecord } from '../api/types'
+import { fmtEtDateTime } from '../timeFormat'
 import type { ReplayTradeView } from './replay'
 
 export type BracketDensity = 'auto' | 'full' | 'markers'
@@ -80,9 +81,7 @@ export function shouldShowLabel(widthPx: number): boolean {
   return widthPx >= MIN_LABEL_WIDTH_PX
 }
 
-function formatClock(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(0, 16).replace('T', ' ')
-}
+const formatClock = fmtEtDateTime
 
 // Hover tooltip content (POLISH_ROADMAP Phase P3: "tooltip with full trade
 // detail"). One string, newline-joined, written straight into a DOM node's

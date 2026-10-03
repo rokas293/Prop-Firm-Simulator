@@ -4,11 +4,9 @@ import { useUiStore } from '../state/uiStore'
 import Skeleton from '../components/Skeleton'
 import NewSessionModal from '../components/NewSessionModal'
 import { fmtUsd } from '../format'
+import { fmtEtDateTime } from '../timeFormat'
 import { manualAllRunId, manualRunId } from '../api/types'
 
-function fmtDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(0, 16).replace('T', ' ')
-}
 
 // FXR_SPEC.md phase F1's Sessions list -- same shape as RunsListPage
 // (loading skeleton, error state, empty state, micro-label headers,
@@ -72,9 +70,9 @@ export default function SessionsListPage() {
       {!sessions || sessions.length === 0 ? (
         <div className="text-text-muted">No sessions yet. Start one with "New session" above.</div>
       ) : (
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full border-collapse text-xs">
           <thead>
-            <tr className="border-b border-border text-left">
+            <tr className="h-8 border-b border-border text-left">
               <th className="micro-label py-1 pr-4 text-left">Instrument</th>
               <th className="micro-label py-1 pr-4 text-left">Timeframe</th>
               <th className="micro-label py-1 pr-4 text-left">Start</th>
@@ -97,14 +95,14 @@ export default function SessionsListPage() {
                     selectSession(session.id)
                   }
                 }}
-                className="group cursor-pointer border-b border-border hover:bg-surface"
+                className="group h-8 cursor-pointer border-b border-border hover:bg-surface"
               >
-                <td className="py-1 pr-4 text-text">{session.instrument}</td>
-                <td className="py-1 pr-4 text-text-muted">{session.base_timeframe}</td>
-                <td className="py-1 pr-4 font-mono text-xs text-text-muted">{fmtDate(session.start_time)}</td>
-                <td className="py-1 pr-4 font-mono text-xs text-text-muted">{fmtDate(session.cursor_time)}</td>
-                <td className="num py-1 pr-4 text-text">{fmtUsd(session.account.balance)}</td>
-                <td className="py-1 pr-4 text-text-muted">
+                <td className="pr-4 text-text">{session.instrument}</td>
+                <td className="pr-4 text-text-muted">{session.base_timeframe}</td>
+                <td className="pr-4 text-xs tabular-nums text-text-muted">{fmtEtDateTime(session.start_time)}</td>
+                <td className="pr-4 text-xs tabular-nums text-text-muted">{fmtEtDateTime(session.cursor_time)}</td>
+                <td className="num pr-4 text-text">{fmtUsd(session.account.balance)}</td>
+                <td className="pr-4 text-text-muted">
                   {session.account.prop_ruleset === 'topstep_50k' ? 'Topstep $50k' : '-'}
                   {session.prop_status && (
                     // Semantic colour on the verdict only; an open Combine stays muted.
@@ -121,14 +119,14 @@ export default function SessionsListPage() {
                     </span>
                   )}
                 </td>
-                <td className="py-1 pr-4">
+                <td className="pr-4">
                   {session.status === 'active' ? (
-                    <span className="text-positive">ACTIVE</span>
+                    <span className="text-text">ACTIVE</span>
                   ) : (
                     <span className="text-text-muted">ARCHIVED</span>
                   )}
                 </td>
-                <td className="py-1 pr-4 text-right">
+                <td className="pr-4 text-right">
                   {/* Revealed on row hover/focus (DESIGN_LANGUAGE.md: controls
                       that could reveal on hover shouldn't be always visible). */}
                   <button

@@ -41,7 +41,7 @@ import {
   ensureSessionBandOverlayRegistered,
   type SessionBand,
 } from './sessionOverlay'
-import { cameraRestoreIndex } from './cameraPreserve'
+import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex } from './cameraPreserve'
 import { KL_ORDER_LINE, ensureOrderLineOverlayRegistered } from './orderLineOverlay'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
 import { useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
@@ -206,6 +206,11 @@ interface ChartKLProps {
   // SAME menu with order-placement actions without ChartKL itself knowing
   // anything about trading.
   getEmptyAreaMenuExtraItems?: (info: { time: number; price: number }) => ContextMenuEntry[]
+  // Manual-session replay: when the fetch window is re-anchored on the cursor
+  // (same instrument/timeframe, different from/to), keep the view on the same
+  // bars instead of letting klinecharts reset the scroll. Off for the
+  // automated-run review, whose own fit owns the camera on a window change.
+  preserveViewOnWindowChange?: boolean
 }
 
 // Matches Tailwind's default `font-sans` stack (index.css has no custom
@@ -418,6 +423,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     openPositionEditor = null,
     onOpenPositionSlTpChange,
     getEmptyAreaMenuExtraItems,
+    preserveViewOnWindowChange = false,
   },
   ref,
 ) {
@@ -554,6 +560,11 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   bracketDensityRef.current = bracketDensity
   const slLineColorRef = useRef(slLineColor)
   slLineColorRef.current = slLineColor
+  const preserveViewOnWindowChangeRef = useRef(preserveViewOnWindowChange)
+  preserveViewOnWindowChangeRef.current = preserveViewOnWindowChange
+  // instrument|timeframe of the data currently on the chart -- a re-anchor
+  // keeps this the same; a symbol/timeframe switch changes it and refits.
+  const loadedSeriesKeyRef = useRef<string | null>(null)
   const openPositionEditorRef = useRef(openPositionEditor)
   openPositionEditorRef.current = openPositionEditor
 
@@ -968,7 +979,28 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       loadedBarsRef.current = visible
       setMeasureBarsContext(visible)
       setHasLoadedOnce(true)
+      // Captured BEFORE the data list is swapped: where the viewport's right
+      // edge sits, in time (see cameraPreserve.ts's re-anchor section).
+      const seriesKey = `${requestRef.current.instrument}|${requestRef.current.timeframe}`
+      const sameSeries = loadedSeriesKeyRef.current === seriesKey
+      loadedSeriesKeyRef.current = seriesKey
+      const viewAnchor =
+        preserveViewOnWindowChangeRef.current && sameSeries
+          ? captureViewAnchor(
+              chart.getDataList().map((d) => d.timestamp),
+              chart.getVisibleRange().realTo,
+            )
+          : null
       callback(visible.map(toKLineData), { forward: false, backward: false })
+      // Each init load resets klinecharts' scroll, so this runs for every
+      // load (a re-anchor can respond more than once), before the overlays
+      // below are placed against the visible range.
+      const restoreIndex = reanchorRestoreIndex(
+        viewAnchor,
+        visible.map((b) => b.time * 1000),
+        followLatestBarRef.current,
+      )
+      if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
       rebuildOverlaysRef.current()
       restoreDrawingsRef.current()
       rebuildIndicatorsRef.current()
@@ -1836,7 +1868,13 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           <Skeleton className="h-16" />
         </div>
       )}
-      {tooltip && (
+      {/* The axis, crosshair and legend are all Eastern Time (the chart is
+          init'd with timezone America/New_York); this says so, in the empty
+          corner under the price axis. */}
+      <span className="pointer-events-none absolute bottom-1 right-2 z-10 text-[11px] font-medium tracking-wide text-text-muted">
+        ET
+      </span>
+      {tooltip && !contextMenu && (
         <div
           className="pointer-events-none absolute z-20 whitespace-pre rounded border border-border bg-surface/95 px-2 py-1 text-xs tabular-nums text-text shadow-lg"
           style={{ left: Math.min(tooltip.x + 12, (containerRef.current?.clientWidth ?? 0) - 180), top: Math.max(tooltip.y - 12, 0) }}
@@ -1878,7 +1916,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
               {measureDrag.result.points.toFixed(2)} ({measureDrag.result.percent >= 0 ? '+' : ''}
               {measureDrag.result.percent.toFixed(2)}%)
             </span>
-            <div className="mt-0.5 text-[11px] tabular-nums text-text-muted">
+            <div className="mt-1 text-[11px] tabular-nums text-text-muted">
               {measureDrag.result.bars} bars &middot; {formatDuration(measureDrag.result.seconds)}
             </div>
           </div>

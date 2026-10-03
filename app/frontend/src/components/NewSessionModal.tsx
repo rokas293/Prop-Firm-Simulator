@@ -7,19 +7,16 @@ import { useModalFocus } from './useModalFocus'
 import { useCreateBtSession } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import type { Timeframe } from '../state/uiStore'
+import { ET_LABEL, etWallTimeToUnix } from '../timeFormat'
 
 const INSTRUMENTS = ['MNQ', 'MES'] as const
 const TOPSTEP_BALANCE = 50000
 const TIMEFRAMES: Timeframe[] = ['1min', '5min', '15min', '1h']
 
-// datetime-local has no timezone of its own -- treated as UTC (append 'Z'),
-// same convention ChartPanel's own day-jump lookup uses for a bare date
-// string (windowMargin/dayJumpLookupWindow: `${day}T00:00:00Z`).
-function localInputToUnixSeconds(value: string): number | null {
-  if (!value) return null
-  const ms = Date.parse(`${value}:00Z`)
-  return Number.isNaN(ms) ? null : Math.floor(ms / 1000)
-}
+// datetime-local has no timezone of its own -- it is read as Eastern Time
+// (the zone every displayed time and the session rules use), and converted
+// to the UTC unix seconds the API stores.
+const localInputToUnixSeconds = etWallTimeToUnix
 
 export default function NewSessionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const contentRef = useRef<HTMLDivElement>(null)
@@ -86,7 +83,7 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
           </button>
         </div>
 
-        <div className="flex flex-col gap-4 px-4 py-4">
+        <div className="flex flex-col gap-6 px-4 py-4">
           <div>
             <div className="micro-label mb-2">Instrument</div>
             <div className="flex gap-2">
@@ -131,10 +128,10 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
                 value={startTimeInput}
                 onChange={(e) => setStartTimeInput(e.target.value)}
                 disabled={randomStart}
-                className="h-8 rounded border border-border bg-surface-2 px-2 text-xs text-text disabled:opacity-40"
+                className="propbt-input"
               />
-              <span className="text-xs text-text-muted">UTC</span>
-              <label className="ml-auto flex items-center gap-1.5 text-xs text-text-muted">
+              <span className="text-xs text-text-muted">{ET_LABEL}</span>
+              <label className="ml-auto flex items-center gap-2 text-xs text-text-muted">
                 <input type="checkbox" checked={randomStart} onChange={(e) => setRandomStart(e.target.checked)} />
                 Random start
               </label>
@@ -145,11 +142,12 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
             <label className="flex flex-col gap-1">
               <span className="micro-label">Starting balance</span>
               <input
-                type="number"
-                value={topstep ? TOPSTEP_BALANCE : startingBalance}
+                type="text"
+                inputMode="numeric"
+                value={(topstep ? TOPSTEP_BALANCE : startingBalance).toLocaleString('en-US')}
                 disabled={topstep}
-                onChange={(e) => setStartingBalance(Number(e.target.value))}
-                className="h-8 rounded border border-border bg-surface-2 px-2 text-xs text-text disabled:opacity-40"
+                onChange={(e) => setStartingBalance(Number(e.target.value.replace(/[^0-9]/g, '')))}
+                className="propbt-input"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -159,7 +157,7 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
                 step="0.1"
                 value={riskPercent}
                 onChange={(e) => setRiskPercent(Number(e.target.value))}
-                className="h-8 rounded border border-border bg-surface-2 px-2 text-xs text-text"
+                className="propbt-input"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -169,7 +167,7 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
                 min={1}
                 value={defaultContracts}
                 onChange={(e) => setDefaultContracts(Number(e.target.value))}
-                className="h-8 rounded border border-border bg-surface-2 px-2 text-xs text-text"
+                className="propbt-input"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -179,13 +177,13 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
                 step="0.01"
                 value={commission}
                 onChange={(e) => setCommission(Number(e.target.value))}
-                className="h-8 rounded border border-border bg-surface-2 px-2 text-xs text-text"
+                className="propbt-input"
               />
             </label>
           </div>
 
           <label className="flex items-start gap-2 text-xs text-text-muted">
-            <input type="checkbox" checked={topstep} onChange={(e) => setTopstep(e.target.checked)} className="mt-0.5" />
+            <input type="checkbox" checked={topstep} onChange={(e) => setTopstep(e.target.checked)} className="mt-1" />
             <span>
               <span className="text-text">Topstep $50k Combine rules</span>
               <br />

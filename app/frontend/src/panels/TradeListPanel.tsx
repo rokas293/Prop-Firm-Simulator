@@ -10,6 +10,7 @@ import EmptyState from '../components/EmptyState'
 import { FILTER_SELECT, FilterChips, FilterField, FiltersPopover } from '../components/FilterBar'
 import { activeFilterChips } from '../compass/filterChips'
 import Skeleton from '../components/Skeleton'
+import { fmtEtDateTime } from '../timeFormat'
 import { fmtPoints, fmtPrice, fmtUsd } from '../format'
 
 type SortColumn =
@@ -65,9 +66,6 @@ const MANUAL_COLUMNS: typeof COLUMNS = [
 const GRADE_OPTIONS = ['A', 'B', 'C'] as const
 const ROW_HEIGHT = 28
 
-function fmtTime(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(0, 16).replace('T', ' ')
-}
 
 function sortValue(t: TradeRecord, col: SortColumn): string | number | null {
   if (col === 'tags') return t.tags && t.tags.length > 0 ? t.tags.join(', ') : null
@@ -348,13 +346,13 @@ export default function TradeListPanel() {
             <select
               value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
               onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
-              aria-label="Filter by entry hour (New York)"
+              aria-label="Filter by entry hour (ET)"
               className={FILTER_SELECT}
             >
               <option value="">All</option>
               {hourOptions.map((h) => (
                 <option key={h} value={h}>
-                  {String(h).padStart(2, '0')}:00 NY
+                  {String(h).padStart(2, '0')}:00 ET
                 </option>
               ))}
             </select>
@@ -480,8 +478,8 @@ export default function TradeListPanel() {
                     selected ? 'bg-surface-2' : ''
                   }`}
                 >
-                  <div className="truncate whitespace-nowrap px-2 font-mono text-text">
-                    {fmtTime(t.entry_time)}
+                  <div className="truncate whitespace-nowrap px-2 tabular-nums text-text">
+                    {fmtEtDateTime(t.entry_time)}
                   </div>
                   {manual ? (
                     <div className="truncate px-2 text-text">{t.setup_name ?? '-'}</div>

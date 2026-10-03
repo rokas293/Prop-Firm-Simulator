@@ -103,7 +103,7 @@ export default function ChartLayoutMenu({
         aria-expanded={open}
         aria-haspopup="menu"
         aria-pressed={splitView}
-        className={`flex h-7 items-center gap-1.5 rounded px-2 text-xs ${
+        className={`flex h-7 items-center gap-2 rounded px-2 text-xs ${
           open || splitView ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2 hover:text-text'
         }`}
       >
@@ -135,7 +135,7 @@ export default function ChartLayoutMenu({
                       key={tf}
                       onClick={() => onSecondaryTimeframeChange(tf)}
                       aria-pressed={secondaryTimeframe === tf}
-                      className={`h-6 rounded px-1.5 ${
+                      className={`h-6 rounded px-2 ${
                         secondaryTimeframe === tf ? 'bg-accent text-white' : 'bg-surface text-text hover:bg-surface-2-hover'
                       }`}
                     >
@@ -147,7 +147,7 @@ export default function ChartLayoutMenu({
           )}
 
           <div className="mt-3 border-t border-border pt-3">
-            <div className="mb-1.5 text-text-muted">Trade brackets</div>
+            <div className="mb-2 text-text-muted">Trade brackets</div>
             <div className="flex gap-1">
               {BRACKET_DENSITIES.map((d) => (
                 <button
@@ -168,7 +168,7 @@ export default function ChartLayoutMenu({
           {workspaceApi && (
             <>
               <div className="mt-3 border-t border-border pt-3">
-                <div className="mb-1.5 text-text-muted">Workspace layout</div>
+                <div className="mb-2 text-text-muted">Workspace layout</div>
                 <div className="flex gap-1">
                   {PRESETS.map((p) => (
                     <button
@@ -188,14 +188,14 @@ export default function ChartLayoutMenu({
                     resetLayout()
                     setOpen(false)
                   }}
-                  className="mt-1.5 h-6 w-full rounded bg-surface px-2 text-text hover:bg-surface-2-hover"
+                  className="mt-2 h-6 w-full rounded bg-surface px-2 text-text hover:bg-surface-2-hover"
                 >
                   Reset layout
                 </button>
               </div>
 
               <div className="mt-3 border-t border-border pt-3">
-                <div className="mb-1.5 text-text-muted">Panels</div>
+                <div className="mb-2 text-text-muted">Panels</div>
                 {closedPanels.length === 0 ? (
                   <div className="text-text-muted">All panels open</div>
                 ) : (

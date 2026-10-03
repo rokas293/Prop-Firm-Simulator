@@ -30,6 +30,7 @@ import type { AddScreenshotRequest, ManualTrade, UpdateTradeJournalRequest } fro
 import { filterManualTrades, nyHourOfDay } from '../compass/breakdowns'
 import { useTradeStore } from '../state/tradeStore'
 import { fmtR, fmtUsd } from '../format'
+import { fmtEtShort } from '../timeFormat'
 import EmptyState from '../components/EmptyState'
 import { FILTER_SELECT, FilterChips, FilterField, FiltersPopover } from '../components/FilterBar'
 import { activeFilterChips } from '../compass/filterChips'
@@ -39,9 +40,6 @@ type Grade = (typeof GRADES)[number]
 type CaptureMoment = 'entry' | 'exit' | 'custom'
 const MOMENTS: CaptureMoment[] = ['entry', 'exit', 'custom']
 
-function fmtShortTime(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(5, 16).replace('T', ' ')
-}
 
 interface JournalPanelProps {
   trades: ManualTrade[]
@@ -242,13 +240,13 @@ export default function JournalPanel({
           <select
             value={filters.entryHourNy === null ? '' : String(filters.entryHourNy)}
             onChange={(e) => setFilter('entryHourNy', e.target.value === '' ? null : Number(e.target.value))}
-            aria-label="Filter by entry hour (New York)"
+            aria-label="Filter by entry hour (ET)"
             className={FILTER_SELECT}
           >
             <option value="">All</option>
             {hourOptions.map((h) => (
               <option key={h} value={h}>
-                {String(h).padStart(2, '0')}:00 NY
+                {String(h).padStart(2, '0')}:00 ET
               </option>
             ))}
           </select>
@@ -275,7 +273,9 @@ export default function JournalPanel({
         </span>
       </div>
 
-      <div className="min-h-0 flex-[1_1_40%] overflow-auto">
+      {/* Sized to its rows (capped at 40% of the drawer) so a few trades do
+          not leave dead space above the detail; the detail takes the rest. */}
+      <div className={`min-h-0 flex-none overflow-auto ${filtered.length === 0 ? 'h-24' : 'max-h-[40%]'}`}>
         {filtered.length === 0 ? (
           <EmptyState title="No trades yet" hint={hasFilters ? 'No trades match these filters.' : 'Closed trades auto-journal here.'} />
         ) : (
@@ -302,7 +302,7 @@ export default function JournalPanel({
                   isSelected ? 'bg-surface-2' : ''
                 }`}
               >
-                <span className="whitespace-nowrap font-mono text-text-muted">{fmtShortTime(t.entry_time)}</span>
+                <span className="whitespace-nowrap tabular-nums text-text-muted">{fmtEtShort(t.entry_time)}</span>
                 <span className="text-text-muted">{t.side}</span>
                 <span className={`num ml-auto ${t.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>{fmtUsd(t.pnl_usd)}</span>
                 <span className="num w-12 text-text-muted">{fmtR(t.r_multiple)}</span>
@@ -313,7 +313,7 @@ export default function JournalPanel({
         )}
       </div>
 
-      <div className="min-h-0 flex-[1_1_60%] overflow-auto border-t border-border">
+      <div className="min-h-0 flex-1 overflow-auto border-t border-border">
         {!selected ? (
           <EmptyState title="No trade selected" hint="Click a trade above to journal it." />
         ) : (
@@ -339,7 +339,7 @@ export default function JournalPanel({
                 onChange={(e) => setDraftSetup(e.target.value)}
                 onBlur={saveSetup}
                 placeholder="e.g. Break & Retest"
-                className="h-7 rounded border border-transparent bg-surface-2 px-2 text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+                className="propbt-input"
               />
             </label>
 
@@ -384,7 +384,7 @@ export default function JournalPanel({
                 }}
                 onBlur={addTag}
                 placeholder="Add a tag, press Enter"
-                className="h-7 w-full rounded border border-transparent bg-surface-2 px-2 text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+                className="propbt-input w-full"
               />
             </div>
 
@@ -396,7 +396,7 @@ export default function JournalPanel({
                 onChange={(e) => setDraftNotes(e.target.value)}
                 onBlur={saveNotes}
                 placeholder="What happened, what you saw, what you'd do differently…"
-                className="w-full resize-none rounded border border-transparent bg-surface-2 px-2 py-2 text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+                className="propbt-input w-full resize-none"
               />
             </label>
 
@@ -408,7 +408,7 @@ export default function JournalPanel({
                     value={captureMoment}
                     onChange={(e) => setCaptureMoment(e.target.value as CaptureMoment)}
                     aria-label="Screenshot moment"
-                    className="h-7 rounded bg-surface-2 px-2 text-text"
+                    className="propbt-input"
                   >
                     {MOMENTS.map((m) => (
                       <option key={m} value={m}>
@@ -433,13 +433,13 @@ export default function JournalPanel({
                         onClick={() => setLightbox(s.url)}
                         className="h-16 w-full cursor-pointer rounded object-cover"
                       />
-                      <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-bg/80 px-1 text-[10px] text-text-muted">
+                      <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-bg/80 px-1 text-[11px] text-text-muted">
                         {s.moment}
                       </span>
                       <button
                         onClick={() => removeScreenshot(s.id)}
                         aria-label="Remove screenshot"
-                        className="absolute right-1 top-1 rounded bg-bg/80 px-1 text-[10px] text-text-muted opacity-0 hover:text-text group-hover:opacity-100"
+                        className="absolute right-1 top-1 rounded bg-bg/80 px-1 text-[11px] text-text-muted opacity-0 hover:text-text group-hover:opacity-100"
                       >
                         &times;
                       </button>

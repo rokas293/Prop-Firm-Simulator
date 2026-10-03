@@ -546,10 +546,10 @@ export default function ChartPanel() {
 
         <button
           onClick={() => setIndicatorDialogOpen(true)}
-          className="flex h-7 items-center gap-1.5 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
+          className="flex h-7 items-center gap-2 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
         >
           Indicators
-          <span className="tabular-nums flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-none text-white">
+          <span className="tabular-nums flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[11px] leading-none text-white">
             {activeIndicatorCount}
           </span>
         </button>

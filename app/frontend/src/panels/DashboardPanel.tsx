@@ -8,6 +8,7 @@ import { CHART_PANEL_ID, PROP_RISK_PANEL_ID } from '../workspace/panelIds'
 import { bySessionHour, byHoldTime, byHourOfDay, byWeekday, sessionsPresent, summarizeStreaks, type BucketStats, type StreakSummary } from '../compass/breakdowns'
 import { computeMaeMfeRegime, isClippedStop } from '../compass/regime'
 import { heatSummary } from '../compass/heat'
+import { describeFilters } from '../compass/describeFilters'
 import { computeCompassScore, type CompassScore } from '../compass/score'
 import KpiTile from '../components/KpiTile'
 import MiniStat from '../components/MiniStat'
@@ -142,7 +143,7 @@ function ScoreCard({ score }: { score: CompassScore }) {
     <Card title="Compass score">
       <p className="mb-3 text-xs text-text-muted">
         Formula: the plain average of four 0-100 components below (each equally weighted, 25%). This is a
-        descriptive summary, not a prop-rule outcome -- it doesn't affect pass/fail.
+        descriptive summary, not a prop-rule outcome – it doesn't affect pass/fail.
       </p>
       {/* 28px = DESIGN_LANGUAGE.md section 3's top hero-KPI step, semibold
           (600) -- the ONE number on this tab reserved for that weight
@@ -176,37 +177,6 @@ function ScoreCard({ score }: { score: CompassScore }) {
       </div>
     </Card>
   )
-}
-
-// Short human-readable label for whatever crossFilter() last set --
-// crossFilter always clears everything else first, so normally only one of
-// these is non-null. The one exception is the session-hour facet, which
-// sets session + entryHourNy together (a single bar there means a specific
-// hour within a specific session, not either alone), so that combination is
-// checked before the single-dimension cases below.
-// Exported for LiveRegion.tsx (accessibility fix): the same wording used in
-// this panel's own visible cross-filter badge is what a screen reader
-// should announce too, rather than inventing separate text for the same
-// fact.
-export function describeFilters(filters: TradeFilters): string {
-  if (filters.session !== null && filters.entryHourNy !== null) {
-    return `session = ${filters.session}, hour = ${String(filters.entryHourNy).padStart(2, '0')}:00 NY`
-  }
-  if (filters.tag !== null) return `tag = ${filters.tag}`
-  if (filters.setup !== null) return `setup = ${filters.setup}`
-  if (filters.grade !== null) return `grade = ${filters.grade}`
-  if (filters.sessionId !== null) return `backtest session = ${filters.sessionId.slice(0, 13)}`
-  if (filters.leg !== null) return `leg = ${filters.leg}`
-  if (filters.session !== null) return `session = ${filters.session}`
-  if (filters.side !== null) return `side = ${filters.side}`
-  if (filters.result !== null) return `result = ${filters.result}`
-  if (filters.exitType !== null) return `exit type = ${filters.exitType}`
-  if (filters.dateFrom !== null || filters.dateTo !== null) return `date range`
-  if (filters.entryHourNy !== null) return `hour = ${String(filters.entryHourNy).padStart(2, '0')}:00 NY`
-  if (filters.weekday !== null) return `weekday = ${filters.weekday}`
-  if (filters.holdTimeBucket !== null) return `hold time = ${filters.holdTimeBucket}`
-  if (filters.streakSelector !== null) return `${filters.streakSelector.type} streak of ${filters.streakSelector.length}`
-  return ''
 }
 
 // A manual session's Combine can still be in progress ("incomplete"), which
@@ -365,7 +335,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
               </button>
             ))}
             {!run?.is_oos_split_date && (
-              <span className="text-xs text-text-muted">this run has no IS/OOS split date -- scope has no effect</span>
+              <span className="text-xs text-text-muted">this run has no IS/OOS split date – scope has no effect</span>
             )}
           </>
         )}
@@ -378,7 +348,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           </span>
         )}
         {manual && hasActiveFilter && (
-          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+          <label className="flex items-center gap-2 text-xs text-text-muted">
             <input type="checkbox" checked={alsoFilterStats} onChange={(e) => setAlsoFilterStats(e.target.checked)} />
             Also filter these stats
           </label>
@@ -387,7 +357,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
 
       {/* Hero row: the 5 numbers this dashboard leads with. Everything else
           is one click away in a tab below (REDESIGN_APPROACH.md Phase B2). */}
-      <div className="mb-2 grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <div className="mb-2 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-5">
         <KpiTile
           label="Result"
           value={noRuleset ? 'N/A' : result ? resultLabel(result.status) : '-'}
@@ -443,9 +413,9 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
 
       {activeTab === 'overview' && (
         <div id="dashboard-tabpanel-overview" role="tabpanel" aria-labelledby="dashboard-tab-overview" className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
             <KpiTile label="Win rate" value={fmtPct(overall.win_rate)} />
-            {run?.result.days_to_fail != null && <KpiTile label="Days to fail" value={String(run.result.days_to_fail)} accent={false} />}
+            {run?.result.days_to_fail != null && <KpiTile label="Days to fail" value={String(run.result.days_to_fail)} />}
           </div>
           {manual && result && (
             <PropResultCard
@@ -458,7 +428,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           {noRuleset && (
             <p className="text-xs text-text-muted">
               {run?.session_ids && run.session_ids.length > 1
-                ? 'Prop-firm results are per account, so they are not shown across pooled sessions -- open a single Topstep session to see one.'
+                ? 'Prop-firm results are per account, so they are not shown across pooled sessions – open a single Topstep session to see one.'
                 : 'This session ran without a prop ruleset. Tick "Topstep $50k Combine rules" when creating a session to get a pass/fail result here.'}
             </p>
           )}
@@ -536,7 +506,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             <Card title="MAE vs MFE (stop-tightness view)">
               <div className="mb-2 text-xs text-text-muted">
                 {clippedStops.length} trade{clippedStops.length === 1 ? '' : 's'} exited at SL after reaching at least the planned TP
-                distance in favorable excursion (amber) -- the stop likely clipped a winner.
+                distance in favorable excursion (amber) – the stop likely clipped a winner.
               </div>
               <ResponsiveContainer width="100%" height={180}>
                 <ScatterChart>
@@ -588,7 +558,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             </Card>
           </div>
 
-          <Card title="Heat -- adverse excursion before resolution (R)">
+          <Card title="Heat – adverse excursion before resolution (R)">
             {heat.sample === 0 ? (
               <p className="text-xs text-text-muted">
                 No trades with a defined stop in this scope, so adverse excursion cannot be expressed in R.
@@ -628,7 +598,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
               the same underlying dimension. One card now, with a muted
               subheading instead of a second border to separate the two
               views. */}
-          <Card title="Net PnL by hour (America/New_York)">
+          <Card title="Net PnL by hour (ET)">
             <BucketBarChart data={hourBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ entryHourNy: Number(k) })} winColor={colors.positive} lossColor={colors.negative} />
             <div className="mb-2 mt-4 micro-label">By session</div>
             <p className="mb-2 text-xs text-text-muted">
@@ -656,7 +626,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           </Card>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card title="Net PnL by weekday">
+            <Card title="Net PnL by weekday (ET)">
               <BucketBarChart data={weekdayBuckets} valueLabel="Net PnL" onSelect={(k) => crossFilter({ weekday: k })} winColor={colors.positive} lossColor={colors.negative} />
             </Card>
             <Card title="Net PnL by hold time (bars_held)">
@@ -708,7 +678,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
             </div>
             {!aiStatusQuery.data?.available && (
               <p className="text-xs text-text-muted">
-                Not configured -- set ANTHROPIC_API_KEY on the backend to enable this. Sends only the aggregated stats shown on this page
+                Not configured – set ANTHROPIC_API_KEY on the backend to enable this. Sends only the aggregated stats shown on this page
                 (never raw trades or bars) to Claude for a short plain-English read.
               </p>
             )}

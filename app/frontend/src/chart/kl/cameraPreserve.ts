@@ -70,3 +70,73 @@ export function cameraRestoreIndex(input: CameraRestoreInput): number | null {
   const targetRealTo = followLatestBar && lastBarIndex >= beforeRealTo ? afterBarCount : beforeRealTo
   return targetRealTo - RIGHT_EDGE_INDEX_OFFSET
 }
+
+// ---- window re-anchor (long replays) ---------------------------------------
+//
+// When a long replay nears the end of the fetched window the workspace
+// re-anchors the window on the cursor, so the data list is REPLACED by one
+// that starts at a different time. Indices from the old list mean nothing in
+// the new one (the cursor bar moves from ~index 2980 to ~index 900), and a
+// plain init reload resets the scroll to klinecharts' default right-side
+// distance -- which, followed by a refit to a default window, was the visible
+// hop. The bars themselves are the same bars, though, so the view is
+// preserved in TIME space instead: remember which bar sat at the right edge
+// (plus any empty space past the last bar), find that bar in the new list,
+// and put the right edge back on it.
+
+export interface ViewAnchor {
+  // Timestamp of the bar at (or last bar before) the viewport's right edge.
+  time: number
+  // Empty bars of space between the last bar and the right edge (0 when the
+  // edge is on or before the last bar).
+  extraBars: number
+}
+
+// `times` are the loaded bars' timestamps, in order; `realTo` is the
+// exclusive right-edge index (klinecharts' VisibleRange.realTo).
+export function captureViewAnchor(times: readonly number[], realTo: number): ViewAnchor | null {
+  if (times.length === 0) return null
+  if (realTo > times.length) return { time: times[times.length - 1], extraBars: realTo - times.length }
+  const edge = Math.max(0, realTo - 1)
+  return { time: times[edge], extraBars: 0 }
+}
+
+// The dataIndex to hand scrollToDataIndex for the NEW list, or null when there
+// is nothing to restore against. Three cases:
+//   - the anchored bar is still loaded: put it (plus any empty space) back at
+//     the right edge -- the exact view, same zoom;
+//   - it is NOT loaded (the new window starts after it, e.g. the user was
+//     panned far back): snap the cursor -- the last bar of a replay-filtered
+//     list -- flush to the right edge, zoom unchanged, never window index 0;
+//   - follow-latest is on and the newest bar sits past the restored edge
+//     (the anchor was captured before this step's bar was revealed): apply
+//     the follow nudge here, so the newest bar is never out of view.
+export function reanchorRestoreIndex(
+  anchor: ViewAnchor | null,
+  afterTimes: readonly number[],
+  followLatestBar = false,
+): number | null {
+  if (!anchor || afterTimes.length === 0) return null
+  const lastIndex = afterTimes.length - 1
+  let targetRealTo: number
+  if (anchor.time < afterTimes[0]) {
+    targetRealTo = afterTimes.length
+  } else {
+    // Last bar at or before the anchor time (binary search; times ascend).
+    let lo = 0
+    let hi = lastIndex
+    let found = 0
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (afterTimes[mid] <= anchor.time) {
+        found = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    targetRealTo = found + 1 + anchor.extraBars
+    if (followLatestBar && lastIndex >= targetRealTo) targetRealTo = afterTimes.length
+  }
+  return targetRealTo - RIGHT_EDGE_INDEX_OFFSET
+}

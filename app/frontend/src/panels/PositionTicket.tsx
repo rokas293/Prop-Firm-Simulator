@@ -86,28 +86,28 @@ export default function PositionTicket({
       <button
         onClick={onBuy}
         disabled={disabled || !flat}
-        className="rounded bg-positive/15 px-3 py-1 text-positive hover:bg-positive/25 disabled:opacity-40"
+        className="rounded bg-positive/15 px-3 h-7 text-positive hover:bg-positive/25 disabled:opacity-40"
       >
         Buy
       </button>
       <button
         onClick={onSell}
         disabled={disabled || !flat}
-        className="rounded bg-negative/15 px-3 py-1 text-negative hover:bg-negative/25 disabled:opacity-40"
+        className="rounded bg-negative/15 px-3 h-7 text-negative hover:bg-negative/25 disabled:opacity-40"
       >
         Sell
       </button>
       <button
         onClick={onNewTrade}
         disabled={disabled || !flat}
-        className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+        className="rounded bg-surface-2 px-3 h-7 text-text hover:bg-surface-2-hover disabled:opacity-40"
       >
         New Trade
       </button>
       <button
         onClick={onClose}
         disabled={disabled || position === null || closing}
-        className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+        className="rounded bg-surface-2 px-3 h-7 text-text hover:bg-surface-2-hover disabled:opacity-40"
       >
         {closing ? 'Closing…' : 'Close'}
       </button>
@@ -115,13 +115,13 @@ export default function PositionTicket({
         <button
           onClick={onPartialClose}
           disabled={disabled || partialCloseDisabled || closing}
-          className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+          className="rounded bg-surface-2 px-3 h-7 text-text hover:bg-surface-2-hover disabled:opacity-40"
         >
           Close ½
         </button>
       )}
       {workingOrder && (
-        <button onClick={onCancelOrder} className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover">
+        <button onClick={onCancelOrder} className="rounded bg-surface-2 px-3 h-7 text-text hover:bg-surface-2-hover">
           Cancel order
         </button>
       )}
@@ -129,7 +129,7 @@ export default function PositionTicket({
       <div className="h-4 w-px bg-surface-2" />
 
       {/* DESIGN_LANGUAGE.md section 4: every gap/padding here stays on the
-          4px grid (gap-2/px-2/py-1), matching the buttons' own px-3 py-1 --
+          4px grid (gap-2/px-2/py-1), matching the buttons' own px-3 h-7 --
           so the input sits at the same height as the controls beside it. The
           number field follows section 6's "faint border only on focus":
           borderless at rest (it reads as part of the label), accent ring on
@@ -155,7 +155,7 @@ export default function PositionTicket({
             onTrailingPointsChange(v !== null && v > 0 ? v : null)
           }}
           placeholder="off"
-          className="w-14 rounded border border-transparent bg-surface-2 px-2 py-1 text-text tabular-nums focus:border-accent focus:outline-none"
+          className="propbt-input w-16"
         />
         pts
       </label>

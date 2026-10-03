@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type FunctionComponent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, type FunctionComponent } from 'react'
 import {
   DockviewReact,
   type DockviewReadyEvent,
@@ -8,10 +8,9 @@ import {
 import 'dockview-react/dist/styles/dockview.css'
 import ChartPanel from '../panels/ChartPanel'
 import TradeListPanel from '../panels/TradeListPanel'
-import DashboardPanel from '../panels/DashboardPanel'
-import RiskPanel from '../panels/RiskPanel'
 import EquityPanel from '../panels/EquityPanel'
 import PerfProfiler from '../components/PerfProfiler'
+import Skeleton from '../components/Skeleton'
 import { useLayoutStore } from '../state/layoutStore'
 import { useWorkspaceApiStore } from '../state/workspaceApiStore'
 import { useUiStore } from '../state/uiStore'
@@ -19,6 +18,11 @@ import { useTradeStore } from '../state/tradeStore'
 import { useChartViewStore } from '../state/chartViewStore'
 import { applyAnalysisLayout } from './presets'
 import { CHART_PANEL_ID, DASHBOARD_PANEL_ID, EQUITY_PANEL_ID, PROP_RISK_PANEL_ID, TRADE_LIST_PANEL_ID } from './panelIds'
+
+// The heavy panels (Monte Carlo/breakdown charts, the lightweight-charts
+// Prop Risk pane) load on first use instead of in the entry chunk.
+const DashboardPanel = lazy(() => import('../panels/DashboardPanel'))
+const RiskPanel = lazy(() => import('../panels/RiskPanel'))
 
 // Perf-instruments every panel from one place (POLISH_ROADMAP Phase P4)
 // rather than touching all 5 panel files -- each panel is registered with
@@ -28,7 +32,9 @@ function withPerf(id: string, Component: FunctionComponent<IDockviewPanelProps>)
   return function PerfWrapped(props) {
     return (
       <PerfProfiler id={id}>
-        <Component {...props} />
+        <Suspense fallback={<Skeleton className="m-4 h-24" />}>
+          <Component {...props} />
+        </Suspense>
       </PerfProfiler>
     )
   }
@@ -131,7 +137,7 @@ export default function Workspace() {
   )
 
   return (
-    <div className={`flex flex-col ${distractionFree ? 'h-screen' : 'h-[calc(100vh-49px)]'}`}>
+    <div className={`flex flex-col ${distractionFree ? 'h-screen' : 'h-[calc(100vh-52px)]'}`}>
       <div className="min-h-0 flex-1">
         <DockviewReact className="dockview-theme-propbt" components={COMPONENTS} onReady={onReady} />
       </div>

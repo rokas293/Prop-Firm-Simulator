@@ -5,6 +5,7 @@
 // balance (VIZ_SPEC section 0: the frontend renders, the engine decides).
 import type { StatsResult } from '../api/types'
 import { fmtUsd } from '../format'
+import { fmtEtDateTime } from '../timeFormat'
 
 export interface PropNarrative {
   status: 'passed' | 'failed' | 'incomplete'
@@ -13,9 +14,6 @@ export interface PropNarrative {
   details: string[]
 }
 
-export function fmtUtcMinute(unixSeconds: number): string {
-  return `${new Date(unixSeconds * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`
-}
 
 const FAIL_REASON_TEXT: Record<string, string> = {
   mll_breach: 'trailing max loss limit breached',
@@ -41,7 +39,7 @@ export function describePropResult(r: StatsResult, totalTrades: number): PropNar
 
   const where =
     r.resolved_trade_id != null && r.trades_to_result != null && r.resolved_time != null
-      ? `trade #${r.resolved_trade_id} (${r.trades_to_result} of ${totalTrades}) at ${fmtUtcMinute(r.resolved_time)}`
+      ? `trade #${r.resolved_trade_id} (${r.trades_to_result} of ${totalTrades}) at ${fmtEtDateTime(r.resolved_time)}`
       : null
 
   let headline: string

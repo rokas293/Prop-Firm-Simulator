@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useEquity, useRun } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
@@ -6,6 +7,7 @@ import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
 import Card from '../components/Card'
 import { fmtUsd, fmtUsdWhole } from '../format'
+import { etDayTicks, fmtEtDate, fmtEtDateTime } from '../timeFormat'
 import { AXIS_TICK_STYLE, AXIS_LINE_STYLE, TOOLTIP_CONTENT_STYLE } from '../chart/rechartsTheme'
 
 // A standalone dockable panel: the full-run equity curve at a glance
@@ -19,6 +21,8 @@ export default function EquityPanel() {
   const colors = useThemeStore((s) => s.colors)
   // A manual session without a prop ruleset has no MLL floor to plot (null
   // on every row) -- an all-null Line would just be an empty legend entry.
+  // One tick per ET day, so the date labels never repeat.
+  const dayTicks = useMemo(() => etDayTicks((equity ?? []).map((p) => p.time)), [equity])
   const hasMllFloor = (equity ?? []).some((p) => p.mll_floor !== null)
 
   if (!runId) {
@@ -63,12 +67,13 @@ export default function EquityPanel() {
               tick={AXIS_TICK_STYLE}
               axisLine={AXIS_LINE_STYLE}
               tickLine={AXIS_LINE_STYLE}
-              tickFormatter={(t) => new Date(t * 1000).toISOString().slice(0, 10)}
+              ticks={dayTicks}
+              tickFormatter={(t) => fmtEtDate(t)}
             />
             <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} domain={['auto', 'auto']} tickFormatter={(v) => fmtUsdWhole(Number(v))} />
             <Tooltip
               contentStyle={TOOLTIP_CONTENT_STYLE}
-              labelFormatter={(t) => new Date((t as number) * 1000).toISOString()}
+              labelFormatter={(t) => fmtEtDateTime(t as number)}
               formatter={(v) => fmtUsd(Number(v))}
             />
             <Line type="stepAfter" dataKey="equity" stroke={colors.accent} dot={false} strokeWidth={1.5} />
@@ -88,12 +93,13 @@ export default function EquityPanel() {
               tick={AXIS_TICK_STYLE}
               axisLine={AXIS_LINE_STYLE}
               tickLine={AXIS_LINE_STYLE}
-              tickFormatter={(t) => new Date(t * 1000).toISOString().slice(0, 10)}
+              ticks={dayTicks}
+              tickFormatter={(t) => fmtEtDate(t)}
             />
             <YAxis tick={AXIS_TICK_STYLE} axisLine={AXIS_LINE_STYLE} tickLine={AXIS_LINE_STYLE} reversed />
             <Tooltip
               contentStyle={TOOLTIP_CONTENT_STYLE}
-              labelFormatter={(t) => new Date((t as number) * 1000).toISOString()}
+              labelFormatter={(t) => fmtEtDateTime(t as number)}
               formatter={(v) => fmtUsd(Number(v))}
             />
             <Line type="stepAfter" dataKey="drawdown_usd" stroke={colors.negative} dot={false} strokeWidth={1.5} />

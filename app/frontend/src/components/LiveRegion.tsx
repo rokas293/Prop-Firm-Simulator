@@ -3,7 +3,7 @@ import { useTrades } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import { filtersToParams, useTradeStore } from '../state/tradeStore'
 import { applyCompassFilters } from '../compass/breakdowns'
-import { describeFilters } from '../panels/DashboardPanel'
+import { describeFilters } from '../compass/describeFilters'
 
 // Accessibility fix: the trade count ("1191 trades" -> "49 trades" as
 // filters change, TradeListPanel's own footer line) and the cross-filter

@@ -466,7 +466,7 @@ export default function KLDrawingToolbar({
           >
             <Magnet size={ICON_SIZE} />
           </button>
-          <IconButtonTooltip text="Magnet -- snap to OHLC" />
+          <IconButtonTooltip text="Magnet – snap to OHLC" />
         </div>
 
         <div className="group relative">
@@ -481,7 +481,7 @@ export default function KLDrawingToolbar({
           >
             <Layers size={ICON_SIZE} />
             {drawings.length > 0 && (
-              <span className="tabular-nums absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] leading-none text-white">
+              <span className="tabular-nums absolute -bottom-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[11px] leading-none text-white">
                 {drawings.length}
               </span>
             )}
@@ -494,7 +494,7 @@ export default function KLDrawingToolbar({
                 // POLISH_ROADMAP Phase P6: a helpful empty state rather than
                 // an empty dropdown (previously this button was just
                 // `disabled` at 0, so there was nothing to open at all).
-                <div className="px-3 py-2 text-text-muted">No drawings yet -- pick a tool above to start.</div>
+                <div className="px-3 py-2 text-text-muted">No drawings yet – pick a tool above to start.</div>
               ) : (
                 <>
                   {/* Bulk toggles (REPLICA_ROADMAP.md Batch 2) -- a
@@ -502,7 +502,7 @@ export default function KLDrawingToolbar({
                       still visible/unlocked, the action is "hide/lock
                       all"; once everything already is, it flips to
                       "show/unlock all" instead of doing nothing. */}
-                  <div className="flex items-center justify-between px-3 pb-1.5">
+                  <div className="flex items-center justify-between px-3 pb-2">
                     <span className="micro-label text-text-muted">Drawings ({drawings.length})</span>
                     <div className="flex items-center gap-1">
                       <button

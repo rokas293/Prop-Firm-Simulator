@@ -9,6 +9,7 @@
 // next to the number, per the phase's explicit "not a black box" ask.
 import type { GroupStats, TradeRecord } from '../api/types'
 import { isClippedStop } from './regime'
+import { fmtUsdWhole } from '../format'
 
 export interface ScoreComponent {
   key: 'expectancy' | 'consistency' | 'drawdown' | 'stopEfficiency'
@@ -89,7 +90,7 @@ export function computeDrawdownComponent(overall: GroupStats): ScoreComponent {
     key: 'drawdown',
     label: 'Drawdown',
     score,
-    detail: `Max drawdown $${drawdownMagnitude.toFixed(0)} is ${(ratio * 100).toFixed(0)}% of net PnL magnitude (100 = 0%, 0 = ${DRAWDOWN_TARGET_RATIO * 100}%+)`,
+    detail: `Max drawdown ${fmtUsdWhole(drawdownMagnitude)} is ${(ratio * 100).toFixed(0)}% of net PnL magnitude (100 = 0%, 0 = ${DRAWDOWN_TARGET_RATIO * 100}%+)`,
   }
 }
 
@@ -105,7 +106,7 @@ export function computeStopEfficiencyComponent(trades: TradeRecord[]): ScoreComp
     detail:
       losses.length === 0
         ? 'No losing trades in this scope'
-        : `${clipped.length} of ${losses.length} losses (${(share * 100).toFixed(0)}%) still reached the planned TP distance before reversing -- stops may be clipping winners`,
+        : `${clipped.length} of ${losses.length} losses (${(share * 100).toFixed(0)}%) still reached the planned TP distance before reversing – stops may be clipping winners`,
   }
 }
 

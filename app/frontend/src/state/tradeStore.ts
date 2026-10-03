@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { etDayEndUnix, etDayStartUnix } from '../timeFormat'
 
 // side/exit_type are true fixed engine enums (VIZ_SPEC section 4) --
 // hardcoding them isn't "financial math," and showing all of them even if
@@ -81,8 +82,9 @@ export interface TradeQueryParams extends Record<string, string | number | undef
 }
 
 // Converts the UI filter shape to /api/trades query params. The date ->
-// unix-seconds conversion is a plain UTC calendar boundary, not strategy
-// math, so it's fine on the frontend (VIZ_SPEC section 0).
+// unix-seconds conversion is an ET calendar boundary, not strategy
+// math, so it's fine on the frontend (VIZ_SPEC section 0). Day boundaries
+// are ET (matching every displayed time), not UTC.
 export function filtersToParams(f: TradeFilters): TradeQueryParams {
   return {
     leg: f.leg ?? undefined,
@@ -90,8 +92,8 @@ export function filtersToParams(f: TradeFilters): TradeQueryParams {
     side: f.side ?? undefined,
     result: f.result ?? undefined,
     exit_type: f.exitType ?? undefined,
-    from: f.dateFrom ? Math.floor(Date.parse(`${f.dateFrom}T00:00:00Z`) / 1000) : undefined,
-    to: f.dateTo ? Math.floor(Date.parse(`${f.dateTo}T23:59:59Z`) / 1000) : undefined,
+    from: f.dateFrom ? (etDayStartUnix(f.dateFrom) ?? undefined) : undefined,
+    to: f.dateTo ? (etDayEndUnix(f.dateTo) ?? undefined) : undefined,
     tag: f.tag ?? undefined,
     setup: f.setup ?? undefined,
     grade: f.grade ?? undefined,

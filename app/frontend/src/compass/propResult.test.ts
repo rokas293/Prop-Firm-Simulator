@@ -30,7 +30,7 @@ describe('describePropResult', () => {
     expect(n.status).toBe('failed')
     expect(n.headline).toBe('Trailing max loss limit breached')
     expect(n.details[0]).toBe(
-      'On trade #1 (1 of 2) at 2025-03-11 14:00 UTC, equity fell to $47,950.00, at or below the $48,000.00 floor.',
+      'On trade #1 (1 of 2) at 2025-03-11 10:00 ET, equity fell to $47,950.00, at or below the $48,000.00 floor.',
     )
     expect(n.details[1]).toBe('1 later trade journaled after the Combine ended.')
   })
@@ -50,7 +50,7 @@ describe('describePropResult', () => {
       5,
     )
     expect(n.headline).toBe('Profit target reached, consistency rule satisfied')
-    expect(n.details).toContain('Reached on trade #3 (3 of 5) at 2025-03-13 14:30 UTC; balance $53,000.00.')
+    expect(n.details).toContain('Reached on trade #3 (3 of 5) at 2025-03-13 10:30 ET; balance $53,000.00.')
     expect(n.details).toContain('2 later trades journaled after the pass.')
   })
 

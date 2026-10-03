@@ -56,7 +56,7 @@ export function FiltersPopover({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className={`flex h-7 items-center gap-1.5 rounded px-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+        className={`flex h-7 items-center gap-2 rounded px-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
           open || count > 0 ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2 hover:text-text'
         }`}
       >
@@ -139,5 +139,4 @@ export function FilterChips({ maxVisible = 1 }: { maxVisible?: number }) {
   )
 }
 
-export const FILTER_SELECT =
-  'h-7 w-full rounded bg-surface px-2 text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent'
+export const FILTER_SELECT = 'propbt-input w-full'

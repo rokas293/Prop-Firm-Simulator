@@ -93,7 +93,7 @@ export default function ComparePage() {
     : []
 
   return (
-    <div className="h-[calc(100vh-49px)] overflow-auto p-6">
+    <div className="h-[calc(100vh-52px)] overflow-auto p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Compare runs</h1>
         <button

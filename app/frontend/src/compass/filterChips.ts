@@ -22,7 +22,7 @@ export function activeFilterChips(f: TradeFilters): FilterChip[] {
   if (f.side !== null) add('side', `Side: ${f.side}`)
   if (f.result !== null) add('result', `Result: ${f.result}`)
   if (f.exitType !== null) add('exitType', `Exit: ${f.exitType}`)
-  if (f.entryHourNy !== null) add('entryHourNy', `Hour: ${String(f.entryHourNy).padStart(2, '0')}:00 NY`)
+  if (f.entryHourNy !== null) add('entryHourNy', `Hour: ${String(f.entryHourNy).padStart(2, '0')}:00 ET`)
   if (f.weekday !== null) add('weekday', `Weekday: ${f.weekday}`)
   if (f.holdTimeBucket !== null) add('holdTimeBucket', `Hold: ${f.holdTimeBucket}`)
   if (f.streakSelector !== null) add('streakSelector', `${f.streakSelector.type} streak of ${f.streakSelector.length}`)

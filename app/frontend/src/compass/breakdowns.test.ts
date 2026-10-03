@@ -309,4 +309,13 @@ describe('journal filters (manual runs)', () => {
     expect(f({ dateFrom: '2021-07-17' })).toEqual([])
     expect(f({ dateFrom: '2021-07-16', dateTo: '2021-07-16' })).toEqual([1, 2, 3])
   })
+
+  it('filterManualTrades date range uses ET days: a 20:00 ET trade belongs to its ET date', () => {
+    // 2024-01-15 20:00 ET = 2024-01-16 01:00Z.
+    const late = { ...trades[0], trade_id: 9, entry_time: Date.UTC(2024, 0, 16, 1, 0, 0) / 1000 }
+    const f = (patch: Partial<typeof EMPTY_FILTERS>) =>
+      filterManualTrades([late], { ...EMPTY_FILTERS, ...patch }).map((t) => t.trade_id)
+    expect(f({ dateFrom: '2024-01-15', dateTo: '2024-01-15' })).toEqual([9])
+    expect(f({ dateFrom: '2024-01-16', dateTo: '2024-01-16' })).toEqual([])
+  })
 })

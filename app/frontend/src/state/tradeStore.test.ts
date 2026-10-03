@@ -68,11 +68,28 @@ describe('filtersToParams', () => {
     })
   })
 
-  it('converts dateFrom/dateTo to inclusive UTC day boundaries in unix seconds', () => {
-    const params = filtersToParams({ ...EMPTY_FILTERS, dateFrom: '2024-01-01', dateTo: '2024-01-01' })
-    expect(params.from).toBe(Date.UTC(2024, 0, 1, 0, 0, 0) / 1000)
-    expect(params.to).toBe(Date.UTC(2024, 0, 1, 23, 59, 59) / 1000)
-    expect(params.to).toBeGreaterThan(params.from as number)
+  it('converts dateFrom/dateTo to inclusive ET day boundaries in unix seconds', () => {
+    const params = filtersToParams({ ...EMPTY_FILTERS, dateFrom: '2024-01-15', dateTo: '2024-01-15' })
+    // EST (UTC-5): 00:00 ET = 05:00Z, 23:59:59 ET = 04:59:59Z the next day.
+    expect(params.from).toBe(Date.UTC(2024, 0, 15, 5, 0, 0) / 1000)
+    expect(params.to).toBe(Date.UTC(2024, 0, 16, 4, 59, 59) / 1000)
+  })
+
+  it('uses DST-correct ET boundaries (EDT is UTC-4; the spring-forward day is 23h)', () => {
+    const summer = filtersToParams({ ...EMPTY_FILTERS, dateFrom: '2024-07-15', dateTo: '2024-07-15' })
+    expect(summer.from).toBe(Date.UTC(2024, 6, 15, 4, 0, 0) / 1000)
+    expect(summer.to).toBe(Date.UTC(2024, 6, 16, 3, 59, 59) / 1000)
+    const springForward = filtersToParams({ ...EMPTY_FILTERS, dateFrom: '2024-03-10', dateTo: '2024-03-10' })
+    expect((springForward.to as number) - (springForward.from as number) + 1).toBe(23 * 3600)
+  })
+
+  it('keeps a 20:00 ET trade on its ET day, not the next UTC day', () => {
+    // 2024-01-15 20:00 ET = 2024-01-16 01:00Z.
+    const entry = Date.UTC(2024, 0, 16, 1, 0, 0) / 1000
+    const day15 = filtersToParams({ ...EMPTY_FILTERS, dateFrom: '2024-01-15', dateTo: '2024-01-15' })
+    const day16 = filtersToParams({ ...EMPTY_FILTERS, dateFrom: '2024-01-16', dateTo: '2024-01-16' })
+    expect(entry >= (day15.from as number) && entry <= (day15.to as number)).toBe(true)
+    expect(entry >= (day16.from as number) && entry <= (day16.to as number)).toBe(false)
   })
 })
 

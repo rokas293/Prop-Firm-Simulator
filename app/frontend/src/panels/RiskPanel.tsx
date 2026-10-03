@@ -19,9 +19,8 @@ const RISK_EQUITY_MAX_POINTS = 30000
 
 
 // Visualization buckets against the MLL's cushion, not a prop rule itself.
-// "Close" stays the theme's fixed `warning` base token -- see RiskChart.tsx's
-// own comment (Part C1 audit risk #2: a caution outside the tunable
-// accent/positive/negative model).
+// "Close" is the muted base token -- a quiet middle bucket that adds no
+// extra semantic hue beyond positive/negative (DESIGN_LANGUAGE s2).
 function riskColor(d: DailyRiskPoint, positive: string, negative: string, warning: string): string {
   if (d.breached) return negative
   if (d.min_distance_to_mll_usd <= 200) return negative
@@ -87,10 +86,10 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex flex-wrap items-center gap-4 border-b border-border px-4 py-2 text-xs text-text-muted">
+      <div className="flex flex-wrap items-center gap-4 px-4 py-2 text-xs text-text-muted">
         <Legend swatch={colors.accent} label="Equity" line />
         <Legend swatch={colors.negative} label="Trailing MLL floor" dashed />
-        <Legend swatch={base.warning} label="Daily loss floor" dotted />
+        <Legend swatch={base.textMuted} label="Daily loss floor" dotted />
         <Legend swatch={colors.positive} label="Profit target" dashed />
         <Legend swatch={hexToRgba(colors.negative, 0.35)} label="Distance-to-breach band" />
         {breachDay && (
@@ -100,32 +99,33 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
         )}
       </div>
 
-      <div className="min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1">
         <RiskChart ref={chartRef} equity={equity ?? []} dailyRisk={dailyRisk ?? []} fitOnData={run?.source === 'manual'} />
+        <span className="pointer-events-none absolute bottom-1 right-2 z-10 text-[11px] font-medium tracking-wide text-text-muted">ET</span>
       </div>
 
-      <div className="border-t border-border px-4 py-3">
+      <div className="px-4 py-3">
         <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
-          <span>Daily risk -- worst distance to MLL each trading day (click a day to jump the chart)</span>
+          <span title="Click a day to jump the chart">Daily risk – worst distance to MLL each trading day</span>
           <div className="flex items-center gap-3">
             <Legend swatch={colors.positive} label="Safe" small />
-            <Legend swatch={base.warning} label="Close" small />
+            <Legend swatch={base.textMuted} label="Close" small />
             <Legend swatch={colors.negative} label="Breach / near-breach" small />
           </div>
         </div>
-        <div className="flex h-10 w-full gap-px overflow-hidden rounded">
+        <div className="flex h-4 w-full gap-px overflow-hidden rounded">
           {(dailyRisk ?? []).map((d) => (
             <button
               key={d.trading_day}
               onClick={() => jumpToDay(d.trading_day)}
-              title={`${d.trading_day} -- min distance to MLL: ${fmtUsd(d.min_distance_to_mll_usd)}${
-                d.daily_locked ? ' -- daily loss lock triggered' : ''
-              }${d.breached ? ' -- BREACHED' : ''} -- ${d.trades} trade${d.trades === 1 ? '' : 's'}`}
-              className="relative min-w-[3px] flex-1 cursor-pointer transition-opacity hover:opacity-75"
-              style={{ background: riskColor(d, colors.positive, colors.negative, base.warning) }}
+              title={`${d.trading_day} – min distance to MLL: ${fmtUsd(d.min_distance_to_mll_usd)}${
+                d.daily_locked ? ' – daily loss lock triggered' : ''
+              }${d.breached ? ' – BREACHED' : ''} – ${d.trades} trade${d.trades === 1 ? '' : 's'}`}
+              className="relative min-w-1 flex-1 cursor-pointer transition-opacity hover:opacity-75"
+              style={{ background: hexToRgba(riskColor(d, colors.positive, colors.negative, base.textMuted), 0.5) }}
             >
               {d.daily_locked && (
-                <span className="absolute inset-x-0 top-0 h-1 bg-warning" title="Daily loss lock triggered" />
+                <span className="absolute inset-x-0 top-0 h-1 bg-text-muted" title="Daily loss lock triggered" />
               )}
             </button>
           ))}

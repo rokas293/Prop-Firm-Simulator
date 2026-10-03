@@ -31,7 +31,7 @@ export default function MonteCarloCard({ runId, filters }: { runId: string; filt
   const rows = useMemo(() => (mc ? fanRows(mc) : []), [mc])
 
   return (
-    <Card title="Monte Carlo -- resampled trade sequence">
+    <Card title="Monte Carlo – resampled trade sequence">
       <div className="mb-3 flex flex-wrap items-center gap-1">
         {METHODS.map((m) => (
           <button
@@ -61,7 +61,7 @@ export default function MonteCarloCard({ runId, filters }: { runId: string; filt
       {isLoading && <Skeleton className="h-[240px]" />}
       {isError && (
         <p className="py-8 text-center text-xs text-text-muted">
-          Nothing to simulate -- this scope has no trades (check the active filters).
+          Nothing to simulate – this scope has no trades (check the active filters).
         </p>
       )}
 
@@ -113,7 +113,7 @@ export default function MonteCarloCard({ runId, filters }: { runId: string; filt
           </div>
           <p className="mt-3 text-[11px] text-text-muted">
             The realized final P&amp;L ({fmtUsd(mc.actual_final_pnl)}) sits {actualRankBand(mc)} of the simulated outcomes; its own
-            max drawdown was {fmtUsd(mc.actual_max_drawdown)}. Resamples the per-trade P&amp;L only -- it assumes trades are
+            max drawdown was {fmtUsd(mc.actual_max_drawdown)}. Resamples the per-trade P&amp;L only – it assumes trades are
             independent and the sample is representative, and it is not a Combine-attempt simulation.
           </p>
         </>

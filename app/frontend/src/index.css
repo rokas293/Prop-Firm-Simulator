@@ -403,3 +403,176 @@ summary,
   border-radius: var(--radius-panel);
   animation: propbt-skeleton-pulse 1.4s ease-in-out infinite;
 }
+
+/* ---- native form controls (DESIGN_LANGUAGE.md section 6) -------------- */
+/* No control shows default OS styling: checkboxes are drawn here, number
+   inputs lose their spinners, and the datetime-local field matches the other
+   inputs (surface bg, faint border only on focus, shared 28px height). The
+   global :focus-visible accent ring above still supplies the keyboard ring. */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid var(--color-border-hover);
+  border-radius: 3px;
+  background: var(--color-surface-2);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+input[type='checkbox']::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--color-bg);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+  transform: scale(0);
+  transition: transform 120ms ease-out;
+}
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: var(--color-text-muted);
+}
+input[type='checkbox']:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+input[type='checkbox']:checked::after {
+  transform: scale(1);
+}
+input[type='checkbox']:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.propbt-input {
+  height: 28px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  padding: 0 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.propbt-input::placeholder {
+  color: var(--color-text-muted);
+}
+.propbt-input:hover:not(:disabled) {
+  background: var(--color-surface-2-hover);
+}
+/* Faint border + accent ring on focus (DESIGN_LANGUAGE s6). The ring is the
+   box-shadow, so the global :focus-visible outline is suppressed here to
+   avoid drawing two rings. */
+.propbt-input:focus,
+.propbt-input:focus-visible {
+  outline: none;
+  border-color: var(--color-border-hover);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.propbt-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+textarea.propbt-input {
+  height: auto;
+  padding: 8px;
+}
+select.propbt-input {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: 24px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238b949e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+select.propbt-input option {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* Range slider (replay scrubber): quiet track, accent thumb, no OS styling. */
+input[type='range'] {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 28px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-surface-2-hover);
+}
+input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-surface-2-hover);
+}
+input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-accent);
+  transition: box-shadow 120ms ease;
+}
+input[type='range']::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+input[type='range']:hover::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+input[type='range']:focus-visible {
+  outline: none;
+}
+input[type='range']:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.propbt-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 120ms ease;
+}
+.propbt-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+input[type='datetime-local'].propbt-input {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+}
+input[type='datetime-local'].propbt-input::-webkit-datetime-edit {
+  padding: 0;
+}
+input[type='datetime-local'].propbt-input::-webkit-datetime-edit-fields-wrapper {
+  padding: 0;
+}

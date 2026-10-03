@@ -14,7 +14,7 @@ export default function KpiTile({
   accent?: boolean
 }) {
   return (
-    <div className="rounded border border-border bg-surface px-3 py-2">
+    <div className="py-1">
       <div className="micro-label">{label}</div>
       {/* 20px = DESIGN_LANGUAGE.md section 3's "section KPI" scale step,
           medium weight -- deliberately one tier below the Score tab's 28px/

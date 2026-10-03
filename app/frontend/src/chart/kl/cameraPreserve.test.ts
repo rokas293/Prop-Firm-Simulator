@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cameraRestoreIndex } from './cameraPreserve'
+import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex } from './cameraPreserve'
 
 // A faithful model of the two pieces of klinecharts v10.0.3 arithmetic the
 // camera restore rides on, transcribed from the library source so this test
@@ -213,5 +213,111 @@ describe('cameraRestoreIndex -- replay camera across many steps', () => {
     })
     chart.scrollToDataIndex(idx as number)
     expect(chart.visibleRange.realTo).toBe(before.realTo)
+  })
+})
+
+// A long replay re-anchors the fetch window on the cursor: the data list is
+// replaced by one starting at a different time, so the cursor bar's index
+// jumps (here 2980 -> 900). The view must stay on the same bars.
+describe('window re-anchor -- no camera jump in a long replay', () => {
+  const BAR = 300
+  const times = (startIdx: number, count: number) => Array.from({ length: count }, (_, i) => (startIdx + i) * BAR)
+
+  const oldBars = times(0, 3000) // cursor bar is index 2980
+  const newBars = times(2980 - 900, 3000) // re-anchored: cursor bar is now index 900
+
+  // The times at the left and right edge of what is on screen.
+  const edgesInTime = (model: ChartModel, list: number[]) => {
+    const { from, realTo } = model.visibleRange
+    return { fromTime: list[from], toTime: list[Math.min(realTo, list.length) - 1] }
+  }
+
+  it('keeps the same bars on screen with the cursor at the right edge', () => {
+    const before = new ChartModel(oldBars.length, VISIBLE, 2981)
+    const beforeEdges = edgesInTime(before, oldBars)
+
+    const anchor = captureViewAnchor(oldBars, before.visibleRange.realTo)
+    const after = new ChartModel(newBars.length, VISIBLE, newBars.length) // an init reload resets the scroll
+    after.scrollToDataIndex(reanchorRestoreIndex(anchor, newBars) as number)
+
+    expect(edgesInTime(after, newBars)).toEqual(beforeEdges)
+    expect(after.visibleRange.realTo).toBe(901)
+  })
+
+  it('preserves empty space scrolled in to the right of the cursor', () => {
+    const clipped = oldBars.slice(0, 2981)
+    const before = new ChartModel(clipped.length, VISIBLE, clipped.length + 15)
+    const anchor = captureViewAnchor(clipped, before.visibleRange.realTo)
+    expect(anchor).toEqual({ time: clipped[2980], extraBars: 15 })
+
+    const newClipped = newBars.slice(0, 901)
+    const after = new ChartModel(newClipped.length, VISIBLE, newClipped.length)
+    after.scrollToDataIndex(reanchorRestoreIndex(anchor, newClipped) as number)
+    expect(after.visibleRange.realTo).toBe(newClipped.length + 15)
+  })
+
+  it('REGRESSION: without a time-anchored restore the reloaded view is on different bars (the hop)', () => {
+    const before = new ChartModel(oldBars.length, VISIBLE, 2981)
+    const beforeEdges = edgesInTime(before, oldBars)
+    // cameraRestoreIndex deliberately hands a changed window to someone else...
+    expect(
+      cameraRestoreIndex({
+        beforeRealTo: before.visibleRange.realTo,
+        beforeFirstBarTime: oldBars[0],
+        afterFirstBarTime: newBars[0],
+        afterBarCount: newBars.length,
+        followLatestBar: false,
+      }),
+    ).toBeNull()
+    // ...and an untouched init reload leaves the camera on a different span.
+    const untouched = new ChartModel(newBars.length, VISIBLE, newBars.length)
+    expect(edgesInTime(untouched, newBars)).not.toEqual(beforeEdges)
+  })
+
+  // Re-anchor window shape: the cursor (time index 2980) sits 0 bars from the
+  // far end of the replay-filtered list, with ~2800 bars of history behind it.
+  const reAnchored = (lastTimeIdx: number) => times(2980 - 2799, lastTimeIdx - (2980 - 2799) + 1)
+
+  it('follow off, view panned far behind but still loaded: restores the EXACT view', () => {
+    // User's right edge sat 400 bars behind the cursor in the old list.
+    const before = new ChartModel(oldBars.length, VISIBLE, 2981 - 400)
+    const beforeEdges = edgesInTime(before, oldBars)
+    const anchor = captureViewAnchor(oldBars, before.visibleRange.realTo)
+    const list = reAnchored(2980)
+    const after = new ChartModel(list.length, VISIBLE, list.length)
+    after.scrollToDataIndex(reanchorRestoreIndex(anchor, list, false) as number)
+    expect(edgesInTime(after, list)).toEqual(beforeEdges)
+  })
+
+  it('follow off, view bars no longer loaded: snaps the cursor to the right edge, zoom unchanged, never index 0', () => {
+    // Right edge 2500 bars behind the cursor -- before the new (shorter) window starts.
+    const before = new ChartModel(oldBars.length, VISIBLE, 2981 - 2500)
+    const anchor = captureViewAnchor(oldBars, before.visibleRange.realTo)
+    const list = times(2980 - 1000, 1001)
+    const after = new ChartModel(list.length, VISIBLE, list.length)
+    after.scrollToDataIndex(reanchorRestoreIndex(anchor, list, false) as number)
+    expect(after.visibleRange.realTo).toBe(list.length) // cursor bar flush right
+    expect(after.visibleRange.from).toBeGreaterThan(0)
+    expect(after.visibleBarCount).toBe(VISIBLE) // zoom untouched
+  })
+
+  it('follow on: the newest bar is brought into view in the same step (no 1-bar lag)', () => {
+    // Anchor captured BEFORE this step's bar (time 2981) was revealed: right edge = previous cursor bar.
+    const prev = oldBars.slice(0, 2981)
+    const anchor = captureViewAnchor(prev, prev.length)
+    const list = reAnchored(2981)
+    const after = new ChartModel(list.length, VISIBLE, list.length)
+    after.scrollToDataIndex(reanchorRestoreIndex(anchor, list, true) as number)
+    expect(after.visibleRange.realTo).toBe(list.length) // newest bar is the right edge
+    // Without follow the newest bar is left one bar past the edge (the old lag).
+    const lag = new ChartModel(list.length, VISIBLE, list.length)
+    lag.scrollToDataIndex(reanchorRestoreIndex(anchor, list, false) as number)
+    expect(lag.visibleRange.realTo).toBe(list.length - 1)
+  })
+
+  it('returns null with nothing to restore against', () => {
+    expect(captureViewAnchor([], 10)).toBeNull()
+    expect(reanchorRestoreIndex(null, newBars)).toBeNull()
+    expect(reanchorRestoreIndex({ time: 0, extraBars: 0 }, [])).toBeNull()
   })
 })

@@ -104,6 +104,12 @@ describe('computeDrawdownComponent', () => {
     expect(computeDrawdownComponent(makeGroupStats({ max_drawdown_usd: 1000, net_pnl_usd: 1000 })).score).toBe(0)
   })
 
+  it('writes the drawdown in the detail with a thousands separator', () => {
+    const c = computeDrawdownComponent(makeGroupStats({ max_drawdown_usd: 3834, net_pnl_usd: 10000 }))
+    expect(c.detail).toContain('$3,834')
+    expect(c.detail).not.toContain('$3834')
+  })
+
   it('does not divide by zero when net PnL is zero', () => {
     const c = computeDrawdownComponent(makeGroupStats({ max_drawdown_usd: 100, net_pnl_usd: 0 }))
     expect(Number.isFinite(c.score)).toBe(true)

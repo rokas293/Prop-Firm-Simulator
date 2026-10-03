@@ -13,12 +13,12 @@ describe('activeFilterChips', () => {
       { key: 'tag', label: 'Tag: breakout' },
       { key: 'grade', label: 'Grade: A' },
       { key: 'side', label: 'Side: long' },
-      { key: 'entryHourNy', label: 'Hour: 09:00 NY' },
+      { key: 'entryHourNy', label: 'Hour: 09:00 ET' },
     ])
   })
 
   it('counts hour 0 (midnight NY) as active, and the date range as two chips', () => {
-    expect(activeFilterChips({ ...EMPTY_FILTERS, entryHourNy: 0 })[0].label).toBe('Hour: 00:00 NY')
+    expect(activeFilterChips({ ...EMPTY_FILTERS, entryHourNy: 0 })[0].label).toBe('Hour: 00:00 ET')
     const dates = activeFilterChips({ ...EMPTY_FILTERS, dateFrom: '2025-03-10', dateTo: '2025-03-14' })
     expect(dates.map((c) => c.label)).toEqual(['From 2025-03-10', 'To 2025-03-14'])
   })

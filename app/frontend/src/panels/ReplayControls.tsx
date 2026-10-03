@@ -1,11 +1,9 @@
 import type { Bar, EquityPoint } from '../api/types'
 import { fmtUsd } from '../format'
+import { fmtEtDateTimeSec } from '../timeFormat'
 
 const SPEEDS = [0.5, 1, 2, 4, 8, 16] as const
 
-function fmtTime(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(0, 19).replace('T', ' ')
-}
 
 interface ReplayControlsProps {
   active: boolean
@@ -79,20 +77,20 @@ export default function ReplayControls({
             <button
               onClick={() => onCursorIndexChange(Math.max(0, cursorIndex - 1))}
               disabled={cursorIndex <= 0}
-              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+              className="rounded bg-surface-2 px-2 h-7 text-text hover:bg-surface-2-hover disabled:opacity-40"
             >
               &larr; Step
             </button>
             <button
               onClick={onTogglePlaying}
-              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+              className="rounded bg-surface-2 px-2 h-7 text-text hover:bg-surface-2-hover"
             >
               {isPlaying ? 'Pause' : 'Play'}
             </button>
             <button
               onClick={() => onCursorIndexChange(Math.min(lastIndex, cursorIndex + 1))}
               disabled={cursorIndex >= lastIndex}
-              className="rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover disabled:opacity-40"
+              className="rounded bg-surface-2 px-2 h-7 text-text hover:bg-surface-2-hover disabled:opacity-40"
             >
               Step &rarr;
             </button>
@@ -101,7 +99,7 @@ export default function ReplayControls({
               onClick={onTogglePickingReplayStart}
               title="Click a bar on the chart to start replay from there, instead of session open (S)"
               aria-pressed={pickingReplayStart}
-              className={`rounded px-2 py-1 ${
+              className={`rounded px-2 h-7 ${
                 pickingReplayStart ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
               }`}
             >
@@ -111,7 +109,7 @@ export default function ReplayControls({
             <select
               value={speed}
               onChange={(e) => onSpeedChange(Number(e.target.value))}
-              className="rounded bg-surface-2 px-2 py-1 text-text"
+              className="propbt-input"
             >
               {SPEEDS.map((s) => (
                 <option key={s} value={s}>
@@ -122,9 +120,9 @@ export default function ReplayControls({
 
             <button
               onClick={onToggleFollowLatestBar}
-              title="Keep the newest revealed bar in view while stepping (a minimal scroll, never a hard recenter). Off by default -- pan around freely and keep stepping."
+              title="Keep the newest revealed bar in view while stepping (a minimal scroll, never a hard recenter). Off by default – pan around freely and keep stepping."
               aria-pressed={followLatestBar}
-              className={`rounded px-2 py-1 ${
+              className={`rounded px-2 h-7 ${
                 followLatestBar ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
               }`}
             >
@@ -142,14 +140,14 @@ export default function ReplayControls({
               className="min-w-[160px] flex-1"
             />
 
-            {cursorBar && <span className="whitespace-nowrap font-mono text-text-muted">{fmtTime(cursorBar.time)}</span>}
+            {cursorBar && <span className="whitespace-nowrap tabular-nums text-text-muted">{fmtEtDateTimeSec(cursorBar.time)}</span>}
           </>
         )}
         {onOpenAnalytics && (
           <button
             onClick={onOpenAnalytics}
             title="Open this session's analytics: stats, equity, Monte Carlo, prop-firm result"
-            className="ml-auto rounded bg-surface-2 px-2 py-1 text-text hover:bg-surface-2-hover"
+            className="ml-auto rounded bg-surface-2 px-2 h-7 text-text hover:bg-surface-2-hover"
           >
             Analytics
           </button>
@@ -158,7 +156,7 @@ export default function ReplayControls({
           <button
             onClick={onToggleJournal}
             aria-pressed={journalOpen}
-            className={`${onOpenAnalytics ? '' : 'ml-auto '}rounded px-2 py-1 ${
+            className={`${onOpenAnalytics ? '' : 'ml-auto '}rounded px-2 h-7 ${
               journalOpen ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
             }`}
           >

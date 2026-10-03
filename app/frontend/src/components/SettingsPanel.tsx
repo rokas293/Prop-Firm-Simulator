@@ -92,7 +92,7 @@ function TokenPicker({
           type="color"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent"
+          className="h-7 w-10 cursor-pointer rounded-sm border border-border bg-transparent p-0.5"
         />
       </label>
       <span className={`font-mono text-[11px] tabular-nums ${passes ? 'text-text-muted' : 'text-warning'}`}>{ratio.toFixed(1)}:1</span>

@@ -73,7 +73,7 @@ export default function App() {
           and drops its "Layout:" preset row the same way) -- ChartPanel.tsx
           owns the actual toggle/shortcut/button, this just reacts to it. */}
       {!distractionFree && (
-        <header className="flex items-center gap-3 border-b border-border px-6 py-3">
+        <header className="flex h-[52px] items-center gap-3 border-b border-border px-6">
           <h1 className="text-sm font-semibold tracking-wide text-text">propbt viz</h1>
           {!compareRunIds && selectedRunId && (
             <>
@@ -137,10 +137,7 @@ export default function App() {
             Settings
           </button>
           <span className="text-xs text-text-muted">
-            {/* Same kbd treatment as ShortcutsList's keycaps (px-1 py-1, not
-                this surface's own px-1.5 py-0.5) -- this was a third,
-                independent keycap styling, flagged in the Settings/palette
-                pass as out of scope there (global-sweep territory). */}
+            {/* Keycap padding matches ShortcutsList (px-1 py-1). */}
             <kbd className="rounded border border-border px-1 py-1">Ctrl/Cmd K</kbd> commands &middot;{' '}
             <button onClick={() => setShortcutsOpen(true)} className="rounded border border-border px-1 py-1 hover:border-border-hover hover:text-text">
               ?
@@ -163,7 +160,7 @@ export default function App() {
           <div className="flex gap-2 border-b border-border px-6 pt-4">
             <button
               onClick={() => setLandingTab('runs')}
-              className={`rounded-t px-3 py-1.5 text-xs ${
+              className={`rounded-t px-3 py-2 text-xs ${
                 landingTab === 'runs' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
               }`}
             >
@@ -171,7 +168,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setLandingTab('sessions')}
-              className={`rounded-t px-3 py-1.5 text-xs ${
+              className={`rounded-t px-3 py-2 text-xs ${
                 landingTab === 'sessions' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
               }`}
             >
@@ -191,7 +188,7 @@ export default function App() {
         </div>
       )}
       {!compareRunIds && selectedSessionId && (
-        <div key={selectedSessionId} className="propbt-fade-in h-[calc(100vh-49px)]">
+        <div key={selectedSessionId} className="propbt-fade-in h-[calc(100vh-52px)]">
           <SessionWorkspace sessionId={selectedSessionId} />
         </div>
       )}

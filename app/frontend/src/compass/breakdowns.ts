@@ -11,6 +11,7 @@
 // client-side since Phase V5/P2.
 import type { TradeRecord } from '../api/types'
 import type { TradeFilters } from '../state/tradeStore'
+import { etDayEndUnix, etDayStartUnix } from '../timeFormat'
 
 export interface BucketStats {
   key: string
@@ -261,12 +262,12 @@ export function filterManualTrades<T extends TradeRecord>(trades: T[], filters: 
   if (filters.result === 'loss') out = out.filter((t) => t.pnl_usd <= 0)
   if (filters.exitType !== null) out = out.filter((t) => t.exit_type === filters.exitType)
   if (filters.dateFrom !== null) {
-    const from = Math.floor(Date.parse(`${filters.dateFrom}T00:00:00Z`) / 1000)
-    out = out.filter((t) => t.entry_time >= from)
+    const from = etDayStartUnix(filters.dateFrom)
+    if (from !== null) out = out.filter((t) => t.entry_time >= from)
   }
   if (filters.dateTo !== null) {
-    const to = Math.floor(Date.parse(`${filters.dateTo}T23:59:59Z`) / 1000)
-    out = out.filter((t) => t.entry_time <= to)
+    const to = etDayEndUnix(filters.dateTo)
+    if (to !== null) out = out.filter((t) => t.entry_time <= to)
   }
   return applyCompassFilters(out, filters) as T[]
 }
