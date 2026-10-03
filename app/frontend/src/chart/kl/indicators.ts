@@ -13,6 +13,7 @@
 // ask) is a genuine klinecharts built-in ('VOL') -- it just visualizes
 // each bar's own volume field, so there's no divergence risk.
 import { registerIndicator } from 'klinecharts'
+import { ensureContrast } from '../../state/contrast'
 import type { IndicatorPoint } from '../../api/types'
 import { CHART_LINE_COLORS, resolveBase, useThemeStore, type ThemeBase, type ThemeColors } from '../../state/themeStore'
 import { useIndicatorStore, type ColorableIndicatorKey } from '../../state/indicatorStore'
@@ -59,8 +60,14 @@ export function valuesForBarsMs(points: IndicatorPoint[], barTimesMs: number[]):
   return out
 }
 
+// Live legend/figure color per indicator key: klinecharts reads a figure's
+// `styles` color for the legend text, so it must follow the resolved color
+// (theme + user pick), not the registration-time one.
+const liveLegendColor: Partial<Record<ColorableIndicatorKey, string>> = {}
+
 function registerPassthroughIndicator(
   name: string,
+  key: ColorableIndicatorKey,
   shortName: string,
   color: string,
   series: 'price' | 'normal',
@@ -72,7 +79,7 @@ function registerPassthroughIndicator(
     series,
     calcParams: [],
     precision: 2,
-    figures: [{ key: 'value', title: `${shortName}: `, type: 'line', styles: () => ({ color }) }],
+    figures: [{ key: 'value', title: `${shortName}: `, type: 'line', styles: () => ({ color: liveLegendColor[key] ?? color }) }],
     calc: (dataList) => {
       const values = valuesForBarsMs(
         getPoints(context),
@@ -96,23 +103,29 @@ export function ensureIndicatorsRegistered(): void {
   if (registered) return
   registered = true
   const { colors, mode } = useThemeStore.getState()
-  registerPassthroughIndicator(KL_VWAP, 'VWAP', colors.accent, 'price', (c) => c.vwap)
-  registerPassthroughIndicator(KL_EMA20, 'EMA20', CHART_LINE_COLORS.ema20, 'price', (c) => c.ema20)
-  registerPassthroughIndicator(KL_EMA50, 'EMA50', CHART_LINE_COLORS.ema50, 'price', (c) => c.ema50)
-  registerPassthroughIndicator(KL_ATR14, 'ATR14', resolveBase(mode).textMuted, 'normal', (c) => c.atr14)
+  registerPassthroughIndicator(KL_VWAP, 'vwap', 'VWAP', colors.accent, 'price', (c) => c.vwap)
+  registerPassthroughIndicator(KL_EMA20, 'ema20', 'EMA20', CHART_LINE_COLORS.ema20, 'price', (c) => c.ema20)
+  registerPassthroughIndicator(KL_EMA50, 'ema50', 'EMA50', CHART_LINE_COLORS.ema50, 'price', (c) => c.ema50)
+  registerPassthroughIndicator(KL_ATR14, 'atr14', 'ATR14', resolveBase(mode).textMuted, 'normal', (c) => c.atr14)
 }
 
 // This indicator's theme-driven DEFAULT color, before any user override --
 // the same values ensureIndicatorsRegistered seeds at registration time,
 // re-derived live so a later theme/mode switch is reflected too.
 function defaultLineColor(key: ColorableIndicatorKey, colors: ThemeColors, base: ThemeBase): string {
+  // The legend text takes the line color, so defaults are nudged (no-op when
+  // already passing, e.g. every dark default) to clear 4.5:1 on the chart bg
+  // -- the pastel EMA/accent hues are unreadable on the light theme's bg.
+  // 5.0 (not 4.5): the legend often sits on the session-shading tint, a
+  // touch darker than the pane bg.
+  const legible = (hex: string) => ensureContrast(hex, base.bg, 5)
   switch (key) {
     case 'vwap':
-      return colors.accent
+      return legible(colors.accent)
     case 'ema20':
-      return CHART_LINE_COLORS.ema20
+      return legible(CHART_LINE_COLORS.ema20)
     case 'ema50':
-      return CHART_LINE_COLORS.ema50
+      return legible(CHART_LINE_COLORS.ema50)
     case 'atr14':
       return base.textMuted
   }
@@ -123,5 +136,7 @@ function defaultLineColor(key: ColorableIndicatorKey, colors: ThemeColors, base:
 // REPLICA_ROADMAP.md Batch 3's on-chart legend "settings" swatch) if one
 // exists, else the theme default above.
 export function resolveIndicatorLineColor(key: ColorableIndicatorKey, colors: ThemeColors, base: ThemeBase): string {
-  return useIndicatorStore.getState().colors[key] ?? defaultLineColor(key, colors, base)
+  const resolved = useIndicatorStore.getState().colors[key] ?? defaultLineColor(key, colors, base)
+  liveLegendColor[key] = resolved
+  return resolved
 }

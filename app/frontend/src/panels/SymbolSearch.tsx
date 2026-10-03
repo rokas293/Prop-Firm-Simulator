@@ -86,7 +86,7 @@ export default function SymbolSearch() {
                     key={inst.symbol}
                     value={`${inst.symbol} ${inst.description}`}
                     onSelect={() => pick(inst.symbol)}
-                    className={`!flex !items-center !justify-between !gap-3 ${active ? '!text-accent' : ''}`}
+                    className={`!flex !items-center !justify-between !gap-3 ${active ? '!text-accent-fg' : ''}`}
                   >
                     <span className="font-medium">{inst.symbol}</span>
                     <span className="flex-1 truncate text-right text-text-muted">{inst.description}</span>

@@ -44,7 +44,8 @@ import {
 import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex } from './cameraPreserve'
 import { KL_ORDER_LINE, ensureOrderLineOverlayRegistered } from './orderLineOverlay'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
-import { useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
+import { KL_DEFAULT_INDICATOR_LINES, useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
+import { MIN_TEXT_CONTRAST, ensureContrast } from '../../state/contrast'
 import { useIndicatorStore, type ColorableIndicatorKey, type IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
@@ -284,7 +285,15 @@ function themeStyles(colors: ThemeColors, base: ThemeBase) {
       },
     },
     indicator: {
-      bars: [{ upColor: colors.upCandle, downColor: colors.downCandle, noChangeColor: colors.upCandle }],
+      // The VOL legend text takes the bar color, so nudge it to 4.5:1 on the
+      // chart bg (no-op on dark, where up/down already pass).
+      bars: [
+        {
+          upColor: ensureContrast(colors.upCandle, base.bg, MIN_TEXT_CONTRAST),
+          downColor: ensureContrast(colors.downCandle, base.bg, MIN_TEXT_CONTRAST),
+          noChangeColor: ensureContrast(colors.upCandle, base.bg, MIN_TEXT_CONTRAST),
+        },
+      ],
       // The on-chart per-indicator legend row's typography (REPLICA_
       // ROADMAP.md Batch 3) -- klinecharts' own default is an unthemed
       // 'Helvetica Neue'/flat-gray (confirmed in the v10.0.3 source), which
@@ -294,6 +303,15 @@ function themeStyles(colors: ThemeColors, base: ThemeBase) {
       // needs setting here; the feature icons (settings/eye/remove/
       // reorder) are applied per-indicator in rebuildIndicatorsRef below,
       // not globally, since which icons apply differs by indicator kind.
+      // Built-in VOL/MA line colors drive their legend text; nudge each to
+      // 4.5:1 on this bg (no-op on dark where they already pass).
+      lines: KL_DEFAULT_INDICATOR_LINES.map((c) => ({
+        style: 'solid' as const,
+        smooth: false,
+        size: 1,
+        dashedValue: [2, 2],
+        color: ensureContrast(c, base.bg, MIN_TEXT_CONTRAST),
+      })),
       tooltip: {
         title: { color: base.textMuted, family: FONT_FAMILY },
         legend: { color: base.text, family: FONT_FAMILY },
@@ -1911,7 +1929,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
               top: Math.max(measureDrag.current.y - 14, 0),
             }}
           >
-            <span className={`text-xs font-medium tabular-nums ${measureDrag.result.points >= 0 ? 'text-positive' : 'text-negative'}`}>
+            <span className={`text-xs font-medium tabular-nums ${measureDrag.result.points >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>
               {measureDrag.result.points >= 0 ? '+' : ''}
               {measureDrag.result.points.toFixed(2)} ({measureDrag.result.percent >= 0 ? '+' : ''}
               {measureDrag.result.percent.toFixed(2)}%)

@@ -44,7 +44,7 @@ export default function RunsListPage() {
     // same as any other supporting detail next to a colored status word.
     return (
       <div className="p-6">
-        <span className="text-negative">Failed to load runs</span>
+        <span className="text-negative-fg">Failed to load runs</span>
         <span className="text-text-muted">: {(error as Error).message}</span>
       </div>
     )
@@ -77,7 +77,7 @@ export default function RunsListPage() {
             <button
               onClick={() => setCompareRunIds([compareSelection[0], compareSelection[1]])}
               disabled={compareSelection.length !== 2}
-              className="rounded bg-accent px-3 py-1 text-white disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-muted"
+              className="rounded bg-accent px-3 py-1 text-on-accent disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-muted"
             >
               Compare
             </button>
@@ -141,17 +141,17 @@ export default function RunsListPage() {
               </td>
               <td className="cursor-pointer pr-4" onClick={() => selectRun(run.run_id)}>
                 {run.result.passed ? (
-                  <span className="text-positive">PASSED</span>
+                  <span className="text-positive-fg">PASSED</span>
                 ) : run.result.fail_reason ? (
                   // DESIGN_AUDIT.md follow-up re-audit, item R3: color the
                   // status word only, not the parenthetical detail --
                   // matches the error-state fix above.
                   <>
-                    <span className="text-negative">FAILED</span>
+                    <span className="text-negative-fg">FAILED</span>
                     <span className="text-text-muted"> ({run.result.fail_reason})</span>
                   </>
                 ) : (
-                  <span className="text-negative">INCOMPLETE</span>
+                  <span className="text-negative-fg">INCOMPLETE</span>
                 )}
               </td>
               <td className="num cursor-pointer pr-4 text-text" onClick={() => selectRun(run.run_id)}>
@@ -163,7 +163,7 @@ export default function RunsListPage() {
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  className="text-xs text-text-muted underline hover:text-text"
+                  className="text-xs text-text-muted hover:text-text"
                   title="Export a self-contained static HTML snapshot of this run"
                 >
                   Export

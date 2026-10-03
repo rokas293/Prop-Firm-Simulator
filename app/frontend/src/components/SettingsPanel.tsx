@@ -12,7 +12,6 @@ import {
   matchingPresetId,
   exportTheme,
   importTheme,
-  ACCENT_BUTTON_TEXT_COLOR,
   type ThemeMode,
 } from '../state/themeStore'
 import { MIN_TEXT_CONTRAST, MIN_UI_CONTRAST, contrastRatio, ensureContrast } from '../state/contrast'
@@ -59,31 +58,15 @@ function TokenPicker({
   onChange,
   bg,
   minRatio,
-  secondaryCheck,
 }: {
   label: string
   value: string
   onChange: (hex: string) => void
   bg: string
   minRatio: number
-  // Accent plays a SECOND role beyond "colored text on a surface": it's
-  // also the background of every active/selected button app-wide, with
-  // fixed white text on top (`bg-accent text-white`, throughout Chart-
-  // Panel/SettingsPanel/etc). Found live while testing this exact
-  // guardrail: an accent light enough to pass AS TEXT against a light-mode
-  // surface makes that white button text unreadable -- the opposite
-  // constraint, not something the primary check (accent-as-foreground)
-  // catches. No "Fix" button here: in dark mode the two checks can pull
-  // accent in OPPOSITE directions (light enough to read on a dark surface,
-  // dark enough for white text to read on top of it), so auto-adjusting
-  // this one could undo the other's fix -- informational warning only,
-  // left for the user to balance.
-  secondaryCheck?: { label: string; fg: string }
 }) {
   const ratio = contrastRatio(value, bg)
   const passes = ratio >= minRatio
-  const secondaryRatio = secondaryCheck ? contrastRatio(secondaryCheck.fg, value) : null
-  const secondaryPasses = secondaryRatio === null || secondaryRatio >= MIN_TEXT_CONTRAST
   return (
     <div className="flex flex-wrap items-center gap-2">
       <label className="flex w-28 items-center gap-2 text-text-muted">
@@ -101,16 +84,11 @@ function TokenPicker({
           <span className="text-[11px] text-warning">low contrast vs {bg}</span>
           <button
             onClick={() => onChange(ensureContrast(value, bg, minRatio))}
-            className="text-[11px] text-accent underline hover:text-text"
+            className="text-[11px] text-accent-fg underline hover:text-text"
           >
             Fix
           </button>
         </>
-      )}
-      {!secondaryPasses && secondaryRatio !== null && (
-        <span className="text-[11px] tabular-nums text-warning">
-          {secondaryRatio.toFixed(1)}:1 low contrast for {secondaryCheck!.label}
-        </span>
       )}
     </div>
   )
@@ -203,7 +181,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
           {/* 16px/medium -- the same "panel title" scale step as Card
               (DESIGN_LANGUAGE.md section 3), not a bespoke 14px/semibold. */}
           <h2 className="text-base font-medium text-text">Settings</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
+          <button onClick={onClose} className="h-7 rounded px-2 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
             Esc to close
           </button>
         </div>
@@ -219,7 +197,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     onClick={() => setMode(m)}
                     aria-pressed={mode === m}
                     className={`rounded px-2 py-1 capitalize ${
-                      mode === m ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                      mode === m ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                     }`}
                   >
                     {m}
@@ -263,7 +241,6 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 onChange={setAccent}
                 bg={base.surface}
                 minRatio={MIN_TEXT_CONTRAST}
-                secondaryCheck={{ label: 'white button text', fg: ACCENT_BUTTON_TEXT_COLOR }}
               />
               <TokenPicker label="Positive" value={colors.positive} onChange={setPositive} bg={base.surface} minRatio={MIN_TEXT_CONTRAST} />
               <TokenPicker label="Negative" value={colors.negative} onChange={setNegative} bg={base.surface} minRatio={MIN_TEXT_CONTRAST} />
@@ -284,7 +261,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
               <div className="flex flex-wrap items-center gap-2">
                 <TokenPicker label="Background" value={base.bg} onChange={setBgOverride} bg={base.text} minRatio={MIN_TEXT_CONTRAST} />
                 {baseOverride.bg !== null && (
-                  <button onClick={() => setBgOverride(null)} className="text-[11px] text-accent underline hover:text-text">
+                  <button onClick={() => setBgOverride(null)} className="text-[11px] text-accent-fg underline hover:text-text">
                     Use {mode} default
                   </button>
                 )}
@@ -292,7 +269,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
               <div className="flex flex-wrap items-center gap-2">
                 <TokenPicker label="Surface" value={base.surface} onChange={setSurfaceOverride} bg={base.text} minRatio={MIN_TEXT_CONTRAST} />
                 {baseOverride.surface !== null && (
-                  <button onClick={() => setSurfaceOverride(null)} className="text-[11px] text-accent underline hover:text-text">
+                  <button onClick={() => setSurfaceOverride(null)} className="text-[11px] text-accent-fg underline hover:text-text">
                     Use {mode} default
                   </button>
                 )}
@@ -324,7 +301,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 }}
               />
             </div>
-            {importError && <p className="mt-2 text-xs text-negative">{importError}</p>}
+            {importError && <p className="mt-2 text-xs text-negative-fg">{importError}</p>}
           </Section>
 
           <Section title="Layout">
@@ -359,7 +336,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       onClick={() => setDefaultTimeframe(tf)}
                       aria-pressed={defaultTimeframe === tf}
                       className={`rounded px-2 py-1 ${
-                        defaultTimeframe === tf ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                        defaultTimeframe === tf ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                       }`}
                     >
                       {tf}
@@ -376,7 +353,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       onClick={() => setBracketDensity(d)}
                       aria-pressed={bracketDensity === d}
                       className={`rounded px-2 py-1 capitalize ${
-                        bracketDensity === d ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                        bracketDensity === d ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                       }`}
                     >
                       {d === 'markers' ? 'Off' : d}

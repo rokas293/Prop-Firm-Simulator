@@ -100,7 +100,7 @@ export default function ReplayControls({
               title="Click a bar on the chart to start replay from there, instead of session open (S)"
               aria-pressed={pickingReplayStart}
               className={`rounded px-2 h-7 ${
-                pickingReplayStart ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                pickingReplayStart ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
               }`}
             >
               {pickingReplayStart ? 'Click a bar…' : 'Set start'}
@@ -123,7 +123,7 @@ export default function ReplayControls({
               title="Keep the newest revealed bar in view while stepping (a minimal scroll, never a hard recenter). Off by default – pan around freely and keep stepping."
               aria-pressed={followLatestBar}
               className={`rounded px-2 h-7 ${
-                followLatestBar ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                followLatestBar ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
               }`}
             >
               Follow
@@ -157,7 +157,7 @@ export default function ReplayControls({
             onClick={onToggleJournal}
             aria-pressed={journalOpen}
             className={`${onOpenAnalytics ? '' : 'ml-auto '}rounded px-2 h-7 ${
-              journalOpen ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+              journalOpen ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
             }`}
           >
             Journal
@@ -168,7 +168,7 @@ export default function ReplayControls({
       <div className="mt-2 flex flex-wrap items-center gap-4 text-text-muted">
         <span>
           Running:{' '}
-          <span className={`tabular-nums ${runningPnl >= 0 ? 'text-positive' : 'text-negative'}`}>
+          <span className={`tabular-nums ${runningPnl >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>
             {fmtUsd(runningPnl)}
           </span>{' '}
           <span className="tabular-nums text-text-muted">({runningR.toFixed(2)}R)</span>
@@ -185,7 +185,7 @@ export default function ReplayControls({
                 </span>
                 <span>
                   Distance to breach:{' '}
-                  <span className={`tabular-nums ${equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative'}`}>
+                  <span className={`tabular-nums ${equity.equity - equity.mll_floor > 0 ? 'text-text' : 'text-negative-fg'}`}>
                     {fmtUsd(equity.equity - equity.mll_floor)}
                   </span>
                 </span>

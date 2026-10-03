@@ -549,7 +549,7 @@ export default function ChartPanel() {
           className="flex h-7 items-center gap-2 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
         >
           Indicators
-          <span className="tabular-nums flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[11px] leading-none text-white">
+          <span className="tabular-nums flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[11px] leading-none text-on-accent">
             {activeIndicatorCount}
           </span>
         </button>
@@ -558,7 +558,7 @@ export default function ChartPanel() {
           onClick={toggleReplay}
           aria-pressed={replayActive}
           className={`h-7 rounded px-2 text-xs ${
-            replayActive ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+            replayActive ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
           }`}
         >
           {replayActive ? 'Exit replay' : 'Replay'}
@@ -585,7 +585,7 @@ export default function ChartPanel() {
             aria-pressed={distractionFree}
             title="Distraction-free chart mode (D)"
             className={`flex h-7 w-7 items-center justify-center rounded ${
-              distractionFree ? 'bg-accent text-white' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+              distractionFree ? 'bg-accent text-on-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text'
             }`}
           >
             {distractionFree ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -646,7 +646,7 @@ export default function ChartPanel() {
             <span className="ml-auto text-xs text-text-muted">
               #{selectedTrade.trade_id} &middot; {selectedTrade.leg ?? '-'} &middot;{' '}
               {selectedTrade.session ?? '-'} &middot; {selectedTrade.side} &middot;{' '}
-              <span className={`tabular-nums ${selectedTrade.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
+              <span className={`tabular-nums ${selectedTrade.pnl_usd >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>
                 {fmtUsd(selectedTrade.pnl_usd)}
               </span>
             </span>

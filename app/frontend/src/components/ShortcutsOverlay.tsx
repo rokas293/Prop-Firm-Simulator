@@ -34,7 +34,7 @@ export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onC
               global sweep is for (Settings' matching title was already
               fixed in that surface's own pass). */}
           <h2 className="text-base font-medium text-text">Keyboard shortcuts</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
+          <button onClick={onClose} className="h-7 rounded px-2 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
             Esc to close
           </button>
         </div>

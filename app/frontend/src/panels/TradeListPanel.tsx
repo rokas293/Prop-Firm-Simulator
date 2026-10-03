@@ -492,7 +492,7 @@ export default function TradeListPanel() {
                   <div className="num truncate px-2 text-text">{fmtPrice(t.entry_price, t.instrument)}</div>
                   <div className="num truncate px-2 text-text">{fmtPrice(t.exit_price, t.instrument)}</div>
                   <div className="truncate px-2 text-text">{t.exit_type}</div>
-                  <div className={`num truncate px-2 ${t.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>
+                  <div className={`num truncate px-2 ${t.pnl_usd >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>
                     {fmtUsd(t.pnl_usd)}
                   </div>
                   <div className="num truncate px-2 text-text">

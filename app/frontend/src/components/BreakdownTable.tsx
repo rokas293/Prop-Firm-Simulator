@@ -48,7 +48,7 @@ export default function BreakdownTable({
               <td className="whitespace-nowrap py-1 pr-3 text-text">{key}</td>
               <td className="num py-1 pr-3 text-text">{g.trades}</td>
               <td className="num py-1 pr-3 text-text">{fmtPct(g.win_rate)}</td>
-              <td className={`num py-1 pr-3 ${(g.expectancy_usd ?? 0) >= 0 ? 'text-positive' : 'text-negative'}`}>
+              <td className={`num py-1 pr-3 ${(g.expectancy_usd ?? 0) >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>
                 {fmtUsd(g.expectancy_usd)}
               </td>
               <td className="num py-1 pr-3 text-text">{g.net_r !== null ? fmtR(g.net_r) : '-'}</td>

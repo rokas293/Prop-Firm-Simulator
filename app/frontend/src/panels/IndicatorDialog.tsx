@@ -75,7 +75,7 @@ export default function IndicatorDialog({ open, onClose }: { open: boolean; onCl
                   className="!flex !items-center !justify-between !gap-3"
                 >
                   <span className="flex min-w-0 items-center gap-2">
-                    <span className={`flex h-4 w-4 flex-none items-center justify-center ${active ? 'text-accent' : 'text-transparent'}`}>
+                    <span className={`flex h-4 w-4 flex-none items-center justify-center ${active ? 'text-accent-fg' : 'text-transparent'}`}>
                       <Check size={14} />
                     </span>
                     <LineChart size={14} className="flex-none text-text-muted" />

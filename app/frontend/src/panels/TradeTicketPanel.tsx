@@ -29,7 +29,7 @@ export default function TradeTicketPanel({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-2 text-xs">
-      <button onClick={onConfirm} className="rounded bg-accent px-3 py-1 text-white hover:opacity-90">
+      <button onClick={onConfirm} className="rounded bg-accent px-3 py-1 text-on-accent hover:opacity-90">
         Confirm
       </button>
       <button onClick={onCancel} className="rounded bg-surface-2 px-3 py-1 text-text hover:bg-surface-2-hover">
@@ -49,7 +49,7 @@ export default function TradeTicketPanel({
         SL <span className="text-warning">{ticket.slPrice.toFixed(2)}</span>
       </span>
       <span className="tabular-nums text-text-muted">
-        TP <span className="text-positive">{ticket.tpPrice.toFixed(2)}</span>
+        TP <span className="text-positive-fg">{ticket.tpPrice.toFixed(2)}</span>
       </span>
       <span className="tabular-nums text-text-muted">{ticket.rr !== null ? `${ticket.rr.toFixed(2)}R:R` : '—'}</span>
       <span className="tabular-nums text-text-muted">

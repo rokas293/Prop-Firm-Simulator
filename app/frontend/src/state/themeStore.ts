@@ -4,7 +4,7 @@
 // `mode` picks between the two BASE token sets (dark/light) defined in
 // index.css's `@theme` / `[data-theme='light']` blocks. Both are single
 // sources of truth: CSS-consuming UI reads the live CSS custom properties
-// via Tailwind utilities built from them (bg-accent, text-positive, etc.),
+// via Tailwind utilities built from them (bg-accent, text-positive-fg, etc.),
 // and canvas-consuming chart code (ChartKL.tsx, RiskChart.tsx, and the
 // Recharts panels' per-datum colors) reads `colors`/`base` directly from
 // this store, since a <canvas> can't resolve a CSS variable on its own.
@@ -12,6 +12,7 @@
 // both onto :root so the two stay identical.
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { ensureTextVariant, pickOnAccent } from './contrast'
 
 export interface ThemeColors {
   accent: string
@@ -84,15 +85,19 @@ export const CHART_LINE_COLORS = {
   ema50: '#d2a8ff',
 } as const
 
+// klinecharts' built-in VOL/MA line palette (v10 defaults), mirrored so the
+// legend text can be nudged to 4.5:1 per mode (chart/kl/ChartKL.tsx).
+export const KL_DEFAULT_INDICATOR_LINES = ['#FF9600', '#935EBD', '#1677FF', '#E11D74', '#01C5C4']
+
 export const COMPARE_B_COLOR = '#e3b341'
 
-// The fixed foreground every "active/selected" button app-wide pairs with
-// bg-accent (`bg-accent text-white`, ChartPanel/SettingsPanel/etc) --
-// named and centralized here (not a literal at the Theme Editor's contrast-
-// check call site) for the same single-source-of-truth reason as the
-// categorical colors above, and so it stays in the one file this repo's
-// designTokens.test.ts allowlists for literal color values.
-export const ACCENT_BUTTON_TEXT_COLOR = '#ffffff'
+// Candidate foregrounds for text ON an accent fill (`bg-accent text-on-accent`).
+// resolveTextTokens() picks whichever contrasts more with the live accent, so
+// a user-tuned accent never ends up with unreadable button text. Kept here
+// (not in contrast.ts) because this is the one file designTokens.test.ts
+// allowlists for literal color values.
+export const ON_ACCENT_LIGHT = '#ffffff'
+export const ON_ACCENT_DARK = '#0d1117'
 
 export type ThemeMode = 'dark' | 'light'
 
@@ -343,6 +348,27 @@ export function useThemeBase(): ThemeBase {
 // background style option, see ChartKL.tsx's themeStyles comment) and
 // every other bg-bg/bg-surface consumer in the app follow a background
 // override live, with no per-consumer wiring.
+// Derived TEXT-legible tokens (not user-tuned directly): the on-accent
+// foreground, and per-mode positive/negative text variants so green/red text
+// clears 4.5:1 on the current bg (light mode needs darker hues than the
+// dark-mode defaults; a color that already passes -- every dark default -- is
+// returned unchanged). Fills/charts keep using colors.positive/negative.
+export interface TextTokens {
+  onAccent: string
+  positiveFg: string
+  negativeFg: string
+  accentFg: string
+}
+
+export function resolveTextTokens(colors: ThemeColors, base: ThemeBase): TextTokens {
+  return {
+    onAccent: pickOnAccent(colors.accent, ON_ACCENT_LIGHT, ON_ACCENT_DARK),
+    positiveFg: ensureTextVariant(colors.positive, base.bg),
+    negativeFg: ensureTextVariant(colors.negative, base.bg),
+    accentFg: ensureTextVariant(colors.accent, base.bg),
+  }
+}
+
 export function applyThemeToDocument(colors: ThemeColors, mode: ThemeMode, base: ThemeBase): void {
   const root = document.documentElement
   root.setAttribute('data-theme', mode)
@@ -352,6 +378,11 @@ export function applyThemeToDocument(colors: ThemeColors, mode: ThemeMode, base:
   style.setProperty('--color-negative', colors.negative)
   style.setProperty('--color-up-candle', colors.upCandle)
   style.setProperty('--color-down-candle', colors.downCandle)
+  const text = resolveTextTokens(colors, base)
+  style.setProperty('--color-on-accent', text.onAccent)
+  style.setProperty('--color-positive-fg', text.positiveFg)
+  style.setProperty('--color-negative-fg', text.negativeFg)
+  style.setProperty('--color-accent-fg', text.accentFg)
   style.setProperty('--color-bg', base.bg)
   style.setProperty('--color-surface', base.surface)
   style.setProperty('accent-color', colors.accent)

@@ -13,7 +13,7 @@ export interface ContextMenuItem {
   label: string
   onSelect: () => void
   disabled?: boolean
-  // Delete-style actions -- text-negative, same convention as the
+  // Delete-style actions -- text-negative-fg, same convention as the
   // drawings-manage list's own Delete link (KLDrawingToolbar.tsx).
   destructive?: boolean
 }
@@ -139,7 +139,7 @@ export default function ContextMenu({
               entry.onSelect()
               onClose()
             }}
-            className={`${POPOVER_MENU_ROW} ${entry.destructive ? '!text-negative' : ''}`}
+            className={`${POPOVER_MENU_ROW} ${entry.destructive ? '!text-negative-fg' : ''}`}
           >
             {entry.label}
           </button>

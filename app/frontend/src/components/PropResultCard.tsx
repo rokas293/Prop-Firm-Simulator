@@ -50,7 +50,7 @@ export default function PropResultCard({
           point (MAE) is checked against the floor, stamped at its exit time.
         </p>
         {onViewRisk && (
-          <button onClick={onViewRisk} className="whitespace-nowrap text-xs text-accent hover:text-text">
+          <button onClick={onViewRisk} className="whitespace-nowrap text-xs text-accent-fg hover:text-text">
             View in Prop Risk &rarr;
           </button>
         )}

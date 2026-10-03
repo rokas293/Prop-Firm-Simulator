@@ -62,11 +62,9 @@ const RAW_PALETTES = [
 
 const COLOR_UTILITY_PREFIXES = 'bg|text|border|ring|from|to|via|fill|stroke|divide|outline|decoration|accent'
 
-// text-white/bg-white/text-black are the one intentional exception: white
-// text on an arbitrary-hued accent button needs to stay legible regardless
-// of which accent color a preset picks, and Tailwind itself has no
-// "contrast-safe foreground" token to reach for instead (see the Part C1
-// implementation notes). Anything else raw is a violation.
+// Text on an accent fill uses the derived `text-on-accent` token (white or
+// near-black by contrast, themeStore.resolveTextTokens). Anything raw is a
+// violation.
 const RAW_CLASS_RE = new RegExp(`\\b(${COLOR_UTILITY_PREFIXES})-(${RAW_PALETTES})-?[0-9]*\\b`)
 const RAW_HEX_RE = /#[0-9a-fA-F]{3,8}\b/
 const RAW_RGB_RE = /rgba?\(\s*[0-9]/

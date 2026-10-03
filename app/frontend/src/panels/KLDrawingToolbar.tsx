@@ -351,7 +351,7 @@ export default function KLDrawingToolbar({
                 aria-haspopup="menu"
                 aria-label={`${GROUP_LABELS[group]}: ${tooltipText(DRAWING_TOOLS.find((t) => t.name === activeToolName)!)}`}
                 className={`flex h-8 w-8 items-center justify-center rounded transition-colors ${
-                  groupIsArmed ? 'bg-accent text-white' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+                  groupIsArmed ? 'bg-accent text-on-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text'
                 }`}
               >
                 {toolIcon(activeToolName)}
@@ -389,7 +389,7 @@ export default function KLDrawingToolbar({
                         role="menuitem"
                         onClick={() => activateTool(tool.name)}
                         aria-pressed={active}
-                        className={`${POPOVER_MENU_ROW} gap-2 ${active ? '!text-accent' : ''}`}
+                        className={`${POPOVER_MENU_ROW} gap-2 ${active ? '!text-accent-fg' : ''}`}
                       >
                         <span className="flex h-4 w-4 flex-none items-center justify-center">{toolIcon(tool.name)}</span>
                         <span className="flex-1 truncate">{tool.label}</span>
@@ -443,7 +443,7 @@ export default function KLDrawingToolbar({
                     role="menuitem"
                     onClick={() => activateTool(tool.name)}
                     aria-pressed={active}
-                    className={`${POPOVER_MENU_ROW} gap-2 ${active ? '!text-accent' : ''}`}
+                    className={`${POPOVER_MENU_ROW} gap-2 ${active ? '!text-accent-fg' : ''}`}
                   >
                     <span className="flex h-4 w-4 flex-none items-center justify-center">{toolIcon(tool.name)}</span>
                     <span className="flex-1 truncate">{tool.label}</span>
@@ -461,7 +461,7 @@ export default function KLDrawingToolbar({
             aria-pressed={magnetOn}
             aria-label="Magnet: snap drawing points to the nearest OHLC value"
             className={`flex h-8 w-8 items-center justify-center rounded transition-colors ${
-              magnetOn ? 'bg-accent text-white' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+              magnetOn ? 'bg-accent text-on-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text'
             }`}
           >
             <Magnet size={ICON_SIZE} />
@@ -481,7 +481,7 @@ export default function KLDrawingToolbar({
           >
             <Layers size={ICON_SIZE} />
             {drawings.length > 0 && (
-              <span className="tabular-nums absolute -bottom-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[11px] leading-none text-white">
+              <span className="tabular-nums absolute -bottom-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[11px] leading-none text-on-accent">
                 {drawings.length}
               </span>
             )}
@@ -509,7 +509,7 @@ export default function KLDrawingToolbar({
                         onClick={() => klChartRef.current?.setAllDrawingsVisible(!allVisible)}
                         title={allVisible ? 'Hide all drawings' : 'Show all drawings'}
                         aria-pressed={!allVisible}
-                        className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                        className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
                       >
                         {allVisible ? <Eye size={13} /> : <EyeOff size={13} />}
                       </button>
@@ -517,7 +517,7 @@ export default function KLDrawingToolbar({
                         onClick={() => klChartRef.current?.setAllDrawingsLocked(!allLocked)}
                         title={allLocked ? 'Unlock all drawings' : 'Lock all drawings'}
                         aria-pressed={allLocked}
-                        className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                        className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
                       >
                         {allLocked ? <Lock size={13} /> : <Unlock size={13} />}
                       </button>
@@ -554,7 +554,7 @@ export default function KLDrawingToolbar({
                                 klChartRef.current?.toggleDrawingVisible(d.id)
                               }}
                               title={hidden ? 'Show' : 'Hide'}
-                              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                              className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
                             >
                               {hidden ? <EyeOff size={13} /> : <Eye size={13} />}
                             </button>
@@ -564,7 +564,7 @@ export default function KLDrawingToolbar({
                                 klChartRef.current?.toggleDrawingLock(d.id)
                               }}
                               title={locked ? 'Unlock' : 'Lock'}
-                              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
+                              className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-text"
                             >
                               {locked ? <Lock size={13} /> : <Unlock size={13} />}
                             </button>
@@ -574,7 +574,7 @@ export default function KLDrawingToolbar({
                                 klChartRef.current?.removeDrawing(d.id)
                               }}
                               title="Delete"
-                              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-negative"
+                              className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-surface-2-hover hover:text-negative-fg"
                             >
                               <Trash2 size={13} />
                             </button>
@@ -589,7 +589,7 @@ export default function KLDrawingToolbar({
                         klChartRef.current?.clearDrawings()
                         setManageOpen(false)
                       }}
-                      className="text-text-muted hover:text-negative"
+                      className="text-text-muted hover:text-negative-fg"
                     >
                       Clear all
                     </button>

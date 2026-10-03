@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MIN_TEXT_CONTRAST, MIN_UI_CONTRAST, contrastRatio, ensureContrast, passesContrast } from './contrast'
+import { MIN_TEXT_CONTRAST, MIN_UI_CONTRAST, contrastRatio, ensureContrast, ensureTextVariant, passesContrast, pickOnAccent } from './contrast'
 
 describe('contrastRatio', () => {
   it('is 21 for pure black vs pure white', () => {
@@ -65,5 +65,20 @@ describe('ensureContrast', () => {
     const fixed = ensureContrast(bad, bg, MIN_TEXT_CONTRAST)
     expect(passesContrast(fixed, bg, MIN_TEXT_CONTRAST)).toBe(true)
     expect(fixed).not.toBe(bad)
+  })
+})
+
+describe('on-accent / text variants', () => {
+  it('pickOnAccent clears 4.5:1 for light, dark, and mid accents', () => {
+    for (const accent of ['#58a6ff', '#0969da', '#d29922', '#8b9bb4', '#ff0000', '#00ff00']) {
+      const fg = pickOnAccent(accent, '#ffffff', '#0d1117')
+      expect(contrastRatio(fg, accent)).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST)
+    }
+  })
+  it('ensureTextVariant fixes light-mode green/red, leaves dark defaults unchanged', () => {
+    for (const c of ['#3fb950', '#f85149']) {
+      expect(ensureTextVariant(c, '#0d1117')).toBe(c)
+      expect(contrastRatio(ensureTextVariant(c, '#f6f8fa'), '#f6f8fa')).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST)
+    }
   })
 })

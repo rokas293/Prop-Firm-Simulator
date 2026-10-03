@@ -118,7 +118,7 @@ export default function ChartLayoutMenu({
             <button
               onClick={onToggleSplitView}
               aria-pressed={splitView}
-              className={`h-6 rounded px-2 ${splitView ? 'bg-accent text-white' : 'bg-surface text-text hover:bg-surface-2-hover'}`}
+              className={`h-6 rounded px-2 ${splitView ? 'bg-accent text-on-accent' : 'bg-surface text-text hover:bg-surface-2-hover'}`}
             >
               {splitView ? 'On' : 'Off'}
             </button>
@@ -136,7 +136,7 @@ export default function ChartLayoutMenu({
                       onClick={() => onSecondaryTimeframeChange(tf)}
                       aria-pressed={secondaryTimeframe === tf}
                       className={`h-6 rounded px-2 ${
-                        secondaryTimeframe === tf ? 'bg-accent text-white' : 'bg-surface text-text hover:bg-surface-2-hover'
+                        secondaryTimeframe === tf ? 'bg-accent text-on-accent' : 'bg-surface text-text hover:bg-surface-2-hover'
                       }`}
                     >
                       {tf}
@@ -156,7 +156,7 @@ export default function ChartLayoutMenu({
                   title={BRACKET_TITLE[d]}
                   aria-pressed={bracketDensity === d}
                   className={`h-6 flex-1 rounded px-2 ${
-                    bracketDensity === d ? 'bg-accent text-white' : 'bg-surface text-text hover:bg-surface-2-hover'
+                    bracketDensity === d ? 'bg-accent text-on-accent' : 'bg-surface text-text hover:bg-surface-2-hover'
                   }`}
                 >
                   {BRACKET_LABEL[d]}

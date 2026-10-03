@@ -33,7 +33,7 @@ export default function SessionsListPage() {
   if (isError) {
     return (
       <div className="p-6">
-        <span className="text-negative">Failed to load sessions</span>
+        <span className="text-negative-fg">Failed to load sessions</span>
         <span className="text-text-muted">: {(error as Error).message}</span>
       </div>
     )
@@ -60,7 +60,7 @@ export default function SessionsListPage() {
             ))}
           <button
             onClick={() => setNewSessionOpen(true)}
-            className="h-8 rounded bg-accent px-3 text-xs text-white hover:opacity-90"
+            className="h-8 rounded bg-accent px-3 text-xs text-on-accent hover:opacity-90"
           >
             New session
           </button>
@@ -109,9 +109,9 @@ export default function SessionsListPage() {
                     <span
                       className={`ml-2 ${
                         session.prop_status.status === 'passed'
-                          ? 'text-positive'
+                          ? 'text-positive-fg'
                           : session.prop_status.status === 'failed'
-                            ? 'text-negative'
+                            ? 'text-negative-fg'
                             : 'text-text-muted'
                       }`}
                     >
@@ -135,7 +135,7 @@ export default function SessionsListPage() {
                       selectRun(manualRunId(session.id))
                     }}
                     onKeyDown={(e) => e.stopPropagation()}
-                    className="rounded px-2 py-1 text-xs text-text-muted opacity-0 hover:bg-surface-2 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
+                    className="h-7 rounded px-2 text-xs text-text-muted opacity-0 hover:bg-surface-2 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
                   >
                     Analytics
                   </button>

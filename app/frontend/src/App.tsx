@@ -84,7 +84,7 @@ export default function App() {
                   if (isManualRunId(selectedRunId)) setLandingTabFromRun('sessions')
                   selectRun(null)
                 }}
-                className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
+                className="h-7 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
               >
                 &larr; {isManualRunId(selectedRunId) ? 'Sessions' : 'Runs'}
               </button>
@@ -100,7 +100,7 @@ export default function App() {
               {run?.source === 'manual' && run.session_ids?.length === 1 && (
                 <button
                   onClick={() => selectSession(run.session_ids![0])}
-                  className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
+                  className="h-7 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
                 >
                   Open session
                 </button>
@@ -112,7 +112,7 @@ export default function App() {
               <div className="h-4 w-px bg-surface-2" />
               <button
                 onClick={() => selectSession(null)}
-                className="rounded bg-surface-2 px-2 py-1 text-xs text-text hover:bg-surface-2-hover"
+                className="h-7 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
               >
                 &larr; Sessions
               </button>
@@ -124,7 +124,7 @@ export default function App() {
             onClick={togglePerf}
             title="Toggle the perf HUD (render/fetch timings)"
             className={`ml-auto h-7 rounded px-2 text-xs transition-colors ${
-              perfEnabled ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-2-hover'
+              perfEnabled ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text-muted hover:bg-surface-2-hover'
             }`}
           >
             Perf
@@ -139,7 +139,7 @@ export default function App() {
           <span className="text-xs text-text-muted">
             {/* Keycap padding matches ShortcutsList (px-1 py-1). */}
             <kbd className="rounded border border-border px-1 py-1">Ctrl/Cmd K</kbd> commands &middot;{' '}
-            <button onClick={() => setShortcutsOpen(true)} className="rounded border border-border px-1 py-1 hover:border-border-hover hover:text-text">
+            <button onClick={() => setShortcutsOpen(true)} className="inline-flex h-7 w-7 items-center justify-center rounded border border-border hover:border-border-hover hover:text-text">
               ?
             </button>{' '}
             shortcuts

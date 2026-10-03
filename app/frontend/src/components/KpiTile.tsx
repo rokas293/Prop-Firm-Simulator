@@ -24,7 +24,7 @@ export default function KpiTile({
           treatments -- 18px here and 36px/bold there). */}
       <div
         className={`text-[20px] font-medium tabular-nums ${
-          accent === undefined ? 'text-text' : accent ? 'text-positive' : 'text-negative'
+          accent === undefined ? 'text-text' : accent ? 'text-positive-fg' : 'text-negative-fg'
         }`}
       >
         {value}

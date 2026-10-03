@@ -23,7 +23,7 @@ export default function EquitySparkline({ runId, onViewFull }: { runId: string |
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs text-text-muted">Equity (full run)</span>
         {onViewFull && (
-          <button onClick={onViewFull} className="text-xs text-accent hover:text-text">
+          <button onClick={onViewFull} className="text-xs text-accent-fg hover:text-text">
             View full chart &rarr;
           </button>
         )}

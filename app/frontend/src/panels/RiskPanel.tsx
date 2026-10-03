@@ -7,7 +7,8 @@ import { CHART_PANEL_ID } from '../workspace/panelIds'
 import { fmtUsdWhole as fmtUsd } from '../format'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
-import { useThemeStore, useThemeBase } from '../state/themeStore'
+import { useThemeStore, useThemeBase, type ThemeMode } from '../state/themeStore'
+import { MIN_UI_CONTRAST, ensureContrast } from '../state/contrast'
 import { hexToRgba } from '../chart/color'
 import type { DailyRiskPoint } from '../api/types'
 
@@ -34,7 +35,9 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
   const jumpToTradingDay = useUiStore((s) => s.jumpToTradingDay)
   const chartRef = useRef<RiskChartHandle>(null)
   const colors = useThemeStore((s) => s.colors)
+  const mode = useThemeStore((s) => s.mode)
   const base = useThemeBase()
+  const segmentColor = (d: DailyRiskPoint) => riskColor(d, colors.positive, colors.negative, base.textMuted)
 
   const { data: run } = useRun(runId)
   const { data: equity } = useEquity(runId, RISK_EQUITY_MAX_POINTS)
@@ -93,7 +96,7 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
         <Legend swatch={colors.positive} label="Profit target" dashed />
         <Legend swatch={hexToRgba(colors.negative, 0.35)} label="Distance-to-breach band" />
         {breachDay && (
-          <span className="ml-auto text-negative">
+          <span className="ml-auto text-negative-fg">
             Breached {breachDay.trading_day} (<span className="tabular-nums">{fmtUsd(breachDay.min_distance_to_mll_usd)}</span>)
           </span>
         )}
@@ -122,7 +125,7 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
                 d.daily_locked ? ' – daily loss lock triggered' : ''
               }${d.breached ? ' – BREACHED' : ''} – ${d.trades} trade${d.trades === 1 ? '' : 's'}`}
               className="relative min-w-1 flex-1 cursor-pointer transition-opacity hover:opacity-75"
-              style={{ background: hexToRgba(riskColor(d, colors.positive, colors.negative, base.textMuted), 0.5) }}
+              style={{ background: stripFill(segmentColor(d), mode, base.bg, segmentColor(d) === colors.positive) }}
             >
               {d.daily_locked && (
                 <span className="absolute inset-x-0 top-0 h-1 bg-text-muted" title="Daily loss lock triggered" />
@@ -133,6 +136,16 @@ export default function RiskPanel({ containerApi }: IDockviewPanelProps) {
       </div>
     </div>
   )
+}
+
+// Day-strip fill. Dark keeps the original 50% tint. Light: a 50% tint of
+// green/red over a light panel is ~1.6:1, so use the full-alpha color nudged
+// to >= 3:1 (WCAG non-text) against the panel; hues stay distinct.
+function stripFill(color: string, mode: ThemeMode, bg: string, isSafe: boolean): string {
+  if (mode === 'dark') return hexToRgba(color, 0.5)
+  // Safe is pushed darker than breach so green/red differ in lightness too
+  // (not hue alone).
+  return ensureContrast(color, bg, isSafe ? 4.5 : MIN_UI_CONTRAST)
 }
 
 function Legend({

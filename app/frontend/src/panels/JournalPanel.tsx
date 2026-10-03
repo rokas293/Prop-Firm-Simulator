@@ -168,7 +168,7 @@ export default function JournalPanel({
         <button
           onClick={onClose}
           aria-label="Close journal"
-          className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text"
+          className="h-7 rounded px-2 text-xs text-text-muted hover:bg-surface-2 hover:text-text"
         >
           Close
         </button>
@@ -304,7 +304,7 @@ export default function JournalPanel({
               >
                 <span className="whitespace-nowrap tabular-nums text-text-muted">{fmtEtShort(t.entry_time)}</span>
                 <span className="text-text-muted">{t.side}</span>
-                <span className={`num ml-auto ${t.pnl_usd >= 0 ? 'text-positive' : 'text-negative'}`}>{fmtUsd(t.pnl_usd)}</span>
+                <span className={`num ml-auto ${t.pnl_usd >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>{fmtUsd(t.pnl_usd)}</span>
                 <span className="num w-12 text-text-muted">{fmtR(t.r_multiple)}</span>
                 <span className="w-4 text-center text-text-muted">{t.grade ?? ''}</span>
               </div>
@@ -352,7 +352,7 @@ export default function JournalPanel({
                     onClick={() => toggleGrade(g)}
                     aria-pressed={selected.grade === g}
                     className={`h-7 w-7 rounded text-xs ${
-                      selected.grade === g ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                      selected.grade === g ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                     }`}
                   >
                     {g}

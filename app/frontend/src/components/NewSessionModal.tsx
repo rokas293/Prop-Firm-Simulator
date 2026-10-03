@@ -78,7 +78,7 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h2 className="text-base font-medium text-text">New session</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
+          <button onClick={onClose} className="h-7 rounded px-2 text-xs text-text-muted hover:bg-surface-2 hover:text-text">
             Esc to close
           </button>
         </div>
@@ -92,8 +92,8 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
                   key={sym}
                   onClick={() => setInstrument(sym)}
                   aria-pressed={instrument === sym}
-                  className={`h-8 rounded px-3 text-xs ${
-                    instrument === sym ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                  className={`h-7 rounded px-3 text-xs ${
+                    instrument === sym ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                   }`}
                 >
                   {sym}
@@ -110,8 +110,8 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
                   key={tf}
                   onClick={() => setBaseTimeframe(tf)}
                   aria-pressed={baseTimeframe === tf}
-                  className={`h-8 rounded px-3 text-xs ${
-                    baseTimeframe === tf ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                  className={`h-7 rounded px-3 text-xs ${
+                    baseTimeframe === tf ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                   }`}
                 >
                   {tf}
@@ -193,17 +193,17 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
           </label>
 
           {createSession.isError && (
-            <div className="text-xs text-negative">{(createSession.error as Error).message}</div>
+            <div className="text-xs text-negative-fg">{(createSession.error as Error).message}</div>
           )}
 
           <div className="flex justify-end gap-2 border-t border-border pt-3">
-            <button onClick={onClose} className="h-8 rounded bg-surface-2 px-3 text-xs text-text hover:bg-surface-2-hover">
+            <button onClick={onClose} className="h-7 rounded bg-surface-2 px-3 text-xs text-text hover:bg-surface-2-hover">
               Cancel
             </button>
             <button
               onClick={handleCreate}
               disabled={!canSubmit || createSession.isPending}
-              className="h-8 rounded bg-accent px-3 text-xs text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-7 rounded bg-accent px-3 text-xs text-on-accent disabled:cursor-not-allowed disabled:opacity-40"
             >
               {createSession.isPending ? 'Creating…' : 'Create session'}
             </button>

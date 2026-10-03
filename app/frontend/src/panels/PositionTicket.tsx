@@ -86,14 +86,14 @@ export default function PositionTicket({
       <button
         onClick={onBuy}
         disabled={disabled || !flat}
-        className="rounded bg-positive/15 px-3 h-7 text-positive hover:bg-positive/25 disabled:opacity-40"
+        className="rounded bg-positive/15 px-3 h-7 text-positive-fg hover:bg-positive/25 disabled:opacity-40"
       >
         Buy
       </button>
       <button
         onClick={onSell}
         disabled={disabled || !flat}
-        className="rounded bg-negative/15 px-3 h-7 text-negative hover:bg-negative/25 disabled:opacity-40"
+        className="rounded bg-negative/15 px-3 h-7 text-negative-fg hover:bg-negative/25 disabled:opacity-40"
       >
         Sell
       </button>
@@ -173,7 +173,7 @@ export default function PositionTicket({
           )}
           <span>
             PnL:{' '}
-            <span className={`tabular-nums ${position.pnlUsd >= 0 ? 'text-positive' : 'text-negative'}`}>
+            <span className={`tabular-nums ${position.pnlUsd >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>
               {fmtUsd(position.pnlUsd)}
             </span>
           </span>

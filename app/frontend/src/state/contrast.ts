@@ -100,3 +100,40 @@ export function ensureContrast(hex: string, bgHex: string, minRatio: number): st
   }
   return hslToHex(h, s, lightness)
 }
+
+// Linear blend of two hexes (`t` = share of `overHex`), used to approximate a
+// translucent tint (`bg-positive/15`) sitting on a base color.
+export function mixHex(baseHex: string, overHex: string, t: number): string {
+  const [br, bg, bb] = hexToRgb(baseHex)
+  const [or, og, ob] = hexToRgb(overHex)
+  return rgbToHex(br + (or - br) * t, bg + (og - bg) * t, bb + (ob - bb) * t)
+}
+
+// Foreground for text sitting ON an accent fill: whichever of the two
+// candidates contrasts more with the accent. The better of white/near-black
+// always clears 4.5:1 for any fill (worst case ~4.58), so MIN_TEXT_CONTRAST
+// holds for any user-tuned accent.
+export function pickOnAccent(accentHex: string, lightHex: string, darkHex: string): string {
+  return contrastRatio(lightHex, accentHex) >= contrastRatio(darkHex, accentHex) ? lightHex : darkHex
+}
+
+// Text variant of a semantic color (positive/negative): the color itself if
+// it already reads at MIN_TEXT_CONTRAST on both the base bg and a 15% tint of
+// itself over that bg (the Buy/Sell badge recipe), else the nearest
+// lightness shift that does.
+export function ensureTextVariant(hex: string, bgHex: string, minRatio: number = MIN_TEXT_CONTRAST): string {
+  const tinted = mixHex(bgHex, hex, 0.15)
+  const ok = (c: string) => passesContrast(c, bgHex, minRatio) && passesContrast(c, tinted, minRatio)
+  if (ok(hex)) return hex
+  const bgIsLight = relativeLuminance(bgHex) > 0.5
+  const [h, s, l] = hexToHsl(hex)
+  const step = bgIsLight ? -0.02 : 0.02
+  let lightness = l
+  for (let i = 0; i < 50; i++) {
+    lightness = Math.max(0, Math.min(1, lightness + step))
+    const candidate = hslToHex(h, s, lightness)
+    if (ok(candidate)) return candidate
+    if (lightness === 0 || lightness === 1) break
+  }
+  return hslToHex(h, s, lightness)
+}

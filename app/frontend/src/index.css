@@ -53,6 +53,13 @@
   --color-negative: #f85149;
   --color-up-candle: #3fb950;
   --color-down-candle: #f85149;
+  /* Derived at runtime by applyThemeToDocument (themeStore.resolveTextTokens):
+     on-accent = white/near-black by contrast with the live accent; *-fg = the
+     positive/negative hue shifted per mode to clear 4.5:1 as text. */
+  --color-on-accent: #0d1117;
+  --color-positive-fg: #3fb950;
+  --color-negative-fg: #f85149;
+  --color-accent-fg: #58a6ff;
 
   --color-session-asia: #a371f7;
   --color-session-london: #58a6ff;
@@ -523,12 +530,12 @@ input[type='range'] {
 input[type='range']::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
-  background: var(--color-surface-2-hover);
+  background: color-mix(in srgb, var(--color-text-muted) 70%, transparent);
 }
 input[type='range']::-moz-range-track {
   height: 4px;
   border-radius: 2px;
-  background: var(--color-surface-2-hover);
+  background: color-mix(in srgb, var(--color-text-muted) 70%, transparent);
 }
 input[type='range']::-webkit-slider-thumb {
   appearance: none;
@@ -538,7 +545,7 @@ input[type='range']::-webkit-slider-thumb {
   margin-top: -4px;
   border: 0;
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--color-accent-fg);
   transition: box-shadow 120ms ease;
 }
 input[type='range']::-moz-range-thumb {
@@ -546,7 +553,7 @@ input[type='range']::-moz-range-thumb {
   height: 12px;
   border: 0;
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--color-accent-fg);
 }
 input[type='range']:hover::-webkit-slider-thumb {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 25%, transparent);

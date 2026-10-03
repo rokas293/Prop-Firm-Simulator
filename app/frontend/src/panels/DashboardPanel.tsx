@@ -165,7 +165,7 @@ function ScoreCard({ score }: { score: CompassScore }) {
                   the tab competing at the same weight). */}
               <span
                 className={`text-sm font-medium tabular-nums ${
-                  c.score >= 67 ? 'text-positive' : c.score >= 34 ? 'text-warning' : 'text-negative'
+                  c.score >= 67 ? 'text-positive-fg' : c.score >= 34 ? 'text-warning' : 'text-negative-fg'
                 }`}
               >
                 {c.score}
@@ -327,7 +327,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
                 onClick={() => setScope(s.key)}
                 aria-pressed={scope === s.key}
                 className={`rounded px-3 py-1 text-sm ${
-                  scope === s.key ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                  scope === s.key ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
                 }`}
               >
                 {s.label}
@@ -340,9 +340,9 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
           </>
         )}
         {hasActiveFilter && (
-          <span className="flex items-center gap-1 rounded bg-accent/15 px-2 py-1 text-xs text-accent">
+          <span className="flex items-center gap-1 rounded bg-accent/15 px-2 py-1 text-xs text-accent-fg">
             Trade List + Chart{manual ? ' + Journal' : ''} filtered by {activeFilterDescription}
-            <button onClick={clearFilters} aria-label="Clear filter" className="text-accent hover:text-text">
+            <button onClick={clearFilters} aria-label="Clear filter" className="text-accent-fg hover:text-text">
               &times;
             </button>
           </span>
@@ -671,7 +671,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
               <button
                 onClick={() => runId && summarizeMutation.mutate({ runId, scope })}
                 disabled={!aiStatusQuery.data?.available || summarizeMutation.isPending}
-                className="rounded bg-accent px-3 py-1 text-xs text-white disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-muted"
+                className="rounded bg-accent px-3 py-1 text-xs text-on-accent disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-muted"
               >
                 {summarizeMutation.isPending ? 'Summarizing…' : 'Summarize this run'}
               </button>
@@ -682,7 +682,7 @@ export default function DashboardPanel({ containerApi }: IDockviewPanelProps) {
                 (never raw trades or bars) to Claude for a short plain-English read.
               </p>
             )}
-            {summarizeMutation.isError && <p className="text-xs text-negative">{(summarizeMutation.error as Error).message}</p>}
+            {summarizeMutation.isError && <p className="text-xs text-negative-fg">{(summarizeMutation.error as Error).message}</p>}
             {summarizeMutation.data && <p className="whitespace-pre-line text-sm text-text">{summarizeMutation.data.summary}</p>}
           </Card>
         </div>

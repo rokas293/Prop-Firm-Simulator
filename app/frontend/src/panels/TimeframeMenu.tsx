@@ -54,7 +54,7 @@ export default function TimeframeMenu({
           onClick={() => onChange(tf)}
           aria-pressed={value === tf}
           className={`h-7 rounded px-2 text-xs ${
-            value === tf ? 'bg-accent text-white' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+            value === tf ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
           }`}
         >
           {tf}
@@ -87,7 +87,7 @@ export default function TimeframeMenu({
                   onChange(tf)
                   setOpen(false)
                 }}
-                className={`${POPOVER_MENU_ROW} justify-between ${value === tf ? '!text-accent' : ''}`}
+                className={`${POPOVER_MENU_ROW} justify-between ${value === tf ? '!text-accent-fg' : ''}`}
               >
                 {LABELS[tf] ?? tf}
               </button>

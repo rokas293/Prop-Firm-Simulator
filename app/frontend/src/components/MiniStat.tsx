@@ -10,7 +10,7 @@ export default function MiniStat({ label, value, accent }: { label: string; valu
   return (
     <div>
       <div className="micro-label">{label}</div>
-      <div className={`tabular-nums text-sm font-medium ${accent === undefined ? 'text-text' : accent ? 'text-positive' : 'text-negative'}`}>
+      <div className={`tabular-nums text-sm font-medium ${accent === undefined ? 'text-text' : accent ? 'text-positive-fg' : 'text-negative-fg'}`}>
         {value}
       </div>
     </div>
