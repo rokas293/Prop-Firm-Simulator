@@ -16,3 +16,13 @@ app/frontend/dist/
 *.tsbuildinfo
 *.local
 .claude/settings.local.json
+
+# Market data and secrets stay out of git (supply your own data; see README)
+*.parquet
+*.dbn
+*.csv
+data/
+.env
+.env.*
+*.pem
+*.key

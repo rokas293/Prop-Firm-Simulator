@@ -40,6 +40,22 @@ Open **http://localhost:5173**, go to the **Sessions** tab and choose **New
 session**. Sessions are stored in `bt_sessions/`; set `PROPBT_BT_SESSIONS_DIR`
 to keep them elsewhere (handy for experiments). More in `app/README.md`.
 
+## Market data (not included)
+
+Market data is not part of this repository -- supply your own 1-minute bars
+(for example from Databento) as parquet files in the **project root**, with
+the names in `propbt/config/data.yaml`:
+
+- `MES_1m.parquet`
+- `MNQ_1m.parquet`
+- `ZN_1m.parquet` (only the automated-backtest side uses ZN)
+
+Each file is indexed by `ts_event` (UTC) with `open`, `high`, `low`, `close`
+and `volume` columns. The news-spike leg also reads an event calendar,
+`news_events.csv` (columns `timestamp_utc,event,impact`), from the project root (path set in
+`propbt/config/strategy.yaml`). `*.parquet`, `*.csv` and `*.dbn` are
+git-ignored so these files can't be committed by accident.
+
 ## Screenshots
 
 _Placeholder: add screenshots here (sessions list, session workspace with the
