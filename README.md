@@ -1,9 +1,56 @@
-# propbt
+# FXR manual backtesting platform (MNQ / MES)
 
-Backtesting/research framework for validating an intraday futures strategy
-against the Topstep $50k Combine rules. See `CLAUDE.md` for the full design
-and `BUILD_PROMPTS.md` for the phased build plan. This is Phase 0: data
-layer only (loader, resample, sessions) -- no engine or strategy yet.
+An FX Replay-style platform for manually backtesting, journaling and analyzing
+trades on MNQ and MES futures, built on top of `propbt`, an automated backtest
+engine that validates a strategy against the Topstep $50k Combine rules
+(`CLAUDE.md`, `FXR_SPEC.md`).
+
+## What it does
+
+- **Replay sessions.** Pick MNQ or MES, a timeframe and a start time (or a
+  random one) and step or play through history. Future bars are never shown or
+  fillable.
+- **Simulated broker.** Market buy/sell, a drag-to-place entry/SL/TP ticket,
+  right-click limit/stop orders, partial closes, break-even and trailing, with
+  auto position sizing and commissions. Fills are deterministic from the bars
+  up to the cursor.
+- **Discipline tools.** Random start, an optional lock that stops the replay
+  going back past a placed trade, and a bar magnifier that shows the 1-minute
+  bars inside a revealed bar (never past the cursor).
+- **Topstep Combine sim.** Optionally judge a session against the profit
+  target, trailing max loss, daily loss limit, consistency rule and the
+  5-contract cap.
+- **Journal.** Every closed trade is logged with notes, tags, setup, grade and
+  screenshots, and you can jump the chart back to any trade.
+- **Analytics.** Stats, equity, drawdown and heat, breakdowns, trade-sequence
+  Monte Carlo and the Combine verdict, per session or pooled per instrument.
+- **Keyboard.** Shift+B / Shift+S / Shift+C trade, Space plays, `.` steps; press
+  `?` in the app for the full list.
+
+## Run the platform
+
+```bash
+pip install -e ".[dev]"            # once (see Setup below)
+npm install                        # once, project root
+npm --prefix app/frontend install  # once
+npm run dev                        # backend :8000 + frontend :5173
+```
+
+Open **http://localhost:5173**, go to the **Sessions** tab and choose **New
+session**. Sessions are stored in `bt_sessions/`; set `PROPBT_BT_SESSIONS_DIR`
+to keep them elsewhere (handy for experiments). More in `app/README.md`.
+
+## Screenshots
+
+_Placeholder: add screenshots here (sessions list, session workspace with the
+trade ticket, journal, analytics)._
+
+<!-- ![Session workspace](docs/img/workspace.png) -->
+
+## The propbt engine
+
+`propbt` is the automated backtest engine underneath. `python run.py review`
+writes run bundles that the same app can review under the **Runs** tab.
 
 ## Setup
 
