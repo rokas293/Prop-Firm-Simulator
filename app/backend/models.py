@@ -239,6 +239,8 @@ class CreateSessionRequest(BaseModel):
     default_contracts: int = 1
     commission_per_contract: float = 1.0
     prop_ruleset: Optional[str] = None
+    # FXR_SPEC.md section F, phase F7b: "no rewind past a placed trade".
+    discipline_lock: bool = False
 
 
 # --- FXR_SPEC.md section B/3, phase F4: the sim broker's open position and
@@ -301,6 +303,12 @@ class BacktestSessionSummary(BaseModel):
     # from any one trade's own notes below). Optional/defaulted so every
     # session.json written before F5 still validates unchanged.
     notes: Optional[str] = None
+    # FXR_SPEC.md section F, phase F7b: the optional discipline lock. Once a
+    # trade (a position or a working order) has been placed, `lock_floor_time`
+    # is the cursor time it was placed at, and the cursor can never be saved
+    # before it. Optional/defaulted so every earlier session.json validates.
+    discipline_lock: bool = False
+    lock_floor_time: Optional[int] = None
     # Filled only by GET /bt-sessions (the list), for prop sessions.
     prop_status: Optional[PropStatus] = None
 

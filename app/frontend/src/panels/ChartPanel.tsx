@@ -491,7 +491,7 @@ export default function ChartPanel() {
         // separate handler.
         if (useUiStore.getState().distractionFree) toggleDistractionFree()
         setPickingReplayStart(false)
-      } else if (!e.ctrlKey && !e.metaKey && DRAWING_SHORTCUTS[e.key.toLowerCase()]) {
+      } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey && DRAWING_SHORTCUTS[e.key.toLowerCase()]) {
         e.preventDefault()
         klChartRef.current?.startDrawing(DRAWING_SHORTCUTS[e.key.toLowerCase()])
       } else {

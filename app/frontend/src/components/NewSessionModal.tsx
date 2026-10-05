@@ -37,6 +37,9 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
   // trades in its analytics. Locks the balance to the ruleset's own $50k;
   // the backend rejects any other balance.
   const [topstep, setTopstep] = useState(false)
+  // FXR_SPEC.md phase F7b: once a trade is placed the replay cannot go back
+  // past it (step, scrub or re-set start) -- enforced by the backend too.
+  const [disciplineLock, setDisciplineLock] = useState(false)
 
   if (!open) return null
 
@@ -56,6 +59,7 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
         default_contracts: defaultContracts,
         commission_per_contract: commission,
         prop_ruleset: topstep ? 'topstep_50k' : null,
+        discipline_lock: disciplineLock,
       },
       {
         onSuccess: (session) => {
@@ -189,6 +193,16 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
               <br />
               Judges this session against the profit target, trailing max loss, daily loss limit and consistency rule.
               Locks the balance to $50,000.
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 text-xs text-text-muted">
+            <input type="checkbox" checked={disciplineLock} onChange={(e) => setDisciplineLock(e.target.checked)} className="mt-1" />
+            <span>
+              <span className="text-text">Discipline lock</span>
+              <br />
+              No rewind past a placed trade: once you place a trade, the replay cannot step back, scrub or reset its
+              start to before it.
             </span>
           </label>
 

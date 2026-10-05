@@ -9,13 +9,15 @@ import CommandPalette from './workspace/CommandPalette'
 import KeyboardShortcuts from './workspace/KeyboardShortcuts'
 import PerfHud from './components/PerfHud'
 import ShortcutsOverlay from './components/ShortcutsOverlay'
+import { OnboardingDialog } from './components/OnboardingGuide'
+import { Lock } from 'lucide-react'
 import SettingsPanel from './components/SettingsPanel'
 import LiveRegion from './components/LiveRegion'
 import { useUiStore } from './state/uiStore'
 import { isManualRunId } from './api/types'
 import { usePerfStore } from './state/perfStore'
 import { applyThemeToDocument, useThemeBase, useThemeStore } from './state/themeStore'
-import { isShortcut } from './keyboard/shortcuts'
+import { isShortcut, isTypingTarget } from './keyboard/shortcuts'
 
 export default function App() {
   const selectedRunId = useUiStore((s) => s.selectedRunId)
@@ -50,9 +52,7 @@ export default function App() {
   // both live at this top level rather than inside any one panel.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      const tag = target?.tagName
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+      if (isTypingTarget(e.target)) return
 
       if (isShortcut(e, 'showShortcuts')) {
         e.preventDefault()
@@ -118,6 +118,19 @@ export default function App() {
               </button>
               <span className="font-mono text-xs text-text-muted">{selectedSessionId}</span>
               {btSession && <span className="text-xs text-text-muted">{btSession.instrument}</span>}
+              {btSession?.discipline_lock && (
+                <span
+                  className="flex h-7 items-center gap-1 text-xs text-text-muted"
+                  title={
+                    btSession.lock_floor_time === null
+                      ? 'Discipline lock: once you place a trade, the replay cannot go back past it.'
+                      : 'Discipline lock engaged: the replay cannot go back past your first placed trade.'
+                  }
+                >
+                  <Lock size={14} aria-hidden />
+                  Discipline lock{btSession.lock_floor_time === null ? '' : ' · engaged'}
+                </span>
+              )}
             </>
           )}
           <button
@@ -196,6 +209,7 @@ export default function App() {
       <KeyboardShortcuts />
       <PerfHud />
       <LiveRegion />
+      <OnboardingDialog />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

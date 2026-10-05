@@ -15,6 +15,7 @@ export interface Combo {
   code?: string // matched against KeyboardEvent.code (layout-independent -- used for digit shortcuts)
   shift?: boolean
   ctrlOrMeta?: boolean
+  alt?: boolean
 }
 
 export interface ShortcutDef {
@@ -22,12 +23,13 @@ export interface ShortcutDef {
   combos: Combo[]
   label: string
   description: string
-  category: 'Chart' | 'Panels' | 'Global' | 'Drawing'
+  category: 'Chart' | 'Panels' | 'Global' | 'Drawing' | 'Session'
 }
 
 export function matchesCombo(e: KeyboardEvent, combo: Combo): boolean {
   if (combo.shift !== undefined && e.shiftKey !== combo.shift) return false
   if (combo.ctrlOrMeta !== undefined && (e.ctrlKey || e.metaKey) !== combo.ctrlOrMeta) return false
+  if (combo.alt !== undefined && e.altKey !== combo.alt) return false
   if (combo.code) return e.code === combo.code
   if (combo.key) return e.key.toLowerCase() === combo.key.toLowerCase()
   return false
@@ -76,51 +78,105 @@ export const DRAWING_SHORTCUTS: Record<string, string> = {
 
 const DRAWING_TOOL_SHORTCUTS: ShortcutDef[] = Object.entries(DRAWING_SHORTCUTS).map(([key, toolName]) => ({
   id: `draw-${toolName}`,
-  combos: [{ key }],
+  combos: [{ key, shift: false }],
   label: key.toUpperCase(),
   description: `Draw: ${DRAWING_TOOLS.find((t) => t.name === toolName)?.label ?? toolName}`,
   category: 'Drawing' as const,
 }))
 
+
+// FXR_SPEC.md phase F7b: trading + replay hotkeys for the manual session
+// workspace. Dispatched by keyboard/useSessionHotkeys.ts, listed here so the
+// "?" overlay shows them and the registry's conflict test covers them.
+//
+// Trading actions (buy / sell / close / close half / New Trade) REQUIRE Shift,
+// so a stray letter can never place an order -- and, since the drawing keys
+// (h/t/z/m/b) and chart keys (n/s/...) are pinned to shift:false above, the
+// Shift+letter space is free. Ctrl/Meta/Alt are excluded on all of them so a
+// browser chord (Ctrl+Shift+C = inspect element) never doubles as an order.
+// Replay-flow keys (step, play/pause, speed) are plain, since they can't
+// place or change an order.
+const TRADE_MODS = { shift: true, ctrlOrMeta: false, alt: false } as const
+const PLAIN_MODS = { shift: false, ctrlOrMeta: false, alt: false } as const
+
+export const SESSION_SHORTCUT_IDS = [
+  'sessionBuy',
+  'sessionSell',
+  'sessionClose',
+  'sessionCloseHalf',
+  'sessionNewTrade',
+  'sessionStep',
+  'sessionStepBack',
+  'sessionPlayPause',
+  'sessionSpeedUp',
+  'sessionSpeedDown',
+] as const
+export type SessionHotkeyAction = (typeof SESSION_SHORTCUT_IDS)[number]
+
+const SESSION_SHORTCUTS: ShortcutDef[] = [
+  { id: 'sessionBuy', combos: [{ key: 'b', ...TRADE_MODS }], label: 'Shift+B', description: 'Buy at market (session replay)', category: 'Session' },
+  { id: 'sessionSell', combos: [{ key: 's', ...TRADE_MODS }], label: 'Shift+S', description: 'Sell at market (session replay)', category: 'Session' },
+  { id: 'sessionClose', combos: [{ key: 'c', ...TRADE_MODS }], label: 'Shift+C', description: 'Close the open position', category: 'Session' },
+  { id: 'sessionCloseHalf', combos: [{ key: 'h', ...TRADE_MODS }], label: 'Shift+H', description: 'Close half the open position', category: 'Session' },
+  { id: 'sessionNewTrade', combos: [{ key: 'n', ...TRADE_MODS }], label: 'Shift+N', description: 'New Trade: open the entry / SL / TP ticket', category: 'Session' },
+  { id: 'sessionStep', combos: [{ key: '.', ...PLAIN_MODS }], label: '.', description: 'Step the replay forward one bar', category: 'Session' },
+  { id: 'sessionStepBack', combos: [{ key: ',', ...PLAIN_MODS }], label: ',', description: 'Step the replay back one bar (blocked by the discipline lock)', category: 'Session' },
+  { id: 'sessionPlayPause', combos: [{ key: ' ', ...PLAIN_MODS }], label: 'Space', description: 'Play / pause the replay', category: 'Session' },
+  { id: 'sessionSpeedUp', combos: [{ code: 'BracketRight', ...PLAIN_MODS }], label: ']', description: 'Replay speed up', category: 'Session' },
+  { id: 'sessionSpeedDown', combos: [{ code: 'BracketLeft', ...PLAIN_MODS }], label: '[', description: 'Replay speed down', category: 'Session' },
+]
+
+export function sessionHotkeyAction(e: KeyboardEvent): SessionHotkeyAction | null {
+  return SESSION_SHORTCUT_IDS.find((id) => isShortcut(e, id)) ?? null
+}
+
+// Keys must never act while the user is typing (or, for Space on a focused
+// button/link, while the browser is about to activate it natively).
+export function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  const tag = el?.tagName
+  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || !!el?.isContentEditable
+}
+
 export const SHORTCUTS: ShortcutDef[] = [
   {
     id: 'nextTrade',
-    combos: [{ key: 'ArrowRight' }, { key: 'n' }],
+    combos: [{ key: 'ArrowRight' }, { key: 'n', shift: false }],
     label: '→ / N',
     description: 'Select the next trade',
     category: 'Chart',
   },
   {
     id: 'prevTrade',
-    combos: [{ key: 'ArrowLeft' }, { key: 'p' }],
+    combos: [{ key: 'ArrowLeft' }, { key: 'p', shift: false }],
     label: '← / P',
     description: 'Select the previous trade',
     category: 'Chart',
   },
   {
     id: 'toggleReplay',
-    combos: [{ key: 'r' }],
+    combos: [{ key: 'r', shift: false }],
     label: 'R',
     description: 'Toggle replay mode',
     category: 'Chart',
   },
   {
     id: 'fitTrade',
-    combos: [{ key: 'f' }],
+    combos: [{ key: 'f', shift: false }],
     label: 'F',
     description: 'Ease the chart viewport to the selected trade',
     category: 'Chart',
   },
   {
     id: 'toggleFullscreen',
-    combos: [{ key: 'd' }],
+    combos: [{ key: 'd', shift: false }],
     label: 'D',
     description: 'Toggle distraction-free (full-screen) chart mode',
     category: 'Chart',
   },
   {
     id: 'setReplayStart',
-    combos: [{ key: 's' }],
+    combos: [{ key: 's', shift: false }],
     label: 'S',
     description: 'Arm "click a bar to set the replay start point" (replay must be active)',
     category: 'Chart',
@@ -142,6 +198,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   ...TIMEFRAME_SHORTCUTS,
   ...PANEL_TOGGLE_SHORTCUTS,
   ...DRAWING_TOOL_SHORTCUTS,
+  ...SESSION_SHORTCUTS,
   {
     id: 'openPalette',
     combos: [{ key: 'k', ctrlOrMeta: true }],

@@ -243,7 +243,7 @@ const INDICATOR_LABEL: Record<ColorableIndicatorKey, string> = {
 // v10.0.3 type declarations) -- the canvas is transparent and the visible
 // background is the container div's own CSS (bg-bg, set on the wrapper
 // below), same as every other panel.
-function themeStyles(colors: ThemeColors, base: ThemeBase) {
+export function themeStyles(colors: ThemeColors, base: ThemeBase) {
   return {
     grid: {
       horizontal: { color: base.grid },

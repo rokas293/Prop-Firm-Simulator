@@ -4,7 +4,7 @@
 // registry into rows, not two that could drift in presentation.
 import { SHORTCUTS, type ShortcutDef } from '../keyboard/shortcuts'
 
-const CATEGORY_ORDER: ShortcutDef['category'][] = ['Global', 'Chart', 'Drawing', 'Panels']
+const CATEGORY_ORDER: ShortcutDef['category'][] = ['Global', 'Session', 'Chart', 'Drawing', 'Panels']
 
 function groupByCategory(defs: ShortcutDef[]): [ShortcutDef['category'], ShortcutDef[]][] {
   return CATEGORY_ORDER.map((cat): [ShortcutDef['category'], ShortcutDef[]] => [cat, defs.filter((d) => d.category === cat)]).filter(
@@ -26,7 +26,7 @@ export default function ShortcutsList() {
             {defs.map((d) => (
               <div key={d.id} className="flex items-center justify-between gap-4 rounded px-2 py-1 text-sm hover:bg-surface">
                 <span className="text-text">{d.description}</span>
-                <kbd className="whitespace-nowrap rounded border border-border bg-bg px-1 py-1 font-mono text-[11px] text-text-muted">
+                <kbd className="whitespace-nowrap rounded border border-border bg-bg px-1 py-1 font-mono leading-4 text-[11px] text-text-muted">
                   {d.label}
                 </kbd>
               </div>

@@ -261,6 +261,8 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         "status": "active",
         "account": account.model_dump(),
         "settings": {"random_start": req.random_start},
+        "discipline_lock": req.discipline_lock,
+        "lock_floor_time": None,
         "position": None,
         "working_orders": [],
         "notes": None,
@@ -317,6 +319,20 @@ def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.Ba
         _check_cap(data, req.position.contracts, "position")
     for o in req.working_orders:
         _check_cap(data, o.contracts, "working order")
+    # FXR_SPEC.md section F, phase F7b: with the discipline lock on, the
+    # cursor never goes back past where the first trade was placed -- enforced
+    # here too (not just in the UI), so a stale or hand-built client can't
+    # rewind a locked session. The floor is set the first time a position or
+    # working order is persisted, at that save's cursor time (the moment of
+    # placement), and stays even if the order is later cancelled.
+    if data.get("discipline_lock"):
+        floor = data.get("lock_floor_time")
+        if floor is not None and req.cursor_time < floor:
+            raise InvalidSessionRequest(
+                f"discipline lock: cursor_time {req.cursor_time} is before the first placed trade at {floor}"
+            )
+        if floor is None and (req.position is not None or req.working_orders):
+            data["lock_floor_time"] = req.cursor_time
     data["cursor_time"] = req.cursor_time
     data["position"] = req.position.model_dump() if req.position is not None else None
     data["working_orders"] = [o.model_dump() for o in req.working_orders]

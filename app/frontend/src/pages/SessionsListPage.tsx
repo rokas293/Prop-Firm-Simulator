@@ -3,6 +3,7 @@ import { useBtSessions } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import Skeleton from '../components/Skeleton'
 import NewSessionModal from '../components/NewSessionModal'
+import { FirstRunGuide } from '../components/OnboardingGuide'
 import { fmtUsd } from '../format'
 import { fmtEtDateTime } from '../timeFormat'
 import { manualAllRunId, manualRunId } from '../api/types'
@@ -41,6 +42,7 @@ export default function SessionsListPage() {
 
   return (
     <div className="p-6">
+      <FirstRunGuide />
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Sessions</h1>
         <div className="flex items-center gap-2">

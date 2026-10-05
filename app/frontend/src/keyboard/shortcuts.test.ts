@@ -112,3 +112,79 @@ describe('SHORTCUTS registry integrity', () => {
     }
   })
 })
+
+
+// --- FXR_SPEC.md phase F7b: session trading / replay hotkeys ---------------
+
+import { SESSION_SHORTCUT_IDS, isTypingTarget, sessionHotkeyAction, type Combo } from './shortcuts'
+
+function eventFor(combo: Combo): KeyboardEvent {
+  return new KeyboardEvent('keydown', {
+    key: combo.key ?? combo.code ?? '',
+    code: combo.code ?? '',
+    shiftKey: combo.shift ?? false,
+    ctrlKey: combo.ctrlOrMeta ?? false,
+    altKey: combo.alt ?? false,
+  })
+}
+
+describe('session hotkeys', () => {
+  it('every registered combo fires exactly its own shortcut -- no conflicts anywhere in the registry', () => {
+    for (const def of SHORTCUTS) {
+      if (def.id === 'measureDrag') continue // display-only mouse gesture
+      for (const combo of def.combos) {
+        const hits = SHORTCUTS.filter((s) => s.id !== 'measureDrag' && s.combos.some((c) => matchesCombo(eventFor(combo), c)))
+        expect(hits.map((h) => h.id), `${def.id} (${def.label})`).toEqual([def.id])
+      }
+    }
+  })
+
+  it('Shift+B / Shift+S / Shift+C place or close; plain b / s / c never do', () => {
+    expect(sessionHotkeyAction(keyEvent({ key: 'B', shiftKey: true }))).toBe('sessionBuy')
+    expect(sessionHotkeyAction(keyEvent({ key: 'S', shiftKey: true }))).toBe('sessionSell')
+    expect(sessionHotkeyAction(keyEvent({ key: 'C', shiftKey: true }))).toBe('sessionClose')
+    for (const key of ['b', 's', 'c', 'h', 'n']) expect(sessionHotkeyAction(keyEvent({ key }))).toBeNull()
+  })
+
+  it('a trading key with Ctrl/Meta/Alt is never an order (Ctrl+Shift+C is the browser inspector)', () => {
+    for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      for (const key of ['B', 'S', 'C', 'H', 'N']) {
+        expect(sessionHotkeyAction(keyEvent({ key, shiftKey: true, ...mod }))).toBeNull()
+      }
+    }
+  })
+
+  it('existing plain shortcuts no longer fire on their Shift variants (drawing keys vs trading keys)', () => {
+    expect(isShortcut(keyEvent({ key: 'b' }), 'draw-brush')).toBe(true)
+    expect(isShortcut(keyEvent({ key: 'B', shiftKey: true }), 'draw-brush')).toBe(false)
+    expect(isShortcut(keyEvent({ key: 'S', shiftKey: true }), 'setReplayStart')).toBe(false)
+    expect(isShortcut(keyEvent({ key: 'N', shiftKey: true }), 'nextTrade')).toBe(false)
+    expect(isShortcut(keyEvent({ key: 'H', shiftKey: true }), 'draw-horizontalStraightLine')).toBe(false)
+  })
+
+  it('replay-flow keys map to their actions', () => {
+    expect(sessionHotkeyAction(keyEvent({ key: ' ' }))).toBe('sessionPlayPause')
+    expect(sessionHotkeyAction(keyEvent({ key: '.' }))).toBe('sessionStep')
+    expect(sessionHotkeyAction(keyEvent({ key: ',' }))).toBe('sessionStepBack')
+    expect(sessionHotkeyAction(keyEvent({ key: ']', code: 'BracketRight' }))).toBe('sessionSpeedUp')
+    expect(sessionHotkeyAction(keyEvent({ key: '[', code: 'BracketLeft' }))).toBe('sessionSpeedDown')
+  })
+
+  it('every session hotkey is in the registry (so it reaches the "?" overlay)', () => {
+    for (const id of SESSION_SHORTCUT_IDS) {
+      const def = SHORTCUTS.find((s) => s.id === id)
+      expect(def, id).toBeDefined()
+      expect(def?.category).toBe('Session')
+    }
+  })
+
+  it('isTypingTarget flags form controls and contenteditable, not buttons or the page', () => {
+    for (const tag of ['input', 'select', 'textarea']) expect(isTypingTarget(document.createElement(tag))).toBe(true)
+    const div = document.createElement('div')
+    Object.defineProperty(div, 'isContentEditable', { value: true })
+    expect(isTypingTarget(div)).toBe(true)
+    expect(isTypingTarget(document.createElement('button'))).toBe(false)
+    expect(isTypingTarget(document.body)).toBe(false)
+    expect(isTypingTarget(null)).toBe(false)
+  })
+})

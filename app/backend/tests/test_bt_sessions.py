@@ -694,3 +694,72 @@ def test_update_session_notes_survives_reload(bt_client):
 def test_update_session_notes_unknown_session_404(bt_client):
     r = bt_client.patch("/api/bt-sessions/does-not-exist/notes", json={"notes": "x"})
     assert r.status_code == 404
+
+
+# --- FXR_SPEC.md section F, phase F7b: the discipline lock ("no rewind past a
+# placed trade"). Sessions live in the bt_client fixture's tmp dir.
+
+def _patch_cursor(bt_client, session_id, cursor_time, **extra):
+    return bt_client.patch(f"/api/bt-sessions/{session_id}/cursor", json={"cursor_time": cursor_time, **extra})
+
+
+def test_discipline_lock_defaults_off_and_is_reported(bt_client):
+    _skip_if_no_mes_data()
+    off = _create(bt_client).json()
+    assert off["discipline_lock"] is False
+    assert off["lock_floor_time"] is None
+    on = _create(bt_client, discipline_lock=True).json()
+    assert on["discipline_lock"] is True
+    assert on["lock_floor_time"] is None
+
+
+def test_discipline_lock_allows_free_rewind_until_a_trade_is_placed(bt_client):
+    _skip_if_no_mes_data()
+    s = _create(bt_client, discipline_lock=True).json()
+    t0 = s["start_time"]
+    assert _patch_cursor(bt_client, s["id"], t0 + 1200).status_code == 200
+    # Still flat -- stepping back (even to the anchor) is fine.
+    r = _patch_cursor(bt_client, s["id"], t0 + 300)
+    assert r.status_code == 200
+    assert r.json()["lock_floor_time"] is None
+
+
+def test_discipline_lock_blocks_rewind_past_a_placed_position(bt_client):
+    _skip_if_no_mes_data()
+    s = _create(bt_client, discipline_lock=True).json()
+    placed_at = s["start_time"] + 900
+    r = _patch_cursor(bt_client, s["id"], placed_at, position=_position_payload())
+    assert r.status_code == 200
+    assert r.json()["lock_floor_time"] == placed_at
+
+    # Forward and same-bar saves are fine; anything before the floor is refused.
+    assert _patch_cursor(bt_client, s["id"], placed_at + 300, position=_position_payload()).status_code == 200
+    assert _patch_cursor(bt_client, s["id"], placed_at).status_code == 200
+    back = _patch_cursor(bt_client, s["id"], placed_at - 300)
+    assert back.status_code == 400
+    assert "discipline lock" in back.json()["detail"]
+    # Refused means unchanged on disk.
+    assert bt_client.get(f"/api/bt-sessions/{s['id']}").json()["cursor_time"] == placed_at
+
+
+def test_discipline_lock_floor_survives_cancelling_a_working_order(bt_client):
+    _skip_if_no_mes_data()
+    s = _create(bt_client, discipline_lock=True).json()
+    placed_at = s["start_time"] + 600
+    order = {
+        "id": "o1", "side": "long", "order_type": "limit", "price": 5000.0, "contracts": 1,
+        "sl_price": None, "tp_price": None, "risk_usd": None, "placed_time": placed_at,
+    }
+    assert _patch_cursor(bt_client, s["id"], placed_at, working_orders=[order]).json()["lock_floor_time"] == placed_at
+    # Cancelled (no order, no position) -- the floor stays: the trade was placed.
+    after_cancel = _patch_cursor(bt_client, s["id"], placed_at + 300).json()
+    assert after_cancel["lock_floor_time"] == placed_at
+    assert _patch_cursor(bt_client, s["id"], placed_at - 300).status_code == 400
+
+
+def test_session_without_discipline_lock_can_always_rewind(bt_client):
+    _skip_if_no_mes_data()
+    s = _create(bt_client).json()
+    placed_at = s["start_time"] + 900
+    assert _patch_cursor(bt_client, s["id"], placed_at, position=_position_payload()).json()["lock_floor_time"] is None
+    assert _patch_cursor(bt_client, s["id"], s["start_time"]).status_code == 200

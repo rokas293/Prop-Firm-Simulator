@@ -12,6 +12,9 @@ import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { runningTotals } from '../chart/replay'
 import { positionCapMessage } from '../chart/positionCap'
+import { isRewindBlocked, lockFloorIndex, REWIND_BLOCKED_MESSAGE } from '../chart/discipline'
+import { magnifierRange } from '../chart/magnifier'
+import { useSessionHotkeys } from '../keyboard/useSessionHotkeys'
 import { combineBanner } from '../compass/propResult'
 import {
   advanceReplay,
@@ -34,7 +37,8 @@ import {
   type WorkingOrder,
 } from '../chart/simBroker'
 import type { ContextMenuEntry } from '../components/ContextMenu'
-import ReplayControls from '../panels/ReplayControls'
+import ReplayControls, { stepSpeed } from '../panels/ReplayControls'
+import MagnifierPanel from '../panels/MagnifierPanel'
 import PositionTicket, { type WorkingOrderSummary } from '../panels/PositionTicket'
 import TradeTicketPanel, { type TicketReadout } from '../panels/TradeTicketPanel'
 import {
@@ -284,6 +288,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // loop assumes.
   const [followLatestBar, setFollowLatestBar] = useState(true)
   const [pickingReplayStart, setPickingReplayStart] = useState(false)
+  // FXR_SPEC.md phase F7b: the bar magnifier -- `armed` while waiting for a
+  // click on a revealed bar, `magnifyBarTime` once one is picked.
+  const [magnifierArmed, setMagnifierArmed] = useState(false)
+  const [magnifyBarTime, setMagnifyBarTime] = useState<number | null>(null)
 
   // The logical "current cursor time" this session should be at, kept in
   // sync with every setCursorIndexState call -- authoritative across a
@@ -298,6 +306,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const positionRef = useRef<OpenPosition | null>(null)
   const workingOrdersRef = useRef<WorkingOrder[]>([])
   const loadedSessionIdRef = useRef<string | null>(null)
+  // Discipline lock (F7b): the cursor time the first trade was placed at, or
+  // null while none has been. Seeded from the saved session, then set locally
+  // the moment a position/order is first persisted (the server's response
+  // arrives later; a step-back in between must already be refused).
+  const lockFloorRef = useRef<number | null>(null)
   // F4 restore-on-load: guards the restore effect below against re-running
   // for the SAME session -- `session` itself changes identity on every
   // persist (its onSuccess writes the fresh response into the query cache),
@@ -314,6 +327,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     loadedSessionIdRef.current = session.id
     restoredForSessionRef.current = null
     cursorTimeRef.current = session.cursor_time
+    lockFloorRef.current = session.lock_floor_time
+    setMagnifyBarTime(null)
+    setMagnifierArmed(false)
     setWindowAnchor(session.cursor_time)
     setWindowLookahead(null)
     lastReanchoredAtBarTimeRef.current = null
@@ -439,6 +455,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const cursorTime = cursorTimeOverride ?? cursorTimeRef.current
     if (cursorTime === null) return
     cursorTimeRef.current = cursorTime
+    if (session.discipline_lock && lockFloorRef.current === null && (positionRef.current || workingOrdersRef.current.length > 0)) {
+      lockFloorRef.current = cursorTime
+    }
     updateCursor.mutate({
       sessionId: session.id,
       cursorTime,
@@ -509,6 +528,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // that risk.
   const advanceTo = async (newIndex: number) => {
     if (!session || !bars) return
+    // Discipline lock: no stepping, scrubbing or start-resetting to before the
+    // bar the first trade was placed on (the backend refuses it too).
+    if (isRewindBlocked(session.discipline_lock, lockFloorRef.current, bars, newIndex)) {
+      setIsPlaying(false)
+      setOrderNotice(REWIND_BLOCKED_MESSAGE)
+      return
+    }
     const spec = getContractSpec(session.instrument)
     const result = advanceReplay(
       bars,
@@ -914,7 +940,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const replayTotals = useMemo(() => runningTotals(manualTrades ?? [], cursorTime), [manualTrades, cursorTime])
 
+  const baseTfSeconds = session ? (BASE_TF_SECONDS[session.base_timeframe] ?? 300) : 300
   const handleCandleBarClick = (bar: { timestamp: number }) => {
+    if (magnifierArmed) {
+      const barTime = bar.timestamp / 1000
+      // Only a bar the cursor has reached can be magnified (chart/magnifier.ts).
+      if (magnifierRange(barTime, baseTfSeconds, cursorTime) !== null) setMagnifyBarTime(barTime)
+      setMagnifierArmed(false)
+      return
+    }
     if (!pickingReplayStart || !bars) return
     const clickedTimeSec = bar.timestamp / 1000
     const index = bars.findIndex((b) => b.time === clickedTimeSec)
@@ -963,6 +997,32 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         }
       : null
 
+  // Trading / replay hotkeys (F7b). Trading ones need Shift (shortcuts.ts);
+  // every one goes through the same guarded handlers as its on-screen button,
+  // so the flat gate, position cap and discipline lock apply identically.
+  useSessionHotkeys({
+    sessionBuy: () => enterPosition('long'),
+    sessionSell: () => enterPosition('short'),
+    sessionClose: () => {
+      if (position && !createTrade.isPending) handleClosePosition()
+    },
+    sessionCloseHalf: () => {
+      if (position && position.contracts >= 2 && !createTrade.isPending) handlePartialClose()
+    },
+    sessionNewTrade: openTicket,
+    sessionStep: () => {
+      if (bars && cursorIndexRef.current < bars.length - 1) handleCursorIndexChange(cursorIndexRef.current + 1)
+    },
+    sessionStepBack: () => {
+      if (cursorIndexRef.current > 0) handleCursorIndexChange(cursorIndexRef.current - 1)
+    },
+    sessionPlayPause: () => setIsPlaying((v) => !v),
+    sessionSpeedUp: () => setSpeed((s) => stepSpeed(s, 1)),
+    sessionSpeedDown: () => setSpeed((s) => stepSpeed(s, -1)),
+  })
+
+  const magnifyActive = magnifyBarTime !== null && magnifierRange(magnifyBarTime, baseTfSeconds, cursorTime) !== null
+
   if (isLoading) {
     return <EmptyState title="Loading session…" />
   }
@@ -984,7 +1044,20 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         followLatestBar={followLatestBar}
         onToggleFollowLatestBar={() => setFollowLatestBar((v) => !v)}
         pickingReplayStart={pickingReplayStart}
-        onTogglePickingReplayStart={() => setPickingReplayStart((v) => !v)}
+        onTogglePickingReplayStart={() => {
+          setMagnifierArmed(false)
+          setPickingReplayStart((v) => !v)
+        }}
+        minIndex={session.discipline_lock && bars ? lockFloorIndex(bars, lockFloorRef.current) : 0}
+        magnifierArmed={magnifierArmed}
+        onToggleMagnifier={
+          baseTfSeconds > 60
+            ? () => {
+                setPickingReplayStart(false)
+                setMagnifierArmed((v) => !v)
+              }
+            : undefined
+        }
         runningPnl={replayTotals.pnlUsd}
         runningR={replayTotals.r}
         equity={null}
@@ -1070,7 +1143,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             followLatestBar={followLatestBar}
             onCandleBarClick={handleCandleBarClick}
             onVisibleRangeChange={handleChartVisibleRangeChange}
-            pickMode={pickingReplayStart}
+            pickMode={pickingReplayStart || magnifierArmed}
             slLineColor={themeBase.warning}
             tradeTicket={ticket}
             onTradeTicketChange={handleTicketChange}
@@ -1108,6 +1181,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </Suspense>
         )}
       </div>
+      {magnifyActive && magnifyBarTime !== null && (
+        <MagnifierPanel
+          instrument={session.instrument}
+          timeframe={session.base_timeframe}
+          tfSeconds={baseTfSeconds}
+          barTime={magnifyBarTime}
+          cursorTime={cursorTime}
+          onClose={() => setMagnifyBarTime(null)}
+        />
+      )}
     </div>
   )
 }

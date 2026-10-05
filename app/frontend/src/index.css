@@ -283,6 +283,16 @@
   background: var(--color-selection);
   color: var(--color-text);
 }
+/* Secondary text on the selected row: --color-text-muted over the accent
+   selection tint measured 4.04:1 in the dark theme. Pull it 35% toward the
+   primary text color so it clears 4.5:1 in both themes and still reads as
+   the quieter level. */
+[cmdk-item] .text-text-muted {
+  font-size: 12px;
+}
+[cmdk-item][data-selected='true'] .text-text-muted {
+  color: color-mix(in srgb, var(--color-text-muted), var(--color-text) 35%);
+}
 
 /* ---- shortcuts overlay / settings panel modal chrome (Phase P6) ------ */
 /* Reuses .propbt-cmdk-overlay for the backdrop -- same overlay, different
@@ -425,7 +435,8 @@ input[type='checkbox'] {
   width: 14px;
   height: 14px;
   margin: 0;
-  border: 1px solid var(--color-border-hover);
+  /* text-muted, not border-hover: the unchecked edge measured ~2.1:1 (UI boundaries need 3:1). */
+  border: 1px solid var(--color-text-muted);
   border-radius: 3px;
   background: var(--color-surface-2);
   cursor: pointer;

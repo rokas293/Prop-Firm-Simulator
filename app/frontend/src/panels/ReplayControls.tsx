@@ -2,7 +2,17 @@ import type { Bar, EquityPoint } from '../api/types'
 import { fmtUsd } from '../format'
 import { fmtEtDateTimeSec } from '../timeFormat'
 
-const SPEEDS = [0.5, 1, 2, 4, 8, 16] as const
+export const SPEEDS = [0.5, 1, 2, 4, 8, 16] as const
+
+// The speed one notch up (+1) or down (-1) the SPEEDS ladder, clamped at the
+// ends; a speed not on the ladder snaps to the nearest notch first.
+export function stepSpeed(speed: number, direction: 1 | -1): number {
+  let nearest = 0
+  SPEEDS.forEach((s, i) => {
+    if (Math.abs(s - speed) < Math.abs(SPEEDS[nearest] - speed)) nearest = i
+  })
+  return SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, nearest + direction))]
+}
 
 
 interface ReplayControlsProps {
@@ -37,6 +47,13 @@ interface ReplayControlsProps {
   // FXR_SPEC.md phase F6: opens this session's analytics (Dashboard, equity,
   // Monte Carlo, prop result) -- same optional/manual-session-only deal.
   onOpenAnalytics?: () => void
+  // FXR_SPEC.md phase F7b. `minIndex` is the discipline lock's floor (the
+  // placement bar): step-back stops there and the scrub slider starts there.
+  // `onToggleMagnifier` is only passed for a >1-minute session; the pick
+  // itself happens on the chart (SessionWorkspace's onCandleBarClick).
+  minIndex?: number
+  magnifierArmed?: boolean
+  onToggleMagnifier?: () => void
 }
 
 export default function ReplayControls({
@@ -58,6 +75,9 @@ export default function ReplayControls({
   journalOpen,
   onToggleJournal,
   onOpenAnalytics,
+  minIndex = 0,
+  magnifierArmed = false,
+  onToggleMagnifier,
 }: ReplayControlsProps) {
   const lastIndex = Math.max(0, bars.length - 1)
   const cursorBar = bars[cursorIndex]
@@ -75,8 +95,8 @@ export default function ReplayControls({
         {bars.length > 0 && (
           <>
             <button
-              onClick={() => onCursorIndexChange(Math.max(0, cursorIndex - 1))}
-              disabled={cursorIndex <= 0}
+              onClick={() => onCursorIndexChange(Math.max(minIndex, cursorIndex - 1))}
+              disabled={cursorIndex <= minIndex}
               className="rounded bg-surface-2 px-2 h-7 text-text hover:bg-surface-2-hover disabled:opacity-40"
             >
               &larr; Step
@@ -106,6 +126,19 @@ export default function ReplayControls({
               {pickingReplayStart ? 'Click a bar…' : 'Set start'}
             </button>
 
+            {onToggleMagnifier && (
+              <button
+                onClick={onToggleMagnifier}
+                title="Click a revealed bar to see the 1-minute bars inside it. Never shows anything past the replay cursor."
+                aria-pressed={magnifierArmed}
+                className={`rounded px-2 h-7 ${
+                  magnifierArmed ? 'bg-accent text-on-accent' : 'bg-surface-2 text-text hover:bg-surface-2-hover'
+                }`}
+              >
+                {magnifierArmed ? 'Click a bar…' : 'Magnify'}
+              </button>
+            )}
+
             <select
               value={speed}
               onChange={(e) => onSpeedChange(Number(e.target.value))}
@@ -133,7 +166,7 @@ export default function ReplayControls({
                 accent-color from :root (POLISH_ROADMAP Phase P6). */}
             <input
               type="range"
-              min={0}
+              min={minIndex}
               max={lastIndex}
               value={cursorIndex}
               onChange={(e) => onCursorIndexChange(Number(e.target.value))}

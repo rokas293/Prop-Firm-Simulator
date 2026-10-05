@@ -80,13 +80,12 @@ export default function SymbolSearch() {
             <CommandEmpty className="propbt-cmdk-empty">No matching symbol.</CommandEmpty>
             <CommandGroup heading="Symbols">
               {availableSymbols.map((inst) => {
-                const active = currentRun?.instrument === inst.symbol
                 return (
                   <CommandItem
                     key={inst.symbol}
                     value={`${inst.symbol} ${inst.description}`}
                     onSelect={() => pick(inst.symbol)}
-                    className={`!flex !items-center !justify-between !gap-3 ${active ? '!text-accent-fg' : ''}`}
+                    className="!flex !items-center !justify-between !gap-3"
                   >
                     <span className="font-medium">{inst.symbol}</span>
                     <span className="flex-1 truncate text-right text-text-muted">{inst.description}</span>

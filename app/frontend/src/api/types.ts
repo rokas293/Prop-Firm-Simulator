@@ -244,6 +244,11 @@ export interface BacktestSessionSummary {
   working_orders: PersistedWorkingOrder[]
   // FXR_SPEC.md section C, phase F5: session-level journal notes.
   notes: string | null
+  // FXR_SPEC.md section F, phase F7b: the optional "no rewind past a placed
+  // trade" lock, and (once a trade has been placed) the cursor time it was
+  // placed at -- the earliest the cursor may ever go again.
+  discipline_lock: boolean
+  lock_floor_time: number | null
   // Only on the sessions LIST, for Topstep sessions.
   prop_status?: PropStatus | null
 }
@@ -265,6 +270,7 @@ export interface CreateSessionRequest {
   default_contracts: number
   commission_per_contract: number
   prop_ruleset?: string | null
+  discipline_lock?: boolean
 }
 
 // F4: every cursor update carries the FULL current broker state, never a

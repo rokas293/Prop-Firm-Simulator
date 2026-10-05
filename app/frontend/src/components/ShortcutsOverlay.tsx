@@ -7,6 +7,7 @@
 import { useRef } from 'react'
 import ShortcutsList from './ShortcutsList'
 import { useModalFocus } from './useModalFocus'
+import { useOnboardingStore } from '../state/onboardingStore'
 
 export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   // Same fix as SettingsPanel (accessibility audit): this hand-rolled
@@ -15,6 +16,7 @@ export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onC
   // hooks); no-ops internally while `open` is false.
   const contentRef = useRef<HTMLDivElement>(null)
   useModalFocus(contentRef, open)
+  const openTour = useOnboardingStore((s) => s.openTour)
 
   if (!open) return null
 
@@ -38,8 +40,19 @@ export default function ShortcutsOverlay({ open, onClose }: { open: boolean; onC
             Esc to close
           </button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto p-4">
+        <div className="max-h-[calc(80vh-102px)] overflow-y-auto p-4">
           <ShortcutsList />
+        </div>
+        <div className="flex h-12 items-center px-4">
+          <button
+            onClick={() => {
+              onClose()
+              openTour()
+            }}
+            className="h-7 rounded px-2 text-xs text-text-muted hover:bg-surface-2 hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            Show the quick tour
+          </button>
         </div>
       </div>
     </div>
