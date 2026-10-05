@@ -186,7 +186,6 @@ export interface SimAccount {
   currency: string
   risk_per_trade_percent: number | null
   risk_per_trade_usd: number | null
-  default_contracts: number
   commission_per_contract: number
   // F6: "topstep_50k" = the Topstep Combine ruleset; null/absent = practice account.
   prop_ruleset?: string | null
@@ -232,9 +231,18 @@ export interface PropStatus {
 
 export interface BacktestSessionSummary {
   id: string
+  // FXR_V2_SPEC.md section 4 (G1). Display name (null = derive one from the
+  // assets + start date, see sessionDisplayName).
+  name: string | null
+  // Primary instrument (== assets[0]) -- the chart's symbol.
   instrument: string
+  assets: string[]
   base_timeframe: string
   start_time: number
+  // Unix seconds the cursor may not pass; null = runs to the end of the data.
+  end_date: number | null
+  // The Quick Buy/Sell quantity box, persisted per session.
+  quick_quantity: number
   created_at: string
   updated_at: string
   cursor_time: number
@@ -259,15 +267,24 @@ export interface UpdateSessionNotesRequest {
   notes: string
 }
 
+// Only the fields sent change (the backend applies exclude_unset).
+export interface UpdateSessionSettingsRequest {
+  name?: string | null
+  quick_quantity?: number
+}
+
 export interface CreateSessionRequest {
-  instrument: string
+  instrument?: string | null
+  assets?: string[] | null
+  name?: string | null
   base_timeframe: string
   start_time?: number | null
+  end_date?: number | null
   random_start?: boolean
   starting_balance: number
   risk_per_trade_percent?: number | null
   risk_per_trade_usd?: number | null
-  default_contracts: number
+  quick_quantity?: number
   commission_per_contract: number
   prop_ruleset?: string | null
   discipline_lock?: boolean

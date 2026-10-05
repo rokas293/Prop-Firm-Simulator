@@ -100,6 +100,9 @@ export interface ChartKLHandle {
   // first via fitRange, then captures once that's settled). Returns null
   // if the chart hasn't initialized yet.
   captureScreenshot: () => string | null
+  // Re-reads this instrument's drawings from the persisted store and redraws
+  // them (the session toolbar's undo/redo writes the store, then calls this).
+  reloadDrawings: () => void
 }
 
 interface ChartKLProps {
@@ -212,7 +215,12 @@ interface ChartKLProps {
   // bars instead of letting klinecharts reset the scroll. Off for the
   // automated-run review, whose own fit owns the camera on a window change.
   preserveViewOnWindowChange?: boolean
+  // The candle series style (the session toolbar's chart-type menu). Pure
+  // presentation of the same OHLC bars -- never changes data or the cursor.
+  candleType?: KLCandleType
 }
+
+export type KLCandleType = 'candle_solid' | 'candle_stroke' | 'ohlc' | 'area'
 
 // Matches Tailwind's default `font-sans` stack (index.css has no custom
 // @font-face override -- DESIGN_LANGUAGE.md §3: "Inter or the system UI
@@ -442,6 +450,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     onOpenPositionSlTpChange,
     getEmptyAreaMenuExtraItems,
     preserveViewOnWindowChange = false,
+    candleType = 'candle_solid',
   },
   ref,
 ) {
@@ -544,6 +553,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // (VOL/ATR14), which is exactly where this is needed most.
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   const [indicatorSettings, setIndicatorSettings] = useState<{ key: ColorableIndicatorKey; x: number; y: number } | null>(null)
+  const candleTypeRef = useRef<KLCandleType>(candleType)
   const onDrawingsChangeRef = useRef(onDrawingsChange)
   onDrawingsChangeRef.current = onDrawingsChange
   const onDrawingArmedChangeRef = useRef(onDrawingArmedChange)
@@ -978,6 +988,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     if (!chart) return
     chartRef.current = chart
     chart.setStyles(themeStyles(colorsRef.current, baseRef.current))
+    chart.setStyles({ candle: { type: candleTypeRef.current } })
     // VOL (a plain klinecharts built-in, Phase A3 -- just visualizes each
     // bar's own volume field, no derived calculation) used to be created
     // unconditionally right here. REPLICA_ROADMAP.md Batch 3 made it a
@@ -1416,6 +1427,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     applyIndicatorColors(chart, colors, base)
   }, [colors, base])
 
+  // Chart type: a style switch on the existing bars only.
+  useEffect(() => {
+    candleTypeRef.current = candleType
+    chartRef.current?.setStyles({ candle: { type: candleType } })
+  }, [candleType])
+
   // Indicator data/toggle changed but the window didn't -- redraw against
   // the bars already loaded, same as the trades effect above.
   useEffect(() => {
@@ -1833,6 +1850,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         // the chart itself no longer showed it.
         persistDrawingsRef.current()
       },
+      reloadDrawings: () => restoreDrawingsRef.current(),
       removeDrawing: deleteDrawing,
       clearDrawings: () => {
         const chart = chartRef.current

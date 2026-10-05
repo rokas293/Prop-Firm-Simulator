@@ -1,0 +1,340 @@
+// FXR_V2_SPEC.md section 2 (G1): the slide-up trade panel -- tabs Positions |
+// Orders | History. Rows render what the sim broker holds (the open position,
+// the working order) and the journaled trades; nothing is recomputed here.
+// Text tabs with an underline (DESIGN_LANGUAGE.md section 6), one 28px row
+// height, tabular right-aligned numbers, hover as a background step.
+import { useState } from 'react'
+import type { ManualTrade } from '../api/types'
+import { fmtPrice, fmtR, fmtUsd } from '../format'
+import { fmtEtDateTime } from '../timeFormat'
+import type { TradePanelTab } from '../state/sessionPrefsStore'
+
+export interface PositionRow {
+  instrument: string
+  side: 'long' | 'short'
+  contracts: number
+  entryPrice: number
+  slPrice: number | null
+  tpPrice: number | null
+  pnlUsd: number
+  rMultiple: number | null
+}
+
+export interface WorkingOrderRow {
+  instrument: string
+  side: 'long' | 'short'
+  orderType: 'limit' | 'stop'
+  price: number
+  contracts: number
+  slPrice: number | null
+  tpPrice: number | null
+}
+
+export const HISTORY_PAGE_SIZE = 10
+
+// One page of the history list, newest first, plus the page count (>= 1).
+export function historyPage<T>(items: readonly T[], page: number, pageSize = HISTORY_PAGE_SIZE) {
+  const pages = Math.max(1, Math.ceil(items.length / pageSize))
+  const clamped = Math.max(0, Math.min(pages - 1, page))
+  const newestFirst = [...items].reverse()
+  return { rows: newestFirst.slice(clamped * pageSize, (clamped + 1) * pageSize), page: clamped, pages }
+}
+
+const TH = 'micro-label h-7 px-2 text-left font-medium'
+const THN = 'micro-label h-7 px-2 text-right font-medium'
+const TD = 'h-7 px-2 text-xs text-text'
+const TDN = 'num h-7 px-2 text-xs text-text'
+const ROW_ACTION =
+  'h-7 rounded px-2 text-xs text-text-muted transition-colors hover:bg-surface-2-hover hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted'
+
+function sign(v: number): string {
+  return v > 0 ? 'text-positive-fg' : v < 0 ? 'text-negative-fg' : 'text-text'
+}
+
+function Empty({ children }: { children: string }) {
+  return <p className="px-2 py-6 text-xs text-text-muted">{children}</p>
+}
+
+function PositionsTab({
+  position,
+  closing,
+  onClose,
+  onPartialClose,
+  partialCloseDisabled,
+  autoBreakeven,
+  onAutoBreakevenChange,
+  trailingPoints,
+  onTrailingPointsChange,
+}: {
+  position: PositionRow | null
+  closing: boolean
+  onClose: () => void
+  onPartialClose: () => void
+  partialCloseDisabled: boolean
+  autoBreakeven: boolean
+  onAutoBreakevenChange: (v: boolean) => void
+  trailingPoints: number | null
+  onTrailingPointsChange: (v: number | null) => void
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Dual-purpose, as v1's toggles were: flat, they arm the NEXT trade;
+          with a position open they edit that position directly. */}
+      <div className="flex items-center gap-4 px-2 pt-1 text-xs text-text-muted">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={autoBreakeven} onChange={(e) => onAutoBreakevenChange(e.target.checked)} className="accent-accent" />
+          {position ? 'Break-even at +1R' : 'Next trade: break-even at +1R'}
+        </label>
+        <label className="flex items-center gap-2">
+          Trail
+          <input
+            type="number"
+            min={0}
+            step={0.25}
+            value={trailingPoints ?? ''}
+            onChange={(e) => {
+              const v = e.target.value === '' ? null : Number(e.target.value)
+              onTrailingPointsChange(v !== null && v > 0 ? v : null)
+            }}
+            placeholder="off"
+            aria-label="Trailing stop distance in points"
+            className="propbt-input w-16"
+          />
+          pts
+        </label>
+      </div>
+      {position ? (
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <th className={TH}>Symbol</th>
+              <th className={TH}>Side</th>
+              <th className={THN}>Qty</th>
+              <th className={THN}>Avg entry</th>
+              <th className={THN}>SL</th>
+              <th className={THN}>TP</th>
+              <th className={THN}>P&amp;L</th>
+              <th className={THN}>R</th>
+              <th className="h-7 px-2" />
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="hover:bg-surface-2">
+              <td className={TD}>{position.instrument}</td>
+              <td className={TD}>{position.side === 'long' ? 'Long' : 'Short'}</td>
+              <td className={TDN}>{position.contracts}</td>
+              <td className={TDN}>{fmtPrice(position.entryPrice, position.instrument)}</td>
+              <td className={TDN}>{position.slPrice !== null ? fmtPrice(position.slPrice, position.instrument) : '—'}</td>
+              <td className={TDN}>{position.tpPrice !== null ? fmtPrice(position.tpPrice, position.instrument) : '—'}</td>
+              <td className={`num h-7 px-2 text-xs ${sign(position.pnlUsd)}`}>{fmtUsd(position.pnlUsd)}</td>
+              <td className={`num h-7 px-2 text-xs ${position.rMultiple !== null ? sign(position.rMultiple) : 'text-text-muted'}`}>
+                {position.rMultiple !== null ? `${position.rMultiple > 0 ? '+' : ''}${fmtR(position.rMultiple)}` : '—'}
+              </td>
+              <td className="h-7 whitespace-nowrap px-2 text-right">
+                <button type="button" onClick={onPartialClose} disabled={partialCloseDisabled || closing} className={ROW_ACTION}>
+                  Close ½
+                </button>
+                <button type="button" onClick={onClose} disabled={closing} className={ROW_ACTION}>
+                  {closing ? 'Closing…' : 'Close'}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      ) : (
+        <Empty>Flat. No open position.</Empty>
+      )}
+    </div>
+  )
+}
+
+function OrdersTab({ order, onCancel }: { order: WorkingOrderRow | null; onCancel: () => void }) {
+  if (!order) return <Empty>No working orders.</Empty>
+  return (
+    <table className="w-full border-collapse">
+      <thead>
+        <tr>
+          <th className={TH}>Symbol</th>
+          <th className={TH}>Side</th>
+          <th className={TH}>Type</th>
+          <th className={THN}>Qty</th>
+          <th className={THN}>Price</th>
+          <th className={THN}>SL</th>
+          <th className={THN}>TP</th>
+          <th className="h-7 px-2" />
+        </tr>
+      </thead>
+      <tbody>
+        <tr className="hover:bg-surface-2">
+          <td className={TD}>{order.instrument}</td>
+          <td className={TD}>{order.side === 'long' ? 'Buy' : 'Sell'}</td>
+          <td className={TD}>{order.orderType === 'limit' ? 'Limit' : 'Stop'}</td>
+          <td className={TDN}>{order.contracts}</td>
+          <td className={TDN}>{fmtPrice(order.price, order.instrument)}</td>
+          <td className={TDN}>{order.slPrice !== null ? fmtPrice(order.slPrice, order.instrument) : '—'}</td>
+          <td className={TDN}>{order.tpPrice !== null ? fmtPrice(order.tpPrice, order.instrument) : '—'}</td>
+          <td className="h-7 px-2 text-right">
+            <button type="button" onClick={onCancel} className={ROW_ACTION}>
+              Cancel
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  )
+}
+
+function HistoryTab({ trades, onOpenTrade }: { trades: readonly ManualTrade[]; onOpenTrade: (tradeId: number) => void }) {
+  const [page, setPage] = useState(0)
+  if (trades.length === 0) return <Empty>No closed trades yet.</Empty>
+  const { rows, page: current, pages } = historyPage(trades, page)
+  return (
+    <div className="flex flex-col">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>
+            <th className={THN}>#</th>
+            <th className={TH}>Closed (ET)</th>
+            <th className={TH}>Symbol</th>
+            <th className={TH}>Side</th>
+            <th className={THN}>Qty</th>
+            <th className={THN}>Entry</th>
+            <th className={THN}>Exit</th>
+            <th className={THN}>P&amp;L</th>
+            <th className={THN}>R</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => (
+            <tr
+              key={t.trade_id}
+              tabIndex={0}
+              onClick={() => onOpenTrade(t.trade_id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onOpenTrade(t.trade_id)
+                }
+              }}
+              title="Open in the journal"
+              className="cursor-pointer hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <td className={`${TDN} text-text-muted`}>{t.trade_id}</td>
+              <td className={`${TD} tabular-nums text-text-muted`}>{fmtEtDateTime(t.exit_time)}</td>
+              <td className={TD}>{t.instrument}</td>
+              <td className={TD}>{t.side === 'long' ? 'Long' : 'Short'}</td>
+              <td className={TDN}>{t.size_contracts}</td>
+              <td className={TDN}>{fmtPrice(t.entry_price, t.instrument)}</td>
+              <td className={TDN}>{fmtPrice(t.exit_price, t.instrument)}</td>
+              <td className={`num h-7 px-2 text-xs ${sign(t.pnl_usd)}`}>{fmtUsd(t.pnl_usd)}</td>
+              <td className={`num h-7 px-2 text-xs ${t.r_multiple !== null ? sign(t.r_multiple) : 'text-text-muted'}`}>
+                {t.r_multiple !== null ? `${t.r_multiple > 0 ? '+' : ''}${fmtR(t.r_multiple)}` : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {pages > 1 && (
+        <div className="flex items-center justify-end gap-2 px-2 py-2 text-xs text-text-muted">
+          <button type="button" className={ROW_ACTION} disabled={current === 0} onClick={() => setPage(current - 1)}>
+            Previous
+          </button>
+          <span className="tabular-nums">
+            {current + 1} / {pages}
+          </span>
+          <button type="button" className={ROW_ACTION} disabled={current >= pages - 1} onClick={() => setPage(current + 1)}>
+            Next
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const TABS: { id: TradePanelTab; label: string }[] = [
+  { id: 'positions', label: 'Positions' },
+  { id: 'orders', label: 'Orders' },
+  { id: 'history', label: 'History' },
+]
+
+export default function TradePanel({
+  height,
+  tab,
+  onTabChange,
+  position,
+  workingOrder,
+  trades,
+  closing,
+  onClosePosition,
+  onPartialClose,
+  partialCloseDisabled,
+  onCancelOrder,
+  autoBreakeven,
+  onAutoBreakevenChange,
+  trailingPoints,
+  onTrailingPointsChange,
+  onOpenTrade,
+}: {
+  height: number
+  tab: TradePanelTab
+  onTabChange: (t: TradePanelTab) => void
+  position: PositionRow | null
+  workingOrder: WorkingOrderRow | null
+  trades: readonly ManualTrade[]
+  closing: boolean
+  onClosePosition: () => void
+  onPartialClose: () => void
+  partialCloseDisabled: boolean
+  onCancelOrder: () => void
+  autoBreakeven: boolean
+  onAutoBreakevenChange: (v: boolean) => void
+  trailingPoints: number | null
+  onTrailingPointsChange: (v: number | null) => void
+  onOpenTrade: (tradeId: number) => void
+}) {
+  const counts: Record<TradePanelTab, number> = {
+    positions: position ? 1 : 0,
+    orders: workingOrder ? 1 : 0,
+    history: trades.length,
+  }
+  return (
+    <section style={{ height }} className="propbt-fade-in flex shrink-0 flex-col overflow-hidden bg-surface" aria-label="Trade panel">
+      <div role="tablist" aria-label="Trade panel" className="flex h-8 shrink-0 items-center gap-4 px-4">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            id={`trade-tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls="trade-panel-body"
+            onClick={() => onTabChange(t.id)}
+            className={`h-8 border-b-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+              tab === t.id ? 'border-accent text-text' : 'border-transparent text-text-muted hover:text-text'
+            }`}
+          >
+            {t.label}
+            <span className="ml-1 tabular-nums text-text-muted">{counts[t.id]}</span>
+          </button>
+        ))}
+      </div>
+      <div id="trade-panel-body" role="tabpanel" aria-labelledby={`trade-tab-${tab}`} className="min-h-0 flex-1 overflow-auto px-2 pb-2">
+        {tab === 'positions' && (
+          <PositionsTab
+            position={position}
+            closing={closing}
+            onClose={onClosePosition}
+            onPartialClose={onPartialClose}
+            partialCloseDisabled={partialCloseDisabled}
+            autoBreakeven={autoBreakeven}
+            onAutoBreakevenChange={onAutoBreakevenChange}
+            trailingPoints={trailingPoints}
+            onTrailingPointsChange={onTrailingPointsChange}
+          />
+        )}
+        {tab === 'orders' && <OrdersTab order={workingOrder} onCancel={onCancelOrder} />}
+        {tab === 'history' && <HistoryTab trades={trades} onOpenTrade={onOpenTrade} />}
+      </div>
+    </section>
+  )
+}

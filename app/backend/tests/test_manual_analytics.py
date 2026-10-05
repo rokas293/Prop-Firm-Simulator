@@ -366,7 +366,7 @@ def test_create_session_with_prop_ruleset_requires_matching_balance(bt_client):
         pytest.skip("MES data file not present")
     body = {
         "instrument": "MES", "base_timeframe": "5min", "start_time": _ts("14:30", "2025-03-10"),
-        "starting_balance": 25000.0, "risk_per_trade_percent": 1.0, "default_contracts": 1,
+        "starting_balance": 25000.0, "risk_per_trade_percent": 1.0, "quick_quantity": 1,
         "commission_per_contract": 1.3, "prop_ruleset": "topstep_50k",
     }
     assert bt_client.post("/api/bt-sessions", json=body).status_code == 400
@@ -405,14 +405,14 @@ def test_topstep_session_rejects_a_trade_over_the_position_cap(bt_client):
 
 def test_topstep_session_rejects_an_over_cap_persisted_position_or_working_order(bt_client):
     _write_session("capped", prop_ruleset="topstep_50k")
-    body = {"cursor_time": _ts("14:00"), "position": _position(6), "working_orders": []}
+    body = {"cursor_time": _ts("15:00"), "position": _position(6), "working_orders": []}
     r = bt_client.patch("/api/bt-sessions/capped/cursor", json=body)
     assert r.status_code == 400 and "position" in r.json()["detail"]
     order = {"id": "o1", "side": "long", "order_type": "limit", "price": 4990.0, "contracts": 7,
              "sl_price": None, "tp_price": None, "risk_usd": None, "placed_time": _ts("14:00")}
-    r = bt_client.patch("/api/bt-sessions/capped/cursor", json={"cursor_time": _ts("14:00"), "position": None, "working_orders": [order]})
+    r = bt_client.patch("/api/bt-sessions/capped/cursor", json={"cursor_time": _ts("15:00"), "position": None, "working_orders": [order]})
     assert r.status_code == 400 and "working order" in r.json()["detail"]
-    ok = bt_client.patch("/api/bt-sessions/capped/cursor", json={"cursor_time": _ts("14:00"), "position": _position(5), "working_orders": []})
+    ok = bt_client.patch("/api/bt-sessions/capped/cursor", json={"cursor_time": _ts("15:00"), "position": _position(5), "working_orders": []})
     assert ok.status_code == 200
 
 
@@ -422,20 +422,20 @@ def test_plain_practice_session_has_no_position_cap(bt_client):
     assert bt_client.patch("/api/bt-sessions/free/cursor", json={"cursor_time": _ts("14:00"), "position": _position(25), "working_orders": []}).status_code == 200
 
 
-def test_create_topstep_session_sets_the_cap_and_rejects_default_contracts_over_it(bt_client):
+def test_create_topstep_session_sets_the_cap_and_rejects_quick_quantity_over_it(bt_client):
     from propbt.config import load_data_paths
     paths = load_data_paths()
     if "MES" not in paths or not paths["MES"].exists():
         pytest.skip("MES data file not present")
     body = {"instrument": "MES", "base_timeframe": "5min", "start_time": _ts("14:30", "2025-03-10"),
-            "starting_balance": 50000.0, "risk_per_trade_percent": 1.0, "default_contracts": 6,
+            "starting_balance": 50000.0, "risk_per_trade_percent": 1.0, "quick_quantity": 6,
             "commission_per_contract": 1.3, "prop_ruleset": "topstep_50k"}
     r = bt_client.post("/api/bt-sessions", json=body)
     assert r.status_code == 400 and "limit of 5" in r.json()["detail"]
-    body["default_contracts"] = 5
+    body["quick_quantity"] = 5
     ok = bt_client.post("/api/bt-sessions", json=body)
     assert ok.status_code == 200 and ok.json()["account"]["max_contracts"] == 5
-    body["prop_ruleset"], body["default_contracts"] = None, 6
+    body["prop_ruleset"], body["quick_quantity"] = None, 6
     free = bt_client.post("/api/bt-sessions", json=body)
     assert free.status_code == 200 and free.json()["account"]["max_contracts"] is None
 
@@ -452,3 +452,16 @@ def test_sessions_list_carries_each_prop_sessions_combine_status(bt_client):
     assert rows["bust"]["prop_status"] == {
         "status": "failed", "fail_reason": "mll_breach", "resolved_trade_id": 1, "trades_to_result": 1}
     assert rows["plain"]["prop_status"] is None
+
+
+def test_prop_session_cannot_be_rewound_but_a_practice_session_can(bt_client):
+    _write_session("prop", prop_ruleset="topstep_50k")        # saved cursor 15:00
+    _write_session("free", prop_ruleset=None)
+    r = bt_client.patch("/api/bt-sessions/prop/cursor", json={"cursor_time": _ts("14:55")})
+    assert r.status_code == 400 and "cannot be rewound" in r.json()["detail"]
+    assert bt_client.get("/api/bt-sessions/prop").json()["cursor_time"] == _ts("15:00")   # unchanged
+    # Same cursor (a position change) and forward are fine, and rewinding then stays blocked.
+    assert bt_client.patch("/api/bt-sessions/prop/cursor", json={"cursor_time": _ts("15:00")}).status_code == 200
+    assert bt_client.patch("/api/bt-sessions/prop/cursor", json={"cursor_time": _ts("15:30")}).status_code == 200
+    assert bt_client.patch("/api/bt-sessions/prop/cursor", json={"cursor_time": _ts("15:25")}).status_code == 400
+    assert bt_client.patch("/api/bt-sessions/free/cursor", json={"cursor_time": _ts("14:00")}).status_code == 200

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useBtSession, useRun } from './api/hooks'
+import { useEffect } from 'react'
+import { useRun } from './api/hooks'
 import ComparePage from './pages/ComparePage'
 import RunsListPage from './pages/RunsListPage'
 import SessionsListPage from './pages/SessionsListPage'
@@ -10,7 +10,6 @@ import KeyboardShortcuts from './workspace/KeyboardShortcuts'
 import PerfHud from './components/PerfHud'
 import ShortcutsOverlay from './components/ShortcutsOverlay'
 import { OnboardingDialog } from './components/OnboardingGuide'
-import { Lock } from 'lucide-react'
 import SettingsPanel from './components/SettingsPanel'
 import LiveRegion from './components/LiveRegion'
 import { useUiStore } from './state/uiStore'
@@ -30,7 +29,8 @@ export default function App() {
   const setLandingTabFromRun = useUiStore((s) => s.setLandingTab)
   const distractionFree = useUiStore((s) => s.distractionFree)
   const { data: run } = useRun(selectedRunId)
-  const { data: btSession } = useBtSession(selectedSessionId)
+  // A single manual session's analytics: where its back button goes.
+  const backToSessionId = run?.source === 'manual' && run.session_ids?.length === 1 ? run.session_ids[0] : null
   const perfEnabled = usePerfStore((s) => s.enabled)
   const togglePerf = usePerfStore((s) => s.toggle)
 
@@ -44,8 +44,11 @@ export default function App() {
     applyThemeToDocument(themeColors, themeMode, themeBase)
   }, [themeColors, themeMode, themeBase])
 
-  const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  // Lifted into uiStore so the session workspace's own top bar can open them.
+  const shortcutsOpen = useUiStore((s) => s.shortcutsOpen)
+  const setShortcutsOpen = useUiStore((s) => s.setShortcutsOpen)
+  const settingsOpen = useUiStore((s) => s.settingsOpen)
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
 
   // The "?" shortcuts overlay is reachable from anywhere, same as the
   // command palette's own global Ctrl/Cmd-K listener (CommandPalette.tsx) --
@@ -56,7 +59,7 @@ export default function App() {
 
       if (isShortcut(e, 'showShortcuts')) {
         e.preventDefault()
-        setShortcutsOpen((o) => !o)
+        setShortcutsOpen(!useUiStore.getState().shortcutsOpen)
       } else if (isShortcut(e, 'closeOverlay')) {
         setShortcutsOpen(false)
         setSettingsOpen(false)
@@ -64,7 +67,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [setShortcutsOpen, setSettingsOpen])
 
   return (
     <div className="min-h-screen bg-bg text-text">
@@ -72,7 +75,9 @@ export default function App() {
           whole header (Workspace.tsx switches its own height calc to match,
           and drops its "Layout:" preset row the same way) -- ChartPanel.tsx
           owns the actual toggle/shortcut/button, this just reacts to it. */}
-      {!distractionFree && (
+      {/* A session is a full-bleed workspace with its own top bar (SessionTopBar),
+          so the global header only shows on the other screens. */}
+      {!distractionFree && !(selectedSessionId && !compareRunIds) && (
         <header className="flex h-[52px] items-center gap-3 border-b border-border px-6">
           <h1 className="text-sm font-semibold tracking-wide text-text">propbt viz</h1>
           {!compareRunIds && selectedRunId && (
@@ -80,13 +85,19 @@ export default function App() {
               <div className="h-4 w-px bg-surface-2" />
               <button
                 onClick={() => {
-                  // A manual scope's "back" is the Sessions list, not Runs.
+                  // One session's analytics goes back to that session's
+                  // workspace; the pooled all-sessions scope to the Sessions
+                  // list; an automated run to Runs.
+                  if (backToSessionId) {
+                    selectSession(backToSessionId)
+                    return
+                  }
                   if (isManualRunId(selectedRunId)) setLandingTabFromRun('sessions')
                   selectRun(null)
                 }}
                 className="h-7 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
               >
-                &larr; {isManualRunId(selectedRunId) ? 'Sessions' : 'Runs'}
+                &larr; {backToSessionId ? 'Session' : isManualRunId(selectedRunId) ? 'Sessions' : 'Runs'}
               </button>
               {isManualRunId(selectedRunId) ? (
                 <>
@@ -97,40 +108,6 @@ export default function App() {
                 <span className="font-mono text-xs text-text-muted">{selectedRunId}</span>
               )}
               {run && <span className="text-xs text-text-muted">{run.instrument}</span>}
-              {run?.source === 'manual' && run.session_ids?.length === 1 && (
-                <button
-                  onClick={() => selectSession(run.session_ids![0])}
-                  className="h-7 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
-                >
-                  Open session
-                </button>
-              )}
-            </>
-          )}
-          {!compareRunIds && selectedSessionId && (
-            <>
-              <div className="h-4 w-px bg-surface-2" />
-              <button
-                onClick={() => selectSession(null)}
-                className="h-7 rounded bg-surface-2 px-2 text-xs text-text hover:bg-surface-2-hover"
-              >
-                &larr; Sessions
-              </button>
-              <span className="font-mono text-xs text-text-muted">{selectedSessionId}</span>
-              {btSession && <span className="text-xs text-text-muted">{btSession.instrument}</span>}
-              {btSession?.discipline_lock && (
-                <span
-                  className="flex h-7 items-center gap-1 text-xs text-text-muted"
-                  title={
-                    btSession.lock_floor_time === null
-                      ? 'Discipline lock: once you place a trade, the replay cannot go back past it.'
-                      : 'Discipline lock engaged: the replay cannot go back past your first placed trade.'
-                  }
-                >
-                  <Lock size={14} aria-hidden />
-                  Discipline lock{btSession.lock_floor_time === null ? '' : ' · engaged'}
-                </span>
-              )}
             </>
           )}
           <button
@@ -201,7 +178,7 @@ export default function App() {
         </div>
       )}
       {!compareRunIds && selectedSessionId && (
-        <div key={selectedSessionId} className="propbt-fade-in h-[calc(100vh-52px)]">
+        <div key={selectedSessionId} className="propbt-fade-in h-screen">
           <SessionWorkspace sessionId={selectedSessionId} />
         </div>
       )}

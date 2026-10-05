@@ -7,7 +7,7 @@ import { useModalFocus } from './useModalFocus'
 import { useCreateBtSession } from '../api/hooks'
 import { useUiStore } from '../state/uiStore'
 import type { Timeframe } from '../state/uiStore'
-import { ET_LABEL, etWallTimeToUnix } from '../timeFormat'
+import { ET_LABEL, etDayEndUnix, etWallTimeToUnix } from '../timeFormat'
 
 const INSTRUMENTS = ['MNQ', 'MES'] as const
 const TOPSTEP_BALANCE = 50000
@@ -30,7 +30,12 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
   const [randomStart, setRandomStart] = useState(false)
   const [startingBalance, setStartingBalance] = useState(50000)
   const [riskPercent, setRiskPercent] = useState(1)
-  const [defaultContracts, setDefaultContracts] = useState(1)
+  // The Quick Buy/Sell quantity box's starting value; sizing is chosen per
+  // order afterwards (FXR_V2_SPEC.md section 1), and editable in the session.
+  const [quickQuantity, setQuickQuantity] = useState(1)
+  const [name, setName] = useState('')
+  // Optional: the session ends once the replay reaches the END of this ET day.
+  const [endDateInput, setEndDateInput] = useState('')
   const [commission, setCommission] = useState(1.3)
   // FXR_SPEC.md phase F6: run the session as a Topstep $50k Combine sim --
   // the rule engine (target/MLL/daily loss/consistency) judges the session's
@@ -44,19 +49,23 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
   if (!open) return null
 
   const startTime = randomStart ? null : localInputToUnixSeconds(startTimeInput)
-  const canSubmit = randomStart || startTime !== null
+  const endDate = !randomStart && endDateInput ? etDayEndUnix(endDateInput) : null
+  const endDateInvalid = endDate !== null && startTime !== null && endDate <= startTime
+  const canSubmit = (randomStart || startTime !== null) && !endDateInvalid
 
   const handleCreate = () => {
     if (!canSubmit) return
     createSession.mutate(
       {
-        instrument,
+        assets: [instrument],
+        name: name.trim() || null,
         base_timeframe: baseTimeframe,
         start_time: startTime,
+        end_date: endDate,
         random_start: randomStart,
         starting_balance: topstep ? TOPSTEP_BALANCE : startingBalance,
         risk_per_trade_percent: riskPercent,
-        default_contracts: defaultContracts,
+        quick_quantity: quickQuantity,
         commission_per_contract: commission,
         prop_ruleset: topstep ? 'topstep_50k' : null,
         discipline_lock: disciplineLock,
@@ -88,6 +97,18 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
         </div>
 
         <div className="flex flex-col gap-6 px-4 py-4">
+          <label className="flex flex-col gap-1">
+            <span className="micro-label">Name (optional)</span>
+            <input
+              type="text"
+              value={name}
+              maxLength={80}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. NY open reps"
+              className="propbt-input"
+            />
+          </label>
+
           <div>
             <div className="micro-label mb-2">Instrument</div>
             <div className="flex gap-2">
@@ -142,6 +163,22 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
             </div>
           </div>
 
+          <div>
+            <div className="micro-label mb-2">End date (optional)</div>
+            <div className="flex items-center gap-3">
+              <input
+                type="date"
+                value={endDateInput}
+                onChange={(e) => setEndDateInput(e.target.value)}
+                disabled={randomStart}
+                className="propbt-input"
+              />
+              <span className="text-xs text-text-muted">
+                {randomStart ? 'Not available with a random start' : endDateInvalid ? 'Must be after the start' : 'The replay stops at the end of this day'}
+              </span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <label className="flex flex-col gap-1">
               <span className="micro-label">Starting balance</span>
@@ -165,12 +202,12 @@ export default function NewSessionModal({ open, onClose }: { open: boolean; onCl
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="micro-label">Default contracts</span>
+              <span className="micro-label">Quick quantity</span>
               <input
                 type="number"
                 min={1}
-                value={defaultContracts}
-                onChange={(e) => setDefaultContracts(Number(e.target.value))}
+                value={quickQuantity}
+                onChange={(e) => setQuickQuantity(Math.max(1, Math.floor(Number(e.target.value)) || 1))}
                 className="propbt-input"
               />
             </label>

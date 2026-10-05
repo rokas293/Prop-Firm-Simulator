@@ -21,6 +21,7 @@ import type {
   SummarizeResponse,
   TradeRecord,
   UpdateSessionNotesRequest,
+  UpdateSessionSettingsRequest,
   UpdateSessionStateRequest,
   UpdateTradeJournalRequest,
 } from './types'
@@ -146,6 +147,8 @@ export const api = {
   archiveBtSession: (sessionId: string) => postRequest<BacktestSessionDetail>(`/bt-sessions/${sessionId}/archive`),
   updateBtSessionNotes: (sessionId: string, notes: string) =>
     sendJson<BacktestSessionDetail, UpdateSessionNotesRequest>(`/bt-sessions/${sessionId}/notes`, 'PATCH', { notes }),
+  updateBtSessionSettings: (sessionId: string, body: UpdateSessionSettingsRequest) =>
+    sendJson<BacktestSessionDetail, UpdateSessionSettingsRequest>(`/bt-sessions/${sessionId}/settings`, 'PATCH', body),
   getBtSessionTrades: (sessionId: string) => request<ManualTrade[]>(`/bt-sessions/${sessionId}/trades`),
   createManualTrade: (sessionId: string, body: CreateManualTradeRequest) =>
     sendJson<RecordTradeResponse, CreateManualTradeRequest>(`/bt-sessions/${sessionId}/trades`, 'POST', body),

@@ -26,5 +26,14 @@ export function isRewindBlocked(lockOn: boolean, floorTime: number | null, bars:
   return targetIndex < lockFloorIndex(bars, floorTime)
 }
 
+// Prop sessions cannot be rewound at all (FXR_V2_SPEC.md section 4); the backend
+// refuses a rewound cursor on save too.
+export const PROP_REWIND_MESSAGE =
+  "Prop sessions can't be rewound: like a live Combine, the replay only moves forward."
+
+export function isPropRewind(isProp: boolean, currentIndex: number, targetIndex: number): boolean {
+  return isProp && targetIndex < currentIndex
+}
+
 export const REWIND_BLOCKED_MESSAGE =
   "Discipline lock is on: the replay can't go back past the bar where you placed your first trade."

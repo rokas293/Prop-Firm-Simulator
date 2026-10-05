@@ -36,7 +36,7 @@ def _create(bt_client, **overrides):
         "start_time": _valid_start_time(),
         "starting_balance": 50000.0,
         "risk_per_trade_percent": 1.0,
-        "default_contracts": 1,
+        "quick_quantity": 1,
         "commission_per_contract": 1.3,
     }
     body.update(overrides)
@@ -158,7 +158,7 @@ def test_list_sessions_shape_includes_account_for_the_list_ui(bt_client):
 
 def test_resume_restores_exact_cursor_and_account_state(bt_client):
     _skip_if_no_mes_data()
-    created = _create(bt_client, starting_balance=25000.0, default_contracts=3).json()
+    created = _create(bt_client, starting_balance=25000.0, quick_quantity=3).json()
     session_id = created["id"]
 
     # Simulate stepping replay forward a few bars, then reload before the
@@ -173,7 +173,8 @@ def test_resume_restores_exact_cursor_and_account_state(bt_client):
     reloaded = bt_client.get(f"/api/bt-sessions/{session_id}").json()
     assert reloaded["cursor_time"] == first_step_time
     assert reloaded["account"]["starting_balance"] == 25000.0
-    assert reloaded["account"]["default_contracts"] == 3
+    assert reloaded["quick_quantity"] == 3
+    assert "default_contracts" not in reloaded["account"]
 
     # Advance further and confirm the SAVE -> RESUME round trip holds again
     # at a second, different cursor -- not just "whatever the first save was".
@@ -763,3 +764,114 @@ def test_session_without_discipline_lock_can_always_rewind(bt_client):
     placed_at = s["start_time"] + 900
     assert _patch_cursor(bt_client, s["id"], placed_at, position=_position_payload()).json()["lock_floor_time"] is None
     assert _patch_cursor(bt_client, s["id"], s["start_time"]).status_code == 200
+
+
+# --- FXR_V2_SPEC.md G1: assets[], end_date, quick_quantity, v1 migration.
+
+def test_create_session_v2_fields_default_and_roundtrip(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client, name="  London reps  ", quick_quantity=2).json()
+    assert created["name"] == "London reps"
+    assert created["assets"] == ["MES"] and created["instrument"] == "MES"
+    assert created["quick_quantity"] == 2
+    assert created["end_date"] is None
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json() == created
+
+
+def test_create_session_accepts_assets_and_picks_the_primary(bt_client):
+    _skip_if_no_mes_data()
+    body = {"base_timeframe": "5min", "start_time": _valid_start_time(), "assets": ["MNQ", "MES"], "instrument": "MES"}
+    r = bt_client.post("/api/bt-sessions", json=body)
+    assert r.status_code == 200
+    assert r.json()["assets"] == ["MES", "MNQ"] and r.json()["instrument"] == "MES"
+    # assets alone: the first is primary.
+    r2 = bt_client.post("/api/bt-sessions", json={"base_timeframe": "5min", "start_time": _valid_start_time(), "assets": ["MES"]})
+    assert r2.status_code == 200 and r2.json()["instrument"] == "MES"
+
+
+@pytest.mark.parametrize("extra", [{"assets": ["ZN"]}, {"assets": ["MES", "MES"]}, {"assets": ["MES"], "instrument": "MNQ"}, {"assets": []}])
+def test_create_session_rejects_bad_assets(bt_client, extra):
+    body = {"base_timeframe": "5min", "start_time": _valid_start_time(), **extra}
+    assert bt_client.post("/api/bt-sessions", json=body).status_code == 400
+
+
+def test_create_session_rejects_end_date_not_after_start_or_with_random_start(bt_client):
+    _skip_if_no_mes_data()
+    start = _valid_start_time()
+    assert _create(bt_client, end_date=start).status_code == 400
+    assert _create(bt_client, end_date=start - 60).status_code == 400
+    assert _create(bt_client, random_start=True, end_date=start + 3600).status_code == 400
+    assert _create(bt_client, end_date=start + 3600).status_code == 200
+
+
+def test_cursor_cannot_pass_end_date(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client, end_date=_valid_start_time() + 3600).json()
+    url = f"/api/bt-sessions/{created['id']}/cursor"
+    assert bt_client.patch(url, json={"cursor_time": created["end_date"]}).status_code == 200
+    r = bt_client.patch(url, json={"cursor_time": created["end_date"] + 300})
+    assert r.status_code == 400 and "end_date" in r.json()["detail"]
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["cursor_time"] == created["end_date"]
+
+
+def test_update_settings_persists_quick_quantity_and_name(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    url = f"/api/bt-sessions/{created['id']}/settings"
+    r = bt_client.patch(url, json={"quick_quantity": 4})
+    assert r.status_code == 200 and r.json()["quick_quantity"] == 4 and r.json()["name"] is None
+    # A name-only patch leaves the quantity alone.
+    r = bt_client.patch(url, json={"name": "Opening drive"})
+    assert r.json()["name"] == "Opening drive" and r.json()["quick_quantity"] == 4
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["quick_quantity"] == 4
+    assert bt_client.patch(url, json={"quick_quantity": 0}).status_code == 400
+    assert bt_client.patch("/api/bt-sessions/nope/settings", json={"quick_quantity": 1}).status_code == 404
+
+
+def test_update_settings_quick_quantity_respects_the_prop_cap(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client, prop_ruleset="topstep_50k").json()
+    url = f"/api/bt-sessions/{created['id']}/settings"
+    assert bt_client.patch(url, json={"quick_quantity": 5}).status_code == 200
+    assert bt_client.patch(url, json={"quick_quantity": 6}).status_code == 400
+
+
+def test_v1_session_json_is_migrated_without_data_loss(bt_client, tmp_path):
+    """A pre-v2 session.json (no assets/end_date/quick_quantity/name, and
+    default_contracts on the account) loads with its contract count carried
+    to quick_quantity, its instrument as the asset list, and every other
+    field -- including an open position and the discipline lock -- intact."""
+    import json
+    sid = "20250101T000000Z_legacy01"
+    d = tmp_path / "bt_sessions" / sid
+    d.mkdir(parents=True)
+    v1 = {
+        "id": sid, "instrument": "MNQ", "base_timeframe": "5min", "start_time": 1741615800,
+        "created_at": "2025-03-10T14:30:00+00:00", "updated_at": "2025-03-10T15:00:00+00:00",
+        "cursor_time": 1741619400, "status": "active",
+        "account": {
+            "id": "acct1", "starting_balance": 50000.0, "balance": 50123.5, "currency": "USD",
+            "risk_per_trade_percent": 1.0, "risk_per_trade_usd": None, "default_contracts": 3,
+            "commission_per_contract": 1.3, "prop_ruleset": "topstep_50k", "max_contracts": 5,
+        },
+        "settings": {"random_start": False}, "discipline_lock": True, "lock_floor_time": 1741617000,
+        "position": {"side": "long", "contracts": 3, "entry_price": 20000.25, "entry_time": 1741617000,
+                     "risk_usd": 500.0, "sl_price": 19990.0, "tp_price": 20030.0, "auto_breakeven": True, "trailing_points": None},
+        "working_orders": [], "notes": "keep an eye on the open",
+    }
+    (d / "session.json").write_text(json.dumps(v1), encoding="utf-8")
+
+    got = bt_client.get(f"/api/bt-sessions/{sid}").json()
+    assert got["quick_quantity"] == 3
+    assert got["assets"] == ["MNQ"] and got["instrument"] == "MNQ"
+    assert got["end_date"] is None and got["name"] is None
+    assert "default_contracts" not in got["account"]
+    assert got["account"]["balance"] == 50123.5 and got["account"]["prop_ruleset"] == "topstep_50k"
+    assert got["position"]["entry_price"] == 20000.25 and got["position"]["auto_breakeven"] is True
+    assert got["discipline_lock"] is True and got["lock_floor_time"] == 1741617000
+    assert got["notes"] == "keep an eye on the open"
+    # It also appears in the list, and a later write persists the v2 shape.
+    assert any(s["id"] == sid and s["quick_quantity"] == 3 for s in bt_client.get("/api/bt-sessions").json())
+    bt_client.patch(f"/api/bt-sessions/{sid}/notes", json={"notes": "edited"})
+    on_disk = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    assert on_disk["quick_quantity"] == 3 and on_disk["assets"] == ["MNQ"] and "default_contracts" not in on_disk["account"]

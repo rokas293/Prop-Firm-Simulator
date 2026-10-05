@@ -67,6 +67,16 @@ def update_session_notes(session_id: str, req: models.UpdateSessionNotesRequest)
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.patch("/{session_id}/settings", response_model=models.BacktestSessionDetail)
+def update_session_settings(session_id: str, req: models.UpdateSessionSettingsRequest) -> models.BacktestSessionDetail:
+    try:
+        return bt_session_service.update_session_settings(session_id, req)
+    except bt_session_service.SessionNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except bt_session_service.InvalidSessionRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/{session_id}/trades", response_model=List[models.ManualTrade])
 def list_trades(session_id: str) -> List[models.ManualTrade]:
     try:

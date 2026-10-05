@@ -22,7 +22,9 @@ import datetime as dt
 import json
 import random
 import re
+import threading
 import uuid
+from functools import wraps
 from pathlib import Path
 from typing import List, Optional
 
@@ -90,6 +92,24 @@ ALLOWED_GRADES = ("A", "B", "C")
 _DATA_URL_RE = re.compile(r"^data:image/(?P<ext>png|jpe?g|webp);base64,(?P<data>.+)$", re.DOTALL)
 
 
+# Every mutator below is a read-modify-write of the same session.json/trades.json,
+# and FastAPI runs these sync endpoints on a thread pool. The browser fires
+# several in quick succession (a cursor save per replay step, a trade POST, a
+# Quick-quantity PATCH), so without serialising them one request's write can
+# silently overwrite another's. One process-wide re-entrant lock is enough for
+# this single-user app (the frontend's own awaiting only ordered two of them).
+_WRITE_LOCK = threading.RLock()
+
+
+def _serialised(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _WRITE_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
 def _session_dir(session_id: str) -> Path:
     return get_bt_sessions_dir() / session_id
 
@@ -111,6 +131,23 @@ def _validate_instrument(instrument: str) -> None:
 def _validate_timeframe(tf: str) -> None:
     if tf not in ALLOWED_TIMEFRAMES:
         raise InvalidSessionRequest(f"base_timeframe must be one of {ALLOWED_TIMEFRAMES}, got {tf!r}")
+
+
+def _resolve_assets(req: models.CreateSessionRequest) -> List[str]:
+    """The session's asset list; assets[0] is its primary instrument."""
+    assets = list(req.assets) if req.assets else ([req.instrument] if req.instrument else [])
+    if not assets:
+        raise InvalidSessionRequest("at least one asset (assets or instrument) is required")
+    if len(set(assets)) != len(assets):
+        raise InvalidSessionRequest(f"assets must not repeat, got {assets}")
+    for a in assets:
+        _validate_instrument(a)
+    if req.instrument is not None and req.instrument not in assets:
+        raise InvalidSessionRequest(f"instrument {req.instrument!r} must be one of assets {assets}")
+    if req.instrument is not None:
+        assets.remove(req.instrument)
+        assets.insert(0, req.instrument)
+    return assets
 
 
 def _resolve_start_time(instrument: str, req: models.CreateSessionRequest) -> int:
@@ -142,8 +179,8 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
         raise InvalidSessionRequest("set only one of risk_per_trade_percent/risk_per_trade_usd, not both")
     if req.starting_balance <= 0:
         raise InvalidSessionRequest("starting_balance must be positive")
-    if req.default_contracts < 1:
-        raise InvalidSessionRequest("default_contracts must be at least 1")
+    if req.quick_quantity < 1:
+        raise InvalidSessionRequest("quick_quantity must be at least 1")
     if req.commission_per_contract < 0:
         raise InvalidSessionRequest("commission_per_contract cannot be negative")
     if req.prop_ruleset is not None:
@@ -161,9 +198,9 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
     max_contracts = None
     if req.prop_ruleset is not None:
         max_contracts = load_prop_rules().max_open_contracts
-        if req.default_contracts > max_contracts:
+        if req.quick_quantity > max_contracts:
             raise InvalidSessionRequest(
-                f"default_contracts {req.default_contracts} exceeds the {req.prop_ruleset} position limit of {max_contracts} contracts"
+                f"quick_quantity {req.quick_quantity} exceeds the {req.prop_ruleset} position limit of {max_contracts} contracts"
             )
 
     return models.SimAccountModel(
@@ -173,7 +210,6 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
         currency="USD",
         risk_per_trade_percent=req.risk_per_trade_percent,
         risk_per_trade_usd=req.risk_per_trade_usd,
-        default_contracts=req.default_contracts,
         commission_per_contract=req.commission_per_contract,
         prop_ruleset=req.prop_ruleset,
         max_contracts=max_contracts,
@@ -231,27 +267,57 @@ def _write(session_id: str, data: dict) -> None:
     (session_dir / "session.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _migrate(data: dict) -> dict:
+    """Lifts a v1 session.json to the v2 shape in memory (FXR_V2_SPEC.md
+    section 4); the next write persists it. Nothing is dropped:
+      - account.default_contracts becomes the session's quick_quantity,
+      - the single `instrument` becomes the one-element `assets` list,
+      - end_date/name are simply absent (None) -- a v1 session never ended.
+    Idempotent, so already-migrated files pass through unchanged.
+    """
+    account = data.get("account", {})
+    legacy_contracts = account.pop("default_contracts", None)
+    if "quick_quantity" not in data:
+        data["quick_quantity"] = legacy_contracts if legacy_contracts is not None else 1
+    if not data.get("assets"):
+        data["assets"] = [data["instrument"]]
+    data.setdefault("end_date", None)
+    data.setdefault("name", None)
+    return data
+
+
 def _read(session_id: str) -> dict:
     path = _session_dir(session_id) / "session.json"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return _migrate(json.loads(path.read_text(encoding="utf-8")))
     except FileNotFoundError:
         raise SessionNotFound(session_id)
 
 
+@_serialised
 def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDetail:
-    _validate_instrument(req.instrument)
+    assets = _resolve_assets(req)
+    instrument = assets[0]
     _validate_timeframe(req.base_timeframe)
-    start_time = _resolve_start_time(req.instrument, req)
+    start_time = _resolve_start_time(instrument, req)
     account = _account_from_request(req)
+    if req.end_date is not None:
+        if req.random_start:
+            raise InvalidSessionRequest("end_date cannot be combined with random_start")
+        if req.end_date <= start_time:
+            raise InvalidSessionRequest(f"end_date {req.end_date} must be after start_time {start_time}")
 
     now = dt.datetime.now(dt.timezone.utc)
     session_id = _generate_session_id(now)
     data = {
         "id": session_id,
-        "instrument": req.instrument,
+        "name": (req.name or "").strip() or None,
+        "instrument": instrument,
+        "assets": assets,
         "base_timeframe": req.base_timeframe,
         "start_time": start_time,
+        "end_date": req.end_date,
+        "quick_quantity": req.quick_quantity,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
         # Replay always begins exactly at the anchor -- resuming with no
@@ -297,6 +363,7 @@ def get_session(session_id: str) -> models.BacktestSessionDetail:
     return models.BacktestSessionDetail.model_validate(data)
 
 
+@_serialised
 def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.BacktestSessionDetail:
     """Advances the cursor AND persists the full current broker state
     (F4) in one write -- also called with cursor_time left unchanged by
@@ -311,6 +378,19 @@ def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.Ba
     if req.cursor_time < data["start_time"]:
         raise InvalidSessionRequest(
             f"cursor_time {req.cursor_time} is before this session's start_time {data['start_time']}"
+        )
+    # Prop sessions cannot be rewound at all (FXR_V2_SPEC.md section 4/5, like
+    # a live Combine): the cursor only ever moves forward, enforced here so a
+    # stale or hand-built client can't step back either.
+    if data["account"].get("prop_ruleset") and req.cursor_time < data["cursor_time"]:
+        raise InvalidSessionRequest(
+            f"prop session: the replay cannot be rewound (cursor_time {req.cursor_time} is before the saved cursor {data['cursor_time']})"
+        )
+    # The session ends at end_date: the cursor never goes past it (the same
+    # no-look-ahead boundary, enforced at persistence like start_time above).
+    if data.get("end_date") is not None and req.cursor_time > data["end_date"]:
+        raise InvalidSessionRequest(
+            f"cursor_time {req.cursor_time} is after this session's end_date {data['end_date']}"
         )
     # Defense in depth: the sim broker lives in the browser and refuses an
     # over-cap order itself (positionCap.ts); this keeps a hand-built or
@@ -341,6 +421,7 @@ def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.Ba
     return models.BacktestSessionDetail.model_validate(data)
 
 
+@_serialised
 def archive_session(session_id: str) -> models.BacktestSessionDetail:
     data = _read(session_id)
     data["status"] = "archived"
@@ -349,6 +430,7 @@ def archive_session(session_id: str) -> models.BacktestSessionDetail:
     return models.BacktestSessionDetail.model_validate(data)
 
 
+@_serialised
 def update_session_notes(session_id: str, req: models.UpdateSessionNotesRequest) -> models.BacktestSessionDetail:
     """FXR_SPEC.md section C: "Session-level notes too" -- a free-text
     field on the session itself, separate from any one trade's journal.
@@ -360,11 +442,32 @@ def update_session_notes(session_id: str, req: models.UpdateSessionNotesRequest)
     return models.BacktestSessionDetail.model_validate(data)
 
 
+@_serialised
+def update_session_settings(session_id: str, req: models.UpdateSessionSettingsRequest) -> models.BacktestSessionDetail:
+    """Per-session settings the workspace edits in place: the display name and
+    the Quick Buy/Sell quantity (FXR_V2_SPEC.md section 3.1: "persists per
+    session"). Only the fields actually sent change."""
+    data = _read(session_id)
+    updates = req.model_dump(exclude_unset=True)
+    if "quick_quantity" in updates:
+        qty = updates["quick_quantity"]
+        if qty is None or qty < 1:
+            raise InvalidSessionRequest("quick_quantity must be at least 1")
+        _check_cap(data, qty, "quick quantity")
+        data["quick_quantity"] = qty
+    if "name" in updates:
+        data["name"] = (updates["name"] or "").strip() or None
+    data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    _write(session_id, data)
+    return models.BacktestSessionDetail.model_validate(data)
+
+
 def list_trades(session_id: str) -> List[models.ManualTrade]:
     _read(session_id)  # raises SessionNotFound if the session itself doesn't exist
     return [models.ManualTrade.model_validate(t) for t in _read_trades(session_id)]
 
 
+@_serialised
 def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> models.RecordTradeResponse:
     """Journals a closed manual trade and applies its net PnL to the
     session's account balance, atomically (one write to each file, both
@@ -406,6 +509,7 @@ def _find_trade_index(session_id: str, trades: list, trade_id: int) -> int:
     return idx
 
 
+@_serialised
 def update_trade_journal(
     session_id: str, trade_id: int, req: models.UpdateTradeJournalRequest
 ) -> models.ManualTrade:
@@ -431,6 +535,7 @@ def update_trade_journal(
     return models.ManualTrade.model_validate(trades[idx])
 
 
+@_serialised
 def add_trade_screenshot(
     session_id: str, trade_id: int, req: models.AddScreenshotRequest
 ) -> models.ManualTrade:
@@ -472,6 +577,7 @@ def add_trade_screenshot(
     return models.ManualTrade.model_validate(trades[idx])
 
 
+@_serialised
 def delete_trade_screenshot(session_id: str, trade_id: int, screenshot_id: str) -> models.ManualTrade:
     _read(session_id)
     trades = _read_trades(session_id)

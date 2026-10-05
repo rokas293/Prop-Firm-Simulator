@@ -10,6 +10,7 @@ import type {
   ManualTrade,
   PersistedPosition,
   PersistedWorkingOrder,
+  UpdateSessionSettingsRequest,
   UpdateTradeJournalRequest,
 } from './types'
 
@@ -271,6 +272,20 @@ export function useCreateManualTrade() {
       void queryClient.invalidateQueries({ queryKey: ['bt-session-trades', sessionId] })
       // A closed trade can resolve a Topstep Combine -- refresh its verdict.
       void queryClient.invalidateQueries({ queryKey: ['stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
+    },
+  })
+}
+
+// FXR_V2_SPEC.md G1: per-session settings edited in place (the Quick quantity
+// box, the display name) -- the response is written straight into the cache.
+export function useUpdateBtSessionSettings() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sessionId, body }: { sessionId: string; body: UpdateSessionSettingsRequest }) =>
+      api.updateBtSessionSettings(sessionId, body),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['bt-session', updated.id], updated)
       void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
     },
   })

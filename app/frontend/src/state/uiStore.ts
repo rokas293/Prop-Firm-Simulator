@@ -45,6 +45,13 @@ interface UiState {
   pendingJournalTrade: number | null
   openJournalTrade: (sessionId: string, tradeId: number) => void
   consumeJournalTrade: () => void
+  // The app-level overlays (Settings, the "?" shortcuts list). Lifted out of
+  // App.tsx so the session workspace's own top bar (which replaces the global
+  // header there) can open them. Never persisted.
+  settingsOpen: boolean
+  setSettingsOpen: (v: boolean) => void
+  shortcutsOpen: boolean
+  setShortcutsOpen: (v: boolean) => void
 }
 
 // Persisted to localStorage (Phase V7: "persist view state -- selected
@@ -76,6 +83,10 @@ export const useUiStore = create<UiState>()(
       openJournalTrade: (sessionId, tradeId) =>
         set({ selectedSessionId: sessionId, selectedRunId: null, pendingJournalTrade: tradeId }),
       consumeJournalTrade: () => set({ pendingJournalTrade: null }),
+      settingsOpen: false,
+      setSettingsOpen: (v) => set({ settingsOpen: v }),
+      shortcutsOpen: false,
+      setShortcutsOpen: (v) => set({ shortcutsOpen: v }),
     }),
     {
       name: 'propbt-viz:ui-state',

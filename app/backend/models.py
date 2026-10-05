@@ -213,7 +213,6 @@ class SimAccountModel(BaseModel):
     # when actually used to size a trade (F2+); nothing in F1 reads it yet.
     risk_per_trade_percent: Optional[float] = None
     risk_per_trade_usd: Optional[float] = None
-    default_contracts: int
     commission_per_contract: float
     # FXR_SPEC.md section 2/B, phase F6: optional prop ruleset ("topstep_50k"
     # = propbt/config/prop_rules.yaml). None = a plain practice account.
@@ -226,7 +225,14 @@ class SimAccountModel(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    instrument: str
+    # FXR_V2_SPEC.md section 4 (G1): `assets` is the session's instrument
+    # list (MNQ/MES); `instrument` stays as the single-asset shorthand and,
+    # when both are given, must be one of `assets` (it becomes the primary --
+    # the chart's symbol until multi-asset replay lands in G7). At least one
+    # of the two is required.
+    instrument: Optional[str] = None
+    assets: Optional[List[str]] = None
+    name: Optional[str] = None
     base_timeframe: str
     # Exactly one of start_time/random_start is used (random_start=True
     # ignores start_time and picks server-side, so the client never sees --
@@ -236,7 +242,12 @@ class CreateSessionRequest(BaseModel):
     starting_balance: float = 50000.0
     risk_per_trade_percent: Optional[float] = 1.0
     risk_per_trade_usd: Optional[float] = None
-    default_contracts: int = 1
+    # The Quick Buy/Sell quantity box's starting value (persisted per session
+    # and editable from the bottom bar) -- replaces v1's default_contracts.
+    quick_quantity: int = 1
+    # Unix seconds of the last instant the cursor may reach (None = run to the
+    # end of the data). Cannot be combined with random_start.
+    end_date: Optional[int] = None
     commission_per_contract: float = 1.0
     prop_ruleset: Optional[str] = None
     # FXR_SPEC.md section F, phase F7b: "no rewind past a placed trade".
@@ -289,9 +300,19 @@ class PropStatus(BaseModel):
 
 class BacktestSessionSummary(BaseModel):
     id: str
+    # Optional display name; the UI falls back to "<assets> · <start date>".
+    name: Optional[str] = None
+    # Primary instrument (== assets[0]); kept because the chart/bars/trades
+    # all key on a single symbol until multi-asset replay (G7).
     instrument: str
+    assets: List[str] = Field(default_factory=list)
     base_timeframe: str
     start_time: int
+    # The cursor stops at this time (inclusive of the last bar at or before
+    # it). None = no end (v1 sessions).
+    end_date: Optional[int] = None
+    # Whole contracts the Quick Buy/Sell uses; persisted per session.
+    quick_quantity: int = 1
     created_at: str
     updated_at: str
     cursor_time: int
@@ -319,6 +340,12 @@ class BacktestSessionDetail(BacktestSessionSummary):
 
 class UpdateSessionNotesRequest(BaseModel):
     notes: str
+
+
+class UpdateSessionSettingsRequest(BaseModel):
+    # Only the fields actually sent are applied (exclude_unset).
+    name: Optional[str] = None
+    quick_quantity: Optional[int] = None
 
 
 class UpdateCursorRequest(BaseModel):

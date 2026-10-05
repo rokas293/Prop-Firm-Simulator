@@ -1,3 +1,11 @@
+// FXR_V2_SPEC.md phase G1: the session screen is one full-bleed chart between
+// a thin top bar (SessionTopBar: back/name/settings, the playback pill, the
+// actions) and a thin bottom bar (SessionBottomBar: Buy/Sell/Quantity, the
+// balances), with a slide-up Positions | Orders | History panel (TradePanel).
+// The dock panels (Dashboard, Prop Risk, Equity, Trade List) are NOT here --
+// they live on the Analytics route (Workspace.tsx, reached from the bottom
+// bar). All the v1 behaviour below is unchanged; only the chrome moved.
+//
 // FXR_SPEC.md phases F1/F2/F3: a lean chart-only workspace for a manual-
 // replay session -- deliberately NOT the full Workspace.tsx/ChartPanel.tsx
 // (those are dockable-panel/trade-review machinery built around a
@@ -10,9 +18,8 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
-import { runningTotals } from '../chart/replay'
 import { positionCapMessage } from '../chart/positionCap'
-import { isRewindBlocked, lockFloorIndex, REWIND_BLOCKED_MESSAGE } from '../chart/discipline'
+import { isPropRewind, isRewindBlocked, lockFloorIndex, PROP_REWIND_MESSAGE, REWIND_BLOCKED_MESSAGE } from '../chart/discipline'
 import { magnifierRange } from '../chart/magnifier'
 import { useSessionHotkeys } from '../keyboard/useSessionHotkeys'
 import { combineBanner } from '../compass/propResult'
@@ -37,10 +44,30 @@ import {
   type WorkingOrder,
 } from '../chart/simBroker'
 import type { ContextMenuEntry } from '../components/ContextMenu'
-import ReplayControls, { stepSpeed } from '../panels/ReplayControls'
+import { stepSpeed } from '../panels/ReplayControls'
 import MagnifierPanel from '../panels/MagnifierPanel'
-import PositionTicket, { type WorkingOrderSummary } from '../panels/PositionTicket'
 import TradeTicketPanel, { type TicketReadout } from '../panels/TradeTicketPanel'
+import SessionTopBar from './SessionTopBar'
+import SessionBottomBar from './SessionBottomBar'
+import SessionChartToolbar from './SessionChartToolbar'
+import KLDrawingToolbar from '../panels/KLDrawingToolbar'
+import IndicatorDialog from '../panels/IndicatorDialog'
+import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
+import { canRedo, canUndo, emptyHistory, recordDrawings, redo, undo, type DrawingHistory } from '../chart/kl/drawingHistory'
+import { useKLDrawingStore } from '../state/klDrawingStore'
+import { DRAWING_SHORTCUTS, isTypingTarget } from '../keyboard/shortcuts'
+import TradePanel, { type PositionRow, type WorkingOrderRow } from './TradePanel'
+import PropRulesPopover from './PropRulesPopover'
+import {
+  isSessionEnded,
+  lastAllowedIndex,
+  sessionDisplayName,
+  STEP_GRANULARITIES,
+  stepBarCount,
+  steppedIndex,
+  type StepGranularityLabel,
+} from '../chart/sessionEnd'
+import { clampPanelHeight, PANEL_DEFAULT_HEIGHT, useSessionPrefsStore } from '../state/sessionPrefsStore'
 import {
   useBtSession,
   useBtSessionTrades,
@@ -53,11 +80,12 @@ import {
   useStats,
   useUpdateBtSessionCursor,
   useUpdateBtSessionNotes,
+  useUpdateBtSessionSettings,
   useUpdateTradeJournal,
 } from '../api/hooks'
 import { useIndicatorStore } from '../state/indicatorStore'
 import { useUiStore } from '../state/uiStore'
-import { useThemeBase } from '../state/themeStore'
+import { useThemeBase, useThemeStore } from '../state/themeStore'
 import {
   manualRunId,
   type AddScreenshotRequest,
@@ -69,6 +97,7 @@ import {
   type UpdateTradeJournalRequest,
 } from '../api/types'
 import EmptyState from '../components/EmptyState'
+import { fmtEtDate, fmtEtDateTime } from '../timeFormat'
 
 // The journal drawer loads on first open, not in the entry chunk.
 const JournalPanel = lazy(() => import('../panels/JournalPanel'))
@@ -216,6 +245,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const updateCursor = useUpdateBtSessionCursor()
   const createTrade = useCreateManualTrade()
   const updateSessionNotes = useUpdateBtSessionNotes()
+  const updateSessionSettings = useUpdateBtSessionSettings()
   const updateTradeJournal = useUpdateTradeJournal()
   const addTradeScreenshot = useAddTradeScreenshot()
   const deleteTradeScreenshot = useDeleteTradeScreenshot()
@@ -224,6 +254,39 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // FXR_SPEC.md section C, phase F5: the journal drawer -- local UI state,
   // not persisted (unlike everything it shows, which lives on the backend).
   const [journalOpen, setJournalOpen] = useState(false)
+  // G1 shell state: the Prop Rules popover, the viewer's persisted prefs
+  // (panel, eyes, auto-play, step granularity) and the Quick quantity box.
+  const [propRulesOpen, setPropRulesOpen] = useState(false)
+  // The chart toolbar row / left drawing toolbar (reused as-is from the
+  // review workspace): the drawings list and armed tool ChartKL reports, the
+  // Indicators dialog, and the drawing undo/redo history.
+  const [klDrawings, setKlDrawings] = useState<PersistedOverlay[]>([])
+  const [armedTool, setArmedTool] = useState<string | null>(null)
+  const [indicatorDialogOpen, setIndicatorDialogOpen] = useState(false)
+  const drawingHistoryRef = useRef<DrawingHistory>(emptyHistory())
+  const [, setHistoryVersion] = useState(0)
+  const prefs = useSessionPrefsStore()
+  const themeMode = useThemeStore((s) => s.mode)
+  const setThemeMode = useThemeStore((s) => s.setMode)
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
+  const setShortcutsOpen = useUiStore((s) => s.setShortcutsOpen)
+  const selectSession = useUiStore((s) => s.selectSession)
+  const [isFullscreen, setIsFullscreen] = useState(() => document.fullscreenElement !== null)
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement !== null)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen()
+    else void document.documentElement.requestFullscreen().catch(() => {})
+  }
+  // The Quick Buy/Sell quantity: local state is what orders read (so a Buy
+  // right after typing never sees a stale cache), mirrored to the backend on a
+  // short debounce. Re-seeded from the saved value when a session loads.
+  const [quickQty, setQuickQty] = useState(1)
+  const quickQtySeededRef = useRef<string | null>(null)
+  const qtySaveTimerRef = useRef<number | null>(null)
   // Why the last order was refused (Topstep position cap) -- quiet, dismissible.
   const [orderNotice, setOrderNotice] = useState<string | null>(null)
   // A Topstep session's Combine verdict (the same PropRulesTracker result the
@@ -328,6 +391,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     restoredForSessionRef.current = null
     cursorTimeRef.current = session.cursor_time
     lockFloorRef.current = session.lock_floor_time
+    drawingHistoryRef.current = emptyHistory()
+    setPropRulesOpen(false)
+    if (quickQtySeededRef.current !== session.id) {
+      quickQtySeededRef.current = session.id
+      setQuickQty(session.quick_quantity)
+    }
     setMagnifyBarTime(null)
     setMagnifierArmed(false)
     setWindowAnchor(session.cursor_time)
@@ -354,6 +423,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     barsWindow?.to ?? null,
     MAX_POINTS,
   )
+
+  // FXR_V2_SPEC.md section 4: the cursor stops at end_date -- the furthest bar
+  // it may reach in the loaded window (chart/sessionEnd.ts). Read by the step,
+  // play and hotkey paths below; advanceTo clamps to it as the one choke
+  // point, and the backend refuses a later cursor on save too.
+  const lastAllowed = bars ? lastAllowedIndex(bars, session?.end_date ?? null) : -1
+  const lastAllowedRef = useRef(lastAllowed)
+  lastAllowedRef.current = lastAllowed
+  const sessionEnded = bars ? isSessionEnded(bars, cursorIndex, session?.end_date ?? null) : false
 
   // F4: once this (new) session's bars have loaded, restore its persisted
   // position/working orders -- entry_time/placed_time are re-resolved to
@@ -526,8 +604,34 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // once per step, not twice -- reading cursorIndexRef instead of an
   // updater's `prev` gets the same "always current" guarantee without
   // that risk.
+  // Step granularity (the pill's dropdown): one step advances this many base
+  // bars. Until the 1m forming-candle replay (G5) a granularity finer than the
+  // session's base timeframe is unavailable; a saved one that is falls back to
+  // the base. advanceReplay evaluates every bar passed over, so a multi-bar
+  // step fills and stops exactly as the same single steps would.
+  const baseBarSeconds = session ? (BASE_TF_SECONDS[session.base_timeframe] ?? 300) : 300
+  const availableGranularities = new Set<StepGranularityLabel>(
+    STEP_GRANULARITIES.filter((g) => stepBarCount(g.seconds, baseBarSeconds) !== null).map((g) => g.label),
+  )
+  const granularity: StepGranularityLabel = availableGranularities.has(prefs.stepGranularity)
+    ? prefs.stepGranularity
+    : (STEP_GRANULARITIES.find((g) => availableGranularities.has(g.label))?.label ?? '1m')
+  const stepCount = stepBarCount(STEP_GRANULARITIES.find((g) => g.label === granularity)?.seconds ?? baseBarSeconds, baseBarSeconds) ?? 1
+
   const advanceTo = async (newIndex: number) => {
     if (!session || !bars) return
+    // end_date: never step past the last allowed bar. Reaching it ends playback.
+    if (lastAllowedRef.current >= 0 && newIndex > lastAllowedRef.current) {
+      newIndex = lastAllowedRef.current
+      setIsPlaying(false)
+      if (newIndex === cursorIndexRef.current) return
+    }
+    // Prop sessions never rewind (the backend refuses it too).
+    if (isPropRewind(!!session.account.prop_ruleset, cursorIndexRef.current, newIndex)) {
+      setIsPlaying(false)
+      setOrderNotice(PROP_REWIND_MESSAGE)
+      return
+    }
     // Discipline lock: no stepping, scrubbing or start-resetting to before the
     // bar the first trade was placed on (the backend refuses it too).
     if (isRewindBlocked(session.discipline_lock, lockFloorRef.current, bars, newIndex)) {
@@ -580,15 +684,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (!isPlaying || !bars || bars.length === 0) return
     const id = setInterval(() => {
       const prev = cursorIndexRef.current
-      if (prev >= bars.length - 1) {
+      if (prev >= lastAllowedRef.current) {
         setIsPlaying(false)
         return
       }
-      advanceTo(prev + 1)
+      advanceTo(steppedIndex(prev, 1, stepCount, 0, lastAllowedRef.current))
     }, 1000 / speed)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, bars, speed])
+  }, [isPlaying, bars, speed, stepCount])
+
 
   // While the window swaps (bars briefly undefined) keep the logical cursor
   // time, never null: a null cursor means "no replay", which would reveal
@@ -650,6 +755,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }
 
   const indicatorPrefs = useIndicatorStore()
+  const activeIndicatorCount = [
+    indicatorPrefs.sessionShading,
+    indicatorPrefs.fairValue,
+    indicatorPrefs.vwap,
+    indicatorPrefs.ema20,
+    indicatorPrefs.ema50,
+    indicatorPrefs.atr14,
+    indicatorPrefs.volume,
+  ].filter(Boolean).length
   const enabledIndicators = useMemo(() => {
     const names: IndicatorName[] = []
     if (indicatorPrefs.vwap) names.push('vwap')
@@ -685,8 +799,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // close (chart/simBroker.ts's documented convention) -- entry and exit
   // both read `bars[cursorIndex]` only, never a bar beyond it.
   const enterPosition = (side: Side) => {
-    if (!session || !bars || !bars[cursorIndex] || !flat) return
-    const capMsg = positionCapMessage(session.account.default_contracts, session.account.max_contracts, 'Market order')
+    if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return
+    const capMsg = positionCapMessage(quickQty, session.account.max_contracts, 'Market order')
     if (capMsg) {
       setOrderNotice(capMsg)
       return
@@ -695,7 +809,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const entryBar = bars[cursorIndex]
     const newPosition: OpenPosition = {
       side,
-      contracts: session.account.default_contracts,
+      contracts: quickQty,
       entryPrice: marketFillPrice(entryBar),
       entryTime: entryBar.time,
       entryIndex: cursorIndex,
@@ -781,7 +895,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // defaults around the current market price -- the user drags all 3
   // lines from there (see ChartKL's tradeTicket prop).
   const openTicket = () => {
-    if (!bars || !bars[cursorIndex] || !flat) return
+    if (!bars || !bars[cursorIndex] || !flat || sessionEnded) return
+    // The market would run under the lines being dragged: pause, unless the
+    // pill's Auto-play is on.
+    if (!prefs.autoPlay) setIsPlaying(false)
     const marketPrice = bars[cursorIndex].close
     setTicket({
       entryPrice: marketPrice,
@@ -868,10 +985,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // limit order could never actually be placed via right-click at all,
   // since the "obvious" breakout direction is always a stop. No SL/TP
   // attached via this quick path (the drag ticket above is the "full" flow
-  // for that); size uses the account's plain default_contracts, same as a
+  // for that); size uses the Quick quantity, same as a
   // quick Buy/Sell, since there's no SL distance here to auto-size against.
   const handleEmptyAreaMenuItems = (info: { time: number; price: number }): ContextMenuEntry[] => {
-    if (!session || !bars || !bars[cursorIndex] || !flat) return []
+    if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return []
     const spec = getContractSpec(session.instrument)
     const marketPrice = bars[cursorIndex].close
     const price = roundToTick(info.price, spec.tickSize)
@@ -879,7 +996,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
     const place = (side: Side, orderType: PendingOrderType) => () => {
       if (!bars[cursorIndex]) return
-      const capMsg = positionCapMessage(session.account.default_contracts, session.account.max_contracts, 'Order')
+      const capMsg = positionCapMessage(quickQty, session.account.max_contracts, 'Order')
       if (capMsg) {
         setOrderNotice(capMsg)
         return
@@ -890,7 +1007,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         side,
         orderType,
         price,
-        contracts: session.account.default_contracts,
+        contracts: quickQty,
         slPrice: null,
         tpPrice: null,
         riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
@@ -938,8 +1055,6 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [manualTrades, openPositionRecord],
   )
 
-  const replayTotals = useMemo(() => runningTotals(manualTrades ?? [], cursorTime), [manualTrades, cursorTime])
-
   const baseTfSeconds = session ? (BASE_TF_SECONDS[session.base_timeframe] ?? 300) : 300
   const handleCandleBarClick = (bar: { timestamp: number }) => {
     if (magnifierArmed) {
@@ -973,6 +1088,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           )
           const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec)
           return {
+            instrument: session.instrument,
             side,
             entryPrice: ticket.entryPrice,
             slPrice: ticket.slPrice,
@@ -984,7 +1100,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         })()
       : null
 
-  const workingOrderSummary: WorkingOrderSummary | null =
+  const workingOrderRow: WorkingOrderRow | null =
     workingOrders[0] && session
       ? {
           instrument: session.instrument,
@@ -996,6 +1112,114 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           tpPrice: workingOrders[0].tpPrice,
         }
       : null
+
+  const positionRow: PositionRow | null =
+    position && openPositionRecord && session
+      ? {
+          instrument: session.instrument,
+          side: position.side,
+          contracts: position.contracts,
+          entryPrice: position.entryPrice,
+          slPrice: position.slPrice,
+          tpPrice: position.tpPrice,
+          pnlUsd: openPositionRecord.pnl_usd,
+          rMultiple: openPositionRecord.r_multiple,
+        }
+      : null
+
+  // The discipline lock's floor: the pill's step-back stops here (the scrub
+  // slider that used to show it is gone; the lock itself is unchanged).
+  const minIndex = session?.discipline_lock && bars ? lockFloorIndex(bars, lockFloorRef.current) : 0
+
+  // One pill step forward/back: `stepCount` base bars, clamped to the allowed
+  // range (end_date forward, the lock floor back). advanceTo runs every fill
+  // check across the bars passed over.
+  const stepForward = () => {
+    if (!bars || lastAllowedRef.current < 0 || cursorIndexRef.current >= lastAllowedRef.current) return
+    handleCursorIndexChange(steppedIndex(cursorIndexRef.current, 1, stepCount, 0, lastAllowedRef.current))
+  }
+  const stepBack = () => {
+    if (!bars) return
+    if (session?.account.prop_ruleset) {
+      setOrderNotice(PROP_REWIND_MESSAGE)
+      return
+    }
+    if (session?.discipline_lock && cursorIndexRef.current <= minIndex && lockFloorRef.current !== null) {
+      setOrderNotice(REWIND_BLOCKED_MESSAGE)
+      return
+    }
+    if (cursorIndexRef.current <= minIndex) return
+    handleCursorIndexChange(steppedIndex(cursorIndexRef.current, -1, stepCount, minIndex, bars.length - 1))
+  }
+
+  const handleQuantityChange = (n: number) => {
+    setQuickQty(n)
+    if (!session) return
+    const sessionIdForSave = session.id
+    if (qtySaveTimerRef.current !== null) window.clearTimeout(qtySaveTimerRef.current)
+    qtySaveTimerRef.current = window.setTimeout(() => {
+      updateSessionSettings.mutate({ sessionId: sessionIdForSave, body: { quick_quantity: n } })
+    }, 400)
+  }
+
+  // Dragging the bottom bar's grip up resizes (and opens) the trade panel.
+  const panelDragBaseRef = useRef(0)
+  const handleGripDrag = (deltaUp: number, phase: 'start' | 'move' | 'end') => {
+    if (phase === 'start') panelDragBaseRef.current = prefs.panelOpen ? prefs.panelHeight : 0
+    if (phase !== 'move') return
+    if (!prefs.panelOpen) prefs.setPanelOpen(true)
+    prefs.setPanelHeight(clampPanelHeight(panelDragBaseRef.current + deltaUp, window.innerHeight))
+  }
+
+  // A History row opens that trade in the journal drawer.
+  const openTradeInJournal = (tradeId: number) => {
+    setJournalInitialTrade(tradeId)
+    setJournalOpen(true)
+  }
+
+  // Drawing history. ChartKL reports the persisted set on every change; an
+  // undo/redo writes the earlier set back to the same per-instrument store the
+  // chart already persists to (so it survives a reload) and asks it to redraw.
+  const handleDrawingsChange = (overlays: PersistedOverlay[]) => {
+    setKlDrawings(overlays)
+    drawingHistoryRef.current = recordDrawings(drawingHistoryRef.current, overlays)
+    setHistoryVersion((v) => v + 1)
+  }
+  const applyHistoryStep = (step: ReturnType<typeof undo>) => {
+    if (!step || !session) return
+    drawingHistoryRef.current = step.history
+    useKLDrawingStore.getState().setOverlaysForInstrument(session.instrument, step.restore)
+    klChartRef.current?.reloadDrawings()
+    setHistoryVersion((v) => v + 1)
+  }
+  const handleUndo = () => applyHistoryStep(undo(drawingHistoryRef.current))
+  const handleRedo = () => applyHistoryStep(redo(drawingHistoryRef.current))
+
+  const handleScreenshot = () => {
+    const url = klChartRef.current?.captureScreenshot()
+    if (!url || !session) return
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${session.instrument}-${fmtEtDateTime(cursorTimeRef.current ?? session.cursor_time).replace(/[: ]/g, '-')}.jpg`
+    a.click()
+  }
+
+  // Drawing hotkeys (H/T/Z/M/B, unshifted) and Escape cancelling a drawing in
+  // progress -- the same ones the review chart has. Trading hotkeys are
+  // Shift-guarded, so the two sets do not collide.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target) || document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      if (e.key === 'Escape') {
+        klChartRef.current?.cancelActiveDrawing()
+      } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && DRAWING_SHORTCUTS[e.key.toLowerCase()]) {
+        e.preventDefault()
+        klChartRef.current?.startDrawing(DRAWING_SHORTCUTS[e.key.toLowerCase()])
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Trading / replay hotkeys (F7b). Trading ones need Shift (shortcuts.ts);
   // every one goes through the same guarded handlers as its on-screen button,
@@ -1010,16 +1234,20 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       if (position && position.contracts >= 2 && !createTrade.isPending) handlePartialClose()
     },
     sessionNewTrade: openTicket,
-    sessionStep: () => {
-      if (bars && cursorIndexRef.current < bars.length - 1) handleCursorIndexChange(cursorIndexRef.current + 1)
-    },
-    sessionStepBack: () => {
-      if (cursorIndexRef.current > 0) handleCursorIndexChange(cursorIndexRef.current - 1)
-    },
+    sessionStep: stepForward,
+    sessionStepBack: stepBack,
     sessionPlayPause: () => setIsPlaying((v) => !v),
     sessionSpeedUp: () => setSpeed((s) => stepSpeed(s, 1)),
     sessionSpeedDown: () => setSpeed((s) => stepSpeed(s, -1)),
   })
+
+  // A refusal notice is informational: it clears itself after a few seconds
+  // (the x still dismisses it sooner).
+  useEffect(() => {
+    if (!orderNotice) return
+    const id = window.setTimeout(() => setOrderNotice(null), 6000)
+    return () => window.clearTimeout(id)
+  }, [orderNotice])
 
   const magnifyActive = magnifyBarTime !== null && magnifierRange(magnifyBarTime, baseTfSeconds, cursorTime) !== null
 
@@ -1030,93 +1258,84 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return <EmptyState title="Failed to load session" hint={(error as Error | undefined)?.message} />
   }
 
+  const cursorBar = bars?.[cursorIndex]
+  const unrealizedPnl = openPositionRecord?.pnl_usd ?? 0
+  const hasNotices = ticketReadout !== null || orderNotice !== null || banner !== null || sessionEnded
+
   return (
-    <div className="flex h-full w-full flex-col">
-      <ReplayControls
-        active
-        bars={bars ?? []}
-        cursorIndex={cursorIndex}
-        onCursorIndexChange={handleCursorIndexChange}
-        isPlaying={isPlaying}
-        onTogglePlaying={() => setIsPlaying((v) => !v)}
-        speed={speed}
-        onSpeedChange={setSpeed}
-        followLatestBar={followLatestBar}
-        onToggleFollowLatestBar={() => setFollowLatestBar((v) => !v)}
-        pickingReplayStart={pickingReplayStart}
-        onTogglePickingReplayStart={() => {
-          setMagnifierArmed(false)
-          setPickingReplayStart((v) => !v)
-        }}
-        minIndex={session.discipline_lock && bars ? lockFloorIndex(bars, lockFloorRef.current) : 0}
-        magnifierArmed={magnifierArmed}
-        onToggleMagnifier={
-          baseTfSeconds > 60
-            ? () => {
-                setPickingReplayStart(false)
-                setMagnifierArmed((v) => !v)
-              }
-            : undefined
-        }
-        runningPnl={replayTotals.pnlUsd}
-        runningR={replayTotals.r}
-        equity={null}
-        journalOpen={journalOpen}
-        onToggleJournal={() => setJournalOpen((v) => !v)}
-        onOpenAnalytics={() => selectRun(manualRunId(session.id))}
-      />
-      {ticketReadout ? (
-        <TradeTicketPanel ticket={ticketReadout} onConfirm={confirmTicket} onCancel={cancelTicket} />
-      ) : (
-        <PositionTicket
-          disabled={!bars || bars.length === 0}
-          position={
-            position && openPositionRecord
-              ? {
-                  instrument: session.instrument,
-                  side: position.side,
-                  contracts: position.contracts,
-                  entryPrice: position.entryPrice,
-                  slPrice: position.slPrice,
-                  tpPrice: position.tpPrice,
-                  pnlUsd: openPositionRecord.pnl_usd,
-                  rMultiple: openPositionRecord.r_multiple,
+    <div className="flex h-full w-full flex-col bg-bg">
+      <SessionTopBar
+        name={sessionDisplayName(session, fmtEtDate)}
+        subtitle={`${session.base_timeframe}${session.end_date !== null ? ` · to ${fmtEtDate(session.end_date)}` : ''}`}
+        disciplineLock={session.discipline_lock ? { engaged: session.lock_floor_time !== null } : null}
+        onBack={() => selectSession(null)}
+        menu={{
+          followLatestBar,
+          onToggleFollowLatestBar: () => setFollowLatestBar((v) => !v),
+          pickingReplayStart,
+          onTogglePickingReplayStart: () => {
+            setMagnifierArmed(false)
+            setPickingReplayStart((v) => !v)
+          },
+          magnifierArmed,
+          onToggleMagnifier:
+            baseTfSeconds > 60
+              ? () => {
+                  setPickingReplayStart(false)
+                  setMagnifierArmed((v) => !v)
                 }
-              : null
-          }
-          workingOrder={workingOrderSummary}
-          onBuy={() => enterPosition('long')}
-          onSell={() => enterPosition('short')}
-          onNewTrade={openTicket}
-          onClose={handleClosePosition}
-          onCancelOrder={cancelWorkingOrder}
-          closing={createTrade.isPending}
-          autoBreakeven={position ? position.autoBreakeven : armedAutoBreakeven}
-          onAutoBreakevenChange={handleAutoBreakevenChange}
-          trailingPoints={position ? position.trailingPoints : armedTrailingPoints}
-          onTrailingPointsChange={handleTrailingPointsChange}
-          onPartialClose={handlePartialClose}
-          partialCloseDisabled={!position || position.contracts < 2}
-        />
-      )}
-      {(orderNotice || banner) && (
-        <div className="flex flex-col gap-1 bg-surface px-4 py-2 text-xs text-text-muted">
-          {banner && <p>{banner}</p>}
-          {orderNotice && (
-            <p className="flex items-start gap-2" role="status">
-              <span>{orderNotice}</span>
-              <button
-                onClick={() => setOrderNotice(null)}
-                aria-label="Dismiss"
-                className="rounded px-1 text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                &times;
-              </button>
-            </p>
-          )}
-        </div>
-      )}
+              : undefined,
+          replayStartBlockedReason: session.account.prop_ruleset ? PROP_REWIND_MESSAGE : undefined,
+          onOpenAppSettings: () => setSettingsOpen(true),
+          onOpenShortcuts: () => setShortcutsOpen(true),
+        }}
+        playback={{
+          isPlaying,
+          onTogglePlaying: () => setIsPlaying((v) => !v),
+          speed,
+          onSpeedChange: setSpeed,
+          onStepBack: stepBack,
+          onStepForward: stepForward,
+          canStepBack: !!bars && bars.length > 0 && cursorIndex > minIndex,
+          stepBackBlockedReason: session.account.prop_ruleset ? PROP_REWIND_MESSAGE : undefined,
+          canStepForward: !!bars && cursorIndex < lastAllowed,
+          granularity,
+          onGranularityChange: prefs.setStepGranularity,
+          availableGranularities,
+          autoPlay: prefs.autoPlay,
+          onToggleAutoPlay: () => prefs.setAutoPlay(!prefs.autoPlay),
+          cursorLabel: cursorBar ? fmtEtDateTime(cursorBar.time) : null,
+        }}
+        actions={{
+          onPlaceOrder: openTicket,
+          placeOrderDisabled: !bars || bars.length === 0 || !flat || sessionEnded,
+          onToggleJournal: () => setJournalOpen((v) => !v),
+          journalOpen,
+          onToggleTheme: () => setThemeMode(themeMode === 'dark' ? 'light' : 'dark'),
+          isDark: themeMode === 'dark',
+          onToggleFullscreen: toggleFullscreen,
+          isFullscreen,
+        }}
+      />
+
+      <SessionChartToolbar
+        assets={session.assets}
+        instrument={session.instrument}
+        baseTimeframe={session.base_timeframe}
+        indicatorCount={activeIndicatorCount}
+        onOpenIndicators={() => setIndicatorDialogOpen(true)}
+        candleType={prefs.candleType}
+        onCandleTypeChange={prefs.setCandleType}
+        canUndo={canUndo(drawingHistoryRef.current)}
+        canRedo={canRedo(drawingHistoryRef.current)}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onScreenshot={handleScreenshot}
+      />
+      <IndicatorDialog open={indicatorDialogOpen} onClose={() => setIndicatorDialogOpen(false)} />
+
       <div className="flex min-h-0 flex-1">
+        <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} armedTool={armedTool} />
         {/* min-w-0 matters here, not just min-h-0: without it, this flex
             item's automatic minimum width is its content's min-content size
             -- klinecharts' canvas still carries its PRE-drawer pixel width
@@ -1125,15 +1344,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             the 360px drawer got pushed off the right edge of the viewport
             entirely (confirmed live: the drawer's DOM/text was present per
             an accessibility query, just not on-screen). */}
-        <div className="min-h-0 min-w-0 flex-1">
+        <div className="relative min-h-0 min-w-0 flex-1">
           <ChartKL
             ref={klChartRef}
             instrument={session.instrument}
             timeframe={session.base_timeframe}
             from={barsWindow?.from ?? null}
             to={barsWindow?.to ?? null}
-            trades={chartTrades}
-            selectedTrade={openPositionRecord}
+            trades={prefs.hideTrades ? [] : chartTrades}
+            selectedTrade={prefs.hideTrades ? null : openPositionRecord}
             indicators={indicators}
             sessionBands={sessionBands}
             prefs={indicatorPrefs}
@@ -1162,11 +1381,63 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               position ? { entryTime: position.entryTime, side: position.side, slPrice: position.slPrice, tpPrice: position.tpPrice } : null
             }
             onOpenPositionSlTpChange={handleOpenPositionSlTpChange}
+            onDrawingsChange={handleDrawingsChange}
+            onDrawingArmedChange={setArmedTool}
+            candleType={prefs.candleType}
           />
+          {/* Transient messages float over the chart's upper edge (clear of the
+              volume pane and time axis) so they never shift the chart's size: the drag ticket's readout, why an order
+              was refused, the resolved Combine, and the session-complete state. */}
+          {hasNotices && (
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2 px-4">
+              {sessionEnded && (
+                <p
+                  className="pointer-events-auto flex items-center gap-3 rounded bg-surface px-3 py-2 text-xs text-text shadow-lg"
+                  role="status"
+                >
+                  <span>
+                    Session complete
+                    <span className="text-text-muted">
+                      {session.end_date !== null ? ` · the replay reached its end date, ${fmtEtDate(session.end_date)}.` : '.'}
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => selectRun(manualRunId(session.id))}
+                    className="h-7 rounded px-2 text-text-muted transition-colors hover:bg-surface-2 hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    View analytics
+                  </button>
+                </p>
+              )}
+              {ticketReadout && (
+                <div className="pointer-events-auto">
+                  <TradeTicketPanel ticket={ticketReadout} onConfirm={confirmTicket} onCancel={cancelTicket} />
+                </div>
+              )}
+              {banner && (
+                <p className="pointer-events-auto rounded bg-surface-2 px-3 py-2 text-xs text-text-muted shadow-lg" role="status">
+                  {banner}
+                </p>
+              )}
+              {orderNotice && (
+                <p className="pointer-events-auto flex items-start gap-2 rounded bg-surface-2 px-3 py-2 text-xs text-text-muted shadow-lg" role="status">
+                  <span>{orderNotice}</span>
+                  <button
+                    onClick={() => setOrderNotice(null)}
+                    aria-label="Dismiss"
+                    className="rounded px-1 text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    &times;
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
         </div>
         {journalOpen && (
           <Suspense fallback={null}>
             <JournalPanel
+              key={journalInitialTrade ?? 'journal'}
               trades={manualTrades ?? []}
               sessionNotes={session.notes}
               onUpdateSessionNotes={handleUpdateSessionNotes}
@@ -1181,6 +1452,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </Suspense>
         )}
       </div>
+
       {magnifyActive && magnifyBarTime !== null && (
         <MagnifierPanel
           instrument={session.instrument}
@@ -1191,6 +1463,61 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onClose={() => setMagnifyBarTime(null)}
         />
       )}
+
+      {prefs.panelOpen && (
+        <TradePanel
+          height={clampPanelHeight(prefs.panelHeight || PANEL_DEFAULT_HEIGHT, window.innerHeight)}
+          tab={prefs.panelTab}
+          onTabChange={prefs.setPanelTab}
+          position={positionRow}
+          workingOrder={workingOrderRow}
+          trades={manualTrades ?? []}
+          closing={createTrade.isPending}
+          onClosePosition={handleClosePosition}
+          onPartialClose={handlePartialClose}
+          partialCloseDisabled={!position || position.contracts < 2}
+          onCancelOrder={cancelWorkingOrder}
+          autoBreakeven={position ? position.autoBreakeven : armedAutoBreakeven}
+          onAutoBreakevenChange={handleAutoBreakevenChange}
+          trailingPoints={position ? position.trailingPoints : armedTrailingPoints}
+          onTrailingPointsChange={handleTrailingPointsChange}
+          onOpenTrade={openTradeInJournal}
+        />
+      )}
+
+      <div className="relative">
+        {propRulesOpen && session.account.prop_ruleset && (
+          <PropRulesPopover
+            result={propStats?.result}
+            totalTrades={manualTrades?.length ?? 0}
+            rulesetLabel={session.account.prop_ruleset === 'topstep_50k' ? 'Topstep $50k Combine' : session.account.prop_ruleset}
+            maxContracts={session.account.max_contracts ?? null}
+            onOpenAnalytics={() => selectRun(manualRunId(session.id))}
+            onClose={() => setPropRulesOpen(false)}
+          />
+        )}
+        <SessionBottomBar
+          hideTrades={prefs.hideTrades}
+          onToggleHideTrades={() => prefs.setHideTrades(!prefs.hideTrades)}
+          onBuy={() => enterPosition('long')}
+          onSell={() => enterPosition('short')}
+          tradingDisabled={!bars || bars.length === 0 || !flat || sessionEnded}
+          disabledReason={sessionEnded ? 'The session has ended' : !flat ? 'Close or cancel the open trade first' : 'Waiting for bars'}
+          quantity={{ value: quickQty, max: session.account.max_contracts ?? null, onChange: handleQuantityChange }}
+          panelOpen={prefs.panelOpen}
+          onTogglePanel={() => prefs.setPanelOpen(!prefs.panelOpen)}
+          onGripDrag={handleGripDrag}
+          onAnalytics={() => selectRun(manualRunId(session.id))}
+          propRules={session.account.prop_ruleset ? { open: propRulesOpen, onOpen: () => setPropRulesOpen((v) => !v) } : null}
+          balance={session.account.balance}
+          realizedPnl={session.account.balance - session.account.starting_balance}
+          unrealizedPnl={unrealizedPnl}
+          hideBalances={prefs.hideBalances}
+          onToggleHideBalances={() => prefs.setHideBalances(!prefs.hideBalances)}
+          onToggleFullscreen={toggleFullscreen}
+          isFullscreen={isFullscreen}
+        />
+      </div>
     </div>
   )
 }
