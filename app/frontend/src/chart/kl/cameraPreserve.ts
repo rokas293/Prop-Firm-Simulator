@@ -149,3 +149,12 @@ export function reanchorRestoreIndex(
   }
   return targetRealTo - RIGHT_EDGE_INDEX_OFFSET
 }
+
+// The most of a pane's width the right margin may take (FXR_V2_SPEC.md G2 polish).
+export const RIGHT_MARGIN_MAX_PANE_SHARE = 0.2
+
+// min(configured px, 20% of the pane). Unknown width -> the configured value.
+export function rightMarginForPane(configuredPx: number, paneWidth: number | undefined): number {
+  if (!paneWidth || paneWidth <= 0) return configuredPx
+  return Math.round(Math.min(configuredPx, paneWidth * RIGHT_MARGIN_MAX_PANE_SHARE))
+}

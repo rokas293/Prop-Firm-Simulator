@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex } from './cameraPreserve'
+import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
 
 // A faithful model of the two pieces of klinecharts v10.0.3 arithmetic the
 // camera restore rides on, transcribed from the library source so this test
@@ -422,5 +422,23 @@ describe('right margin (order-label room)', () => {
     const after = new ChartModel(list.length, VISIBLE, list.length)
     after.scrollToDataIndex(reanchorRestoreIndex(anchor, list, false, MARGIN) as number)
     expect(after.visibleRange.realTo - list.length).toBe(MARGIN)
+  })
+})
+
+describe('rightMarginForPane (proportional margin)', () => {
+  it('is the configured width on a wide pane', () => {
+    expect(rightMarginForPane(400, 3000)).toBe(400)
+    expect(rightMarginForPane(400, 2000)).toBe(400) // exactly 20% of 2000
+  })
+
+  it('is capped at 20% of the pane so a narrow pane keeps its space for price', () => {
+    expect(rightMarginForPane(400, 1500)).toBe(300)
+    expect(rightMarginForPane(400, 1135)).toBe(227) // journal open
+    expect(rightMarginForPane(400, 600)).toBe(120)
+  })
+
+  it('falls back to the configured width when the pane has no size yet', () => {
+    expect(rightMarginForPane(400, undefined)).toBe(400)
+    expect(rightMarginForPane(400, 0)).toBe(400)
   })
 })

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { layoutLabel, stackOffsets } from './orderLabelOverlay'
+import { contrastRatio } from '../../state/contrast'
+import { THEME_PRESETS, resolveBase } from '../../state/themeStore'
+import { GHOST_MIN_CONTRAST, ghostStroke, layoutLabel, stackOffsets } from './orderLabelOverlay'
 
 describe('stackOffsets (labels that would cover each other sit side by side)', () => {
   const e = (id: string, role: string, y: number, width = 100) => ({ id, role, y, width })
@@ -44,5 +46,54 @@ describe('layoutLabel', () => {
     expect(total).toBe(46)
     expect(left).toBe(500 - 8 - 46)
     expect(xs).toEqual([left, left + 26])
+  })
+})
+
+describe('label width is stable while a level is dragged', () => {
+  // Digits are wider than the rest in this fake font, so a width that depended on the digits would move.
+  const measure = (t: string) => [...t].reduce((n, c) => n + (/\d/.test(c) ? 8 : 5), 0)
+  const body = (text: string) => ({ key: 'body' as const, text, tone: 'neutral' as const })
+
+  it('digits are measured alike, so the same shape gives the same width', () => {
+    const a = layoutLabel([body('-$46.00 | 46 ticks | 0.06%')], 600, measure).widths[0]
+    const b = layoutLabel([body('-$99.00 | 99 ticks | 0.99%')], 600, measure).widths[0]
+    expect(a).toBe(b)
+  })
+
+  it('the readout never gets narrower as it loses digits (a floor for a typical $/ticks/% line)', () => {
+    const wide = layoutLabel([body('-$1,234.50 | 1234 ticks | 1.23%')], 600, measure).widths[0]
+    const small = layoutLabel([body('$0.00 | 0 ticks | 0.00%')], 600, measure).widths[0]
+    const mid = layoutLabel([body('-$146.00 | 146 ticks | 0.19%')], 600, measure).widths[0]
+    expect(mid).toBe(small)
+    expect(wide).toBeGreaterThanOrEqual(mid)
+  })
+
+  it('the position P&L has its own floor and is stable across digit changes', () => {
+    const a = layoutLabel([body('+$1.25')], 600, measure).widths[0]
+    const b = layoutLabel([body('-$987.65')], 600, measure).widths[0]
+    expect(a).toBe(b)
+  })
+})
+
+describe('ghostStroke: the ghost border reads at 3:1 on the chart background, in every theme, and stays fainter than a placed level', () => {
+  const roleColours = (p: (typeof THEME_PRESETS)[number], b: ReturnType<typeof resolveBase>) => [b.warning, p.colors.positive]
+
+  for (const preset of THEME_PRESETS) {
+    it(`${preset.name} (${preset.mode})`, () => {
+      const base = resolveBase(preset.mode)
+      for (const role of roleColours(preset, base)) {
+        const ghost = ghostStroke(role, base.bg)
+        expect(contrastRatio(ghost, base.bg)).toBeGreaterThanOrEqual(GHOST_MIN_CONTRAST)
+        // clearly fainter than the placed level's full-strength colour
+        expect(contrastRatio(ghost, base.bg)).toBeLessThan(contrastRatio(role, base.bg))
+        expect(ghost).not.toBe(role)
+      }
+    })
+  }
+
+  it('picks the faintest step that still passes (not simply the strongest)', () => {
+    const dark = resolveBase('dark')
+    const g = ghostStroke(dark.warning, dark.bg)
+    expect(contrastRatio(g, dark.bg)).toBeLessThan(GHOST_MIN_CONTRAST + 0.6)
   })
 })

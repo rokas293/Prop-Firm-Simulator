@@ -41,9 +41,9 @@ import {
   ensureSessionBandOverlayRegistered,
   type SessionBand,
 } from './sessionOverlay'
-import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex } from './cameraPreserve'
+import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
 import { KL_ORDER_LINE, ensureOrderLineOverlayRegistered } from './orderLineOverlay'
-import { GHOST_ALPHA, KL_ORDER_LABEL, ensureOrderLabelOverlayRegistered, isGhostRole, type OrderLabelData, type OrderLabelPalette } from './orderLabelOverlay'
+import { KL_ORDER_LABEL, ensureOrderLabelOverlayRegistered, ghostStroke, isGhostRole, type OrderLabelData, type OrderLabelPalette } from './orderLabelOverlay'
 import { roundToTick, type OrderLineInfo, type OrderLineRole } from '../orderEntry'
 import { fmtPrice } from '../../format'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
@@ -617,9 +617,20 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
 
   const rightMarginPxRef = useRef(rightMarginPx)
   rightMarginPxRef.current = rightMarginPx
-  // The margin in bars at the CURRENT zoom (bar space is pixels per bar).
-  const rightMarginBars = (chart: Chart) =>
-    rightMarginPxRef.current ? Math.ceil(rightMarginPxRef.current / Math.max(1, chart.getBarSpace().bar)) : 0
+  // The margin in pixels for the pane as it is NOW: the configured width, but
+  // never more than RIGHT_MARGIN_MAX_PANE_SHARE of the pane, so a narrow pane
+  // (the journal open) keeps most of its space for price.
+  const effectiveRightMarginPx = (_chart?: Chart): number => {
+    const configured = rightMarginPxRef.current
+    if (!configured) return 0
+    // The container's own width (not chart.getSize, which lags a resize by a frame).
+    return rightMarginForPane(configured, containerRef.current?.clientWidth)
+  }
+  // ...in bars at the CURRENT zoom (bar space is pixels per bar).
+  const rightMarginBars = (chart: Chart) => {
+    const px = effectiveRightMarginPx(chart)
+    return px ? Math.ceil(px / Math.max(1, chart.getBarSpace().bar)) : 0
+  }
 
   const rebuildOverlaysRef = useRef<() => void>(() => {})
   rebuildOverlaysRef.current = () => {
@@ -1509,8 +1520,29 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
 
   // The right margin itself: klinecharts places the newest bar this many pixels
   // from the right edge on every init load (first load, Reset view, window swap).
+  // It is re-derived whenever the pane's width changes (journal opened or
+  // closed, window resized), and a followed view is re-parked at the new margin.
   useEffect(() => {
-    if (rightMarginPx !== undefined) chartRef.current?.setOffsetRightDistance(rightMarginPx)
+    const chart = chartRef.current
+    const el = containerRef.current
+    if (!chart || !el || rightMarginPx === undefined) return
+    let lastPx = -1
+    const apply = () => {
+      const px = effectiveRightMarginPx(chart)
+      if (px === lastPx) return
+      const first = lastPx === -1
+      lastPx = px
+      chart.setOffsetRightDistance(px)
+      const count = chart.getDataList().length
+      if (!first && followLatestBarRef.current && count > 0) {
+        chart.scrollToDataIndex(count - 2 + rightMarginBars(chart), 0)
+      }
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rightMarginPx])
 
   // FXR_SPEC.md phase F3's "New Trade" drag ticket: 3 draggable ghost
@@ -1618,6 +1650,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       positive: ensureTextVariant(c.positive, b.surface),
       negative: ensureTextVariant(c.negative, b.surface),
       onRole: pickOnAccent(line, ON_ACCENT_LIGHT, ON_ACCENT_DARK),
+      ghost: ghostStroke(line, b.bg),
     }
   }
 
@@ -1652,7 +1685,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       const role = spec.info.role
       const styles = {
         line: {
-          color: isGhostRole(role) && !hover ? hexToRgba(palette.line, GHOST_ALPHA) : palette.line,
+          color: isGhostRole(role) && !hover ? palette.ghost : palette.line,
           style: (role === 'sl' || role === 'tp' ? 'solid' : 'dashed') as 'solid' | 'dashed',
           size: hover || draggingOrderLineRef.current === spec.id ? 2 : 1,
         },
@@ -1782,7 +1815,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const resetView = () => {
     const bars = loadedBarsRef.current
     if (bars.length === 0) return
-    const margin = rightMarginPxRef.current
+    const chartNow = chartRef.current
+    const margin = chartNow ? effectiveRightMarginPx(chartNow) : 0
     if (!margin) {
       fitRangeImpl(bars[0].time, bars[bars.length - 1].time)
       return

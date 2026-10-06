@@ -12,6 +12,7 @@
 // orderLineOverlay.ts for why it doesn't span the legend corner.
 import { registerOverlay } from 'klinecharts'
 import { hexToRgba } from '../color'
+import { contrastRatio, mixHex } from '../../state/contrast'
 import { labelSegments, roundToTick, type LabelSegment, type OrderLineInfo } from '../orderEntry'
 import { orderLineStartX } from './orderLineOverlay'
 
@@ -25,6 +26,7 @@ export interface OrderLabelPalette {
   positive: string
   negative: string
   onRole: string // text on a role-coloured fill (the SL/TP tag, the axis tag)
+  ghost: string // the ghost's border/line: the role colour toned down, never below 3:1 on the chart background
 }
 
 export interface OrderLabelData {
@@ -42,11 +44,27 @@ export function isGhostRole(role: string): boolean {
 
 // Ghosts are provisional: faint until hovered or dragged. Placed levels and
 // the position are full strength.
-export const GHOST_ALPHA = 0.55
+export const GHOST_MIN_CONTRAST = 3
+const GHOST_ALPHA_FLOOR = 0.4
+const GHOST_ALPHA_CEIL = 0.85
+
+// The ghost's border and line: the role colour blended toward the chart
+// background by the SMALLEST step that still reads at 3:1 on that background
+// (so it is as faint as it can be while staying visible, in dark and light
+// alike), capped well short of full strength so a placed level is always
+// clearly stronger. Solid hex, no alpha, so it draws crisp.
+export function ghostStroke(lineHex: string, bgHex: string): string {
+  for (let a = GHOST_ALPHA_FLOOR; a <= GHOST_ALPHA_CEIL + 1e-9; a += 0.05) {
+    const c = mixHex(bgHex, lineHex, a)
+    if (contrastRatio(c, bgHex) >= GHOST_MIN_CONTRAST) return c
+  }
+  return mixHex(bgHex, lineHex, GHOST_ALPHA_CEIL)
+}
 const GHOST_TEXT_ALPHA = 0.65
 
 const FONT_FAMILY = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
-const FONT_SIZE = 11
+// 12px: the type scale's secondary/table size (11 is reserved for caps micro-labels).
+const FONT_SIZE = 12
 const LABEL_HEIGHT = 20 // 4px grid
 const PAD_X = 8
 const RIGHT_MARGIN = 8
@@ -89,10 +107,28 @@ function toneColor(seg: LabelSegment, p: OrderLabelPalette): string {
   }
 }
 
+// The widest a typical number-bearing segment gets: a label's box is never
+// narrower than this, and digits are measured as "0", so the label's left edge
+// does not jitter while a level is dragged (the P&L, ticks and % change on every
+// frame). Canvas text has no tabular-figures switch, hence the measuring rule.
+const WIDE_BODY = '-$0,000.00 | 000 ticks | 0.00%'
+const WIDE_PNL = '-$0,000.00'
+
+export function stableText(seg: LabelSegment): string {
+  if (seg.key !== 'body') return seg.text
+  return seg.text.includes('|') ? WIDE_BODY : WIDE_PNL
+}
+
 // Pure layout, exported for tests: segment widths and the label's left edge
 // for a pane `paneWidth` wide. The label hugs the right edge of the pane.
 export function layoutLabel(segments: LabelSegment[], paneWidth: number, measure: (t: string) => number = textWidth) {
-  const widths = segments.map((s) => (s.key === 'close' ? CLOSE_WIDTH : s.key === 'grip' ? GRIP_WIDTH : Math.ceil(measure(s.text)) + PAD_X * 2))
+  const widths = segments.map((s) => {
+    if (s.key === 'close') return CLOSE_WIDTH
+    if (s.key === 'grip') return GRIP_WIDTH
+    const own = Math.ceil(measure(s.text.replace(/\d/g, '0')))
+    const floor = s.key === 'body' ? Math.ceil(measure(stableText(s))) : 0
+    return Math.max(own, floor) + PAD_X * 2
+  })
   const total = widths.reduce((a, b) => a + b, 0)
   const left = Math.max(0, paneWidth - RIGHT_MARGIN - total)
   const xs: number[] = []
@@ -171,7 +207,7 @@ export function ensureOrderLabelOverlayRegistered(): void {
       const roleFill = info.role === 'sl' || info.role === 'tp'
       // Ghost: hairline in the role colour at reduced strength, hollow tag --
       // nothing about it reads as a live order. Hover/drag brings it to full.
-      const border = ghost && !data.hover ? hexToRgba(palette.line, GHOST_ALPHA) : palette.line
+      const border = ghost && !data.hover ? palette.ghost : palette.line
       const figures: unknown[] = [
         {
           type: 'line',
@@ -236,7 +272,7 @@ export function ensureOrderLabelOverlayRegistered(): void {
       // The tag shows the tick-snapped price (what a release would set), never
       // the raw pointer price; a ghost's tag is hollow like its label.
       const ghost = isGhostRole(data.info.role)
-      const tagBorder = ghost && !data.hover ? hexToRgba(data.palette.line, GHOST_ALPHA) : data.palette.line
+      const tagBorder = ghost && !data.hover ? data.palette.ghost : data.palette.line
       return [
         {
           type: 'rect',
