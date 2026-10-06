@@ -5,7 +5,8 @@ import Skeleton from '../components/Skeleton'
 import NewSessionModal from '../components/NewSessionModal'
 import { FirstRunGuide } from '../components/OnboardingGuide'
 import { fmtUsd } from '../format'
-import { fmtEtDateTime } from '../timeFormat'
+import { fmtEtDate, fmtEtDateTime } from '../timeFormat'
+import { sessionDisplayName } from '../chart/sessionEnd'
 import { manualAllRunId, manualRunId } from '../api/types'
 
 
@@ -75,6 +76,7 @@ export default function SessionsListPage() {
         <table className="w-full border-collapse text-xs">
           <thead>
             <tr className="h-8 border-b border-border text-left">
+              <th className="micro-label py-1 pr-4 text-left">Session</th>
               <th className="micro-label py-1 pr-4 text-left">Instrument</th>
               <th className="micro-label py-1 pr-4 text-left">Timeframe</th>
               <th className="micro-label py-1 pr-4 text-left">Start</th>
@@ -99,7 +101,10 @@ export default function SessionsListPage() {
                 }}
                 className="group h-8 cursor-pointer border-b border-border hover:bg-surface"
               >
-                <td className="pr-4 text-text">{session.instrument}</td>
+                <td className="max-w-64 truncate pr-4 text-text" title={sessionDisplayName(session, fmtEtDate)}>
+                  {sessionDisplayName(session, fmtEtDate)}
+                </td>
+                <td className="pr-4 text-text-muted">{session.assets.length > 0 ? session.assets.join(' + ') : session.instrument}</td>
                 <td className="pr-4 text-text-muted">{session.base_timeframe}</td>
                 <td className="pr-4 text-xs tabular-nums text-text-muted">{fmtEtDateTime(session.start_time)}</td>
                 <td className="pr-4 text-xs tabular-nums text-text-muted">{fmtEtDateTime(session.cursor_time)}</td>

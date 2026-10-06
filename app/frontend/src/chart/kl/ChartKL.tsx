@@ -43,9 +43,12 @@ import {
 } from './sessionOverlay'
 import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex } from './cameraPreserve'
 import { KL_ORDER_LINE, ensureOrderLineOverlayRegistered } from './orderLineOverlay'
+import { GHOST_ALPHA, KL_ORDER_LABEL, ensureOrderLabelOverlayRegistered, isGhostRole, type OrderLabelData, type OrderLabelPalette } from './orderLabelOverlay'
+import { roundToTick, type OrderLineInfo, type OrderLineRole } from '../orderEntry'
+import { fmtPrice } from '../../format'
 import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
-import { KL_DEFAULT_INDICATOR_LINES, useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
-import { MIN_TEXT_CONTRAST, ensureContrast } from '../../state/contrast'
+import { KL_DEFAULT_INDICATOR_LINES, ON_ACCENT_DARK, ON_ACCENT_LIGHT, useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
+import { MIN_TEXT_CONTRAST, ensureContrast, ensureTextVariant, pickOnAccent } from '../../state/contrast'
 import { useIndicatorStore, type ColorableIndicatorKey, type IndicatorPrefs } from '../../state/indicatorStore'
 import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
@@ -55,7 +58,6 @@ import Skeleton from '../../components/Skeleton'
 import ContextMenu, { type ContextMenuEntry } from '../../components/ContextMenu'
 import DrawingStylePopover from './DrawingStylePopover'
 import IndicatorSettingsPopover from './IndicatorSettingsPopover'
-import type { Side } from '../simBroker'
 
 interface IndicatorData {
   vwap: IndicatorPoint[]
@@ -184,32 +186,34 @@ interface ChartKLProps {
   // COMPLETE updated price set (not just the moved field) -- the caller's
   // R:R/risk/contracts readout recomputes from this on every frame.
   onTradeTicketChange?: (prices: { entryPrice: number; slPrice: number; tpPrice: number }) => void
-  // A placed-but-not-yet-filled limit/stop order: a locked (non-draggable)
-  // preview -- a dashed accent line at the order price, plus dashed
-  // orange/green SL/TP preview lines if attached. Position management
-  // (dragging to modify a WORKING order) is explicitly F4 scope, not F3's.
-  workingOrderView?: { side: Side; price: number; slPrice: number | null; tpPrice: number | null } | null
-  // FXR_SPEC.md phase F4: draggable SL/TP lines for an ALREADY-OPEN
-  // position -- distinct from the F3 ticket above (which drags 3 lines
-  // BEFORE a trade exists). `entryTime` is the position's identity: the
-  // create-once effect below is keyed on it, so it only rebuilds the lines
-  // when a genuinely NEW position opens (or the old one closes), never on
-  // every render or on a live break-even/trailing price update (those are
-  // instead pushed via a separate sync effect using overrideOverlay, so
-  // they move the line without re-arming a drag in progress). A null
-  // slPrice/tpPrice draws no line at all -- there's nothing to drag if the
-  // position was opened without one; adding a stop/target after the fact
-  // is out of scope here (use the ticket flow for a new trade instead).
-  openPositionEditor?: { entryTime: number; side: Side; slPrice: number | null; tpPrice: number | null } | null
-  // Fires live as the SL or TP line is dragged, with the COMPLETE updated
-  // pair (not just the moved field) -- same contract as onTradeTicketChange.
-  onOpenPositionSlTpChange?: (next: { slPrice: number | null; tpPrice: number | null }) => void
+  // FXR_V2_SPEC.md G2: the sim broker's on-chart order lines -- the open
+  // position's line, its SL/TP (placed or ghost) and working orders, each a
+  // dashed line with a segmented label and a y-axis price tag
+  // (orderLabelOverlay.ts). The caller owns what they MEAN; ChartKL owns the
+  // drag. A line is created once per `id` and thereafter only synced (price,
+  // label inputs) -- never rebuilt mid-drag, which would fight the gesture.
+  orderLines?: OrderLineSpec[]
+  // A draggable line's gesture: 'start' on press, 'move' with each new
+  // (unsnapped) price, 'end' on release with the final price.
+  onOrderLineDrag?: (id: string, price: number, phase: 'start' | 'move' | 'end') => void
+  // The label's x button (close the position / remove a level / cancel the order).
+  onOrderLineClose?: (id: string) => void
+  // Right-click on a line -> its menu items (empty = no menu).
+  getOrderLineMenu?: (id: string) => ContextMenuEntry[]
+  // The empty-area menu is opening (the caller pauses replay: an order
+  // surface opening always pauses).
+  onEmptyAreaMenuOpen?: () => void
   // Right-click on empty chart area (Batch 1's existing menu) -- returns
   // extra items to APPEND to the built-in Reset-view/Remove-drawings menu,
   // given the clicked price/time. Lets the session workspace extend the
   // SAME menu with order-placement actions without ChartKL itself knowing
   // anything about trading.
   getEmptyAreaMenuExtraItems?: (info: { time: number; price: number }) => ContextMenuEntry[]
+  // FXR_V2_SPEC.md G2: pixels of empty chart to the right of the newest bar,
+  // so the order labels (which hug the right edge) never cover recent price
+  // (references R10/R11). Applied on every (re)load, and held by the replay
+  // camera as bars are revealed. Unset = klinecharts' default, flush follow.
+  rightMarginPx?: number
   // Manual-session replay: when the fetch window is re-anchored on the cursor
   // (same instrument/timeframe, different from/to), keep the view on the same
   // bars instead of letting klinecharts reset the scroll. Off for the
@@ -218,6 +222,13 @@ interface ChartKLProps {
   // The candle series style (the session toolbar's chart-type menu). Pure
   // presentation of the same OHLC bars -- never changes data or the cursor.
   candleType?: KLCandleType
+}
+
+export interface OrderLineSpec {
+  id: string
+  price: number
+  info: OrderLineInfo
+  draggable: boolean
 }
 
 export type KLCandleType = 'candle_solid' | 'candle_stroke' | 'ohlc' | 'area'
@@ -336,8 +347,9 @@ export function themeStyles(colors: ThemeColors, base: ThemeBase) {
       tickText: { color: base.textMuted },
     },
     crosshair: {
-      horizontal: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface } },
-      vertical: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface } },
+      // One family: the axis tags use the UI sans like the order labels do.
+      horizontal: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface, family: FONT_FAMILY } },
+      vertical: { line: { color: base.textMuted }, text: { color: base.text, backgroundColor: base.surface, family: FONT_FAMILY } },
     },
     // The pane-divider line between the candle pane and VOL/ATR sub-panes.
     separator: { color: base.border },
@@ -445,10 +457,13 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     slLineColor,
     tradeTicket = null,
     onTradeTicketChange,
-    workingOrderView = null,
-    openPositionEditor = null,
-    onOpenPositionSlTpChange,
+    orderLines,
+    onOrderLineDrag,
+    onOrderLineClose,
+    getOrderLineMenu,
+    onEmptyAreaMenuOpen,
     getEmptyAreaMenuExtraItems,
+    rightMarginPx,
     preserveViewOnWindowChange = false,
     candleType = 'candle_solid',
   },
@@ -480,6 +495,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const [contextMenu, setContextMenu] = useState<
     | { kind: 'empty'; x: number; y: number; time: number | null; price: number | null }
     | { kind: 'drawing'; x: number; y: number; id: string; name: string; locked: boolean }
+    | { kind: 'orderLine'; x: number; y: number; id: string; items: ContextMenuEntry[] }
     | null
   >(null)
   const [styleEditor, setStyleEditor] = useState<{ id: string; x: number; y: number } | null>(null)
@@ -593,8 +609,17 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // instrument|timeframe of the data currently on the chart -- a re-anchor
   // keeps this the same; a symbol/timeframe switch changes it and refits.
   const loadedSeriesKeyRef = useRef<string | null>(null)
-  const openPositionEditorRef = useRef(openPositionEditor)
-  openPositionEditorRef.current = openPositionEditor
+  // A position line on screen draws its own SL/TP (as order lines), so the
+  // locked trade-overlay SL/TP for the open-position sentinel are suppressed.
+  const openPositionLineActive = (orderLines ?? []).some((l) => l.info.role === 'position')
+  const openPositionLineActiveRef = useRef(openPositionLineActive)
+  openPositionLineActiveRef.current = openPositionLineActive
+
+  const rightMarginPxRef = useRef(rightMarginPx)
+  rightMarginPxRef.current = rightMarginPx
+  // The margin in bars at the CURRENT zoom (bar space is pixels per bar).
+  const rightMarginBars = (chart: Chart) =>
+    rightMarginPxRef.current ? Math.ceil(rightMarginPxRef.current / Math.max(1, chart.getBarSpace().bar)) : 0
 
   const rebuildOverlaysRef = useRef<() => void>(() => {})
   rebuildOverlaysRef.current = () => {
@@ -619,7 +644,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       // its SL/TP come from THAT overlay group instead, so the locked lines
       // this would otherwise draw are suppressed to avoid two overlapping
       // lines at the same price.
-      const suppressLockedSlTp = openPositionEditorRef.current !== null && selectedView?.trade.trade_id === 0
+      const suppressLockedSlTp = openPositionLineActiveRef.current && selectedView?.trade.trade_id === 0
       const selected = buildSelectedTradeOverlays(
         suppressLockedSlTp ? { ...selectedView!, trade: { ...selectedView!.trade, sl_price: null, tp_price: null } } : selectedView,
         colorsRef.current,
@@ -983,6 +1008,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     ensureIndicatorsRegistered()
     ensureSessionBandOverlayRegistered()
     ensureOrderLineOverlayRegistered()
+    ensureOrderLabelOverlayRegistered()
     if (!containerRef.current) return
     const chart = init(containerRef.current, { timezone: 'America/New_York' })
     if (!chart) return
@@ -1028,6 +1054,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         viewAnchor,
         visible.map((b) => b.time * 1000),
         followLatestBarRef.current,
+        rightMarginBars(chart),
       )
       if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
       rebuildOverlaysRef.current()
@@ -1266,6 +1293,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           price = point.value
         }
       }
+      onEmptyAreaMenuOpenRef.current?.()
       setContextMenu({ kind: 'empty', x: e.clientX, y: e.clientY, time, price })
     }
     container?.addEventListener('contextmenu', handleContextMenu)
@@ -1407,13 +1435,11 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // overlays against the bars already loaded.
   useEffect(() => {
     rebuildOverlaysRef.current()
-    // openPositionEditor's presence (not its live price fields) governs
-    // whether this rebuild suppresses the locked SL/TP lines in favor of
-    // the F4 draggable ones -- only its arm/disarm transition needs to
-    // retrigger this, same identity-not-value dependency as the draggable
-    // lines' own create-once effect above.
+    // A position line's presence (not its live prices) governs whether this
+    // rebuild suppresses the locked SL/TP lines in favour of the draggable
+    // order lines -- only its appear/disappear transition retriggers this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trades, selectedTrade, colors, bracketDensity, slLineColor, openPositionEditor !== null])
+  }, [trades, selectedTrade, colors, bracketDensity, slLineColor, openPositionLineActive])
 
   // Theme/mode switch (REDESIGN_APPROACH.md Part C1) -- recolor the
   // candles/volume/grid/axis/crosshair too, not just the trade overlays
@@ -1475,10 +1501,17 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         afterFirstBarTime: afterList[0]?.timestamp ?? null,
         afterBarCount: afterList.length,
         followLatestBar: followLatestBarRef.current,
+        rightMarginBars: rightMarginBars(chart),
       })
       if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
     })
   }, [cursorTime])
+
+  // The right margin itself: klinecharts places the newest bar this many pixels
+  // from the right edge on every init load (first load, Reset view, window swap).
+  useEffect(() => {
+    if (rightMarginPx !== undefined) chartRef.current?.setOffsetRightDistance(rightMarginPx)
+  }, [rightMarginPx])
 
   // FXR_SPEC.md phase F3's "New Trade" drag ticket: 3 draggable ghost
   // lines (entry/SL/TP), created ONCE per arm/disarm transition -- keyed
@@ -1529,113 +1562,200 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradeTicketActive])
 
-  // A placed-but-not-yet-filled limit/stop order: a LOCKED preview, unlike
-  // the ticket above -- dragging to modify a WORKING order is explicitly
-  // F4 scope ("position management"), not F3's, so this just reacts to
-  // whatever values it's given, no drag-fighting concern.
-  const WORKING_ORDER_GROUP_ID = 'kl-working-order'
+  // FXR_V2_SPEC.md G2: the order lines (position / SL / TP / ghosts / working
+  // orders). Reconciled by id whenever the spec list, the cursor (the anchor
+  // point follows the revealed bars) or the theme changes:
+  //   - new id   -> createOverlay
+  //   - known id -> overrideOverlay (price + label inputs), EXCEPT the price
+  //                 while that very line is being dragged -- klinecharts owns
+  //                 its position for the rest of the gesture
+  //   - gone id  -> removeOverlay
+  // A non-draggable line (the position, a working order) snaps back to its
+  // authoritative price if it is dragged anyway.
+  const ORDER_LINE_GROUP_ID = 'kl-order-lines'
+  const ORDER_LINE_Z_LEVEL = 10_000
+  const orderLinesRef = useRef<OrderLineSpec[]>([])
+  orderLinesRef.current = orderLines ?? []
+  const onOrderLineDragRef = useRef(onOrderLineDrag)
+  onOrderLineDragRef.current = onOrderLineDrag
+  const onOrderLineCloseRef = useRef(onOrderLineClose)
+  onOrderLineCloseRef.current = onOrderLineClose
+  const getOrderLineMenuRef = useRef(getOrderLineMenu)
+  getOrderLineMenuRef.current = getOrderLineMenu
+  const onEmptyAreaMenuOpenRef = useRef(onEmptyAreaMenuOpen)
+  onEmptyAreaMenuOpenRef.current = onEmptyAreaMenuOpen
+  const orderLinePricesRef = useRef(new Map<string, number>())
+  const draggingOrderLineRef = useRef<string | null>(null)
+  const orderLineMovedRef = useRef(false)
+  // The line under the pointer: it brightens (a ghost is faint until then) and
+  // the cursor says it can be dragged.
+  const [hoveredOrderLine, setHoveredOrderLine] = useState<string | null>(null)
+  const hoveredOrderLineRef = useRef<string | null>(null)
+  hoveredOrderLineRef.current = hoveredOrderLine
+  // Over an order line the crosshair's horizontal line and price tag are
+  // hidden: they run through the label and their tag (the raw pointer price)
+  // covers the line's own tick-snapped one. The level's own tag is the readout.
+  const syncCrosshairForOrderLines = () => {
+    const over = hoveredOrderLineRef.current !== null || draggingOrderLineRef.current !== null
+    chartRef.current?.setStyles({ crosshair: { horizontal: { show: !over } } })
+  }
+  const setOrderLineCursor = (kind: 'ns-resize' | 'pointer' | null) => {
+    const el = containerRef.current
+    if (!el) return
+    if (kind) el.dataset.orderCursor = kind
+    else delete el.dataset.orderCursor
+  }
+
+  const orderLinePalette = (role: OrderLineRole): OrderLabelPalette => {
+    const c = colorsRef.current
+    const b = baseRef.current
+    const line = role === 'ghost-sl' || role === 'sl' ? b.warning : role === 'ghost-tp' || role === 'tp' ? c.positive : c.accent
+    return {
+      line,
+      surface: b.surface,
+      text: b.text,
+      textMuted: b.textMuted,
+      positive: ensureTextVariant(c.positive, b.surface),
+      negative: ensureTextVariant(c.negative, b.surface),
+      onRole: pickOnAccent(line, ON_ACCENT_LIGHT, ON_ACCENT_DARK),
+    }
+  }
+
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart || !workingOrderView) return
+    if (!chart) return
+    const specs = orderLines ?? []
     const anchorMs = (cursorTimeRef.current ?? 0) * 1000
-    const line = (id: string, price: number, color: string): OverlayCreate => ({
-      id,
-      name: KL_ORDER_LINE,
-      groupId: WORKING_ORDER_GROUP_ID,
-      lock: true,
-      points: [{ timestamp: anchorMs, value: price }],
-      styles: { line: { color, style: 'dashed', size: 1 } },
-    })
-    const overlays: OverlayCreate[] = [line('kl-working-order-entry', workingOrderView.price, colorsRef.current.accent)]
-    if (workingOrderView.slPrice !== null) {
-      overlays.push(line('kl-working-order-sl', workingOrderView.slPrice, baseRef.current.warning))
+    const existing = new Set(chart.getOverlays({ groupId: ORDER_LINE_GROUP_ID }).map((o) => o.id))
+    const next = new Set(specs.map((l) => l.id))
+    for (const id of existing) {
+      if (!next.has(id)) {
+        chart.removeOverlay({ id })
+        orderLinePricesRef.current.delete(id)
+        // A hovered line that disappears (its x was just clicked) never gets a
+        // mouse-leave: release the crosshair and the cursor ourselves.
+        if (hoveredOrderLineRef.current === id) {
+          hoveredOrderLineRef.current = null
+          setHoveredOrderLine(null)
+          setOrderLineCursor(null)
+          syncCrosshairForOrderLines()
+        }
+      }
     }
-    if (workingOrderView.tpPrice !== null) {
-      overlays.push(line('kl-working-order-tp', workingOrderView.tpPrice, colorsRef.current.positive))
-    }
-    chart.createOverlay(overlays)
-    return () => {
-      chart.removeOverlay({ groupId: WORKING_ORDER_GROUP_ID })
-    }
-  }, [workingOrderView?.price, workingOrderView?.slPrice, workingOrderView?.tpPrice, workingOrderView?.side])
-
-  // FXR_SPEC.md phase F4: draggable SL/TP lines for an OPEN position (see
-  // the prop's own comment). Created ONCE per position identity (keyed on
-  // entryTime, same "read the arming values once via a ref, let klinecharts
-  // own the drag" discipline as the F3 ticket above) -- a null slPrice/
-  // tpPrice at creation time draws no line, so a position opened without
-  // one has nothing to drag.
-  const OPEN_POS_SLTP_GROUP_ID = 'kl-open-position-sltp'
-  const onOpenPositionSlTpChangeRef = useRef(onOpenPositionSlTpChange)
-  onOpenPositionSlTpChangeRef.current = onOpenPositionSlTpChange
-  // The last pair THIS component itself reported via a drag -- lets the
-  // sync effect below tell "the price changed because the user dragged it"
-  // (already reflected on screen, no need to touch the overlay) apart from
-  // "the price changed for some other reason" (break-even/trailing firing
-  // during replay, or a restored position landing with its persisted SL/TP)
-  // (both need the line pushed to the new price via overrideOverlay).
-  const lastReportedOpenPosSlTpRef = useRef<{ slPrice: number | null; tpPrice: number | null } | null>(null)
-  const openPositionEntryTime = openPositionEditor?.entryTime ?? null
-
-  useEffect(() => {
-    const chart = chartRef.current
-    const initial = openPositionEditorRef.current
-    if (!chart || !initial) return
-    const anchorMs = (cursorTimeRef.current ?? initial.entryTime) * 1000
-
-    const makeLine = (id: string, price: number, color: string, field: 'slPrice' | 'tpPrice'): OverlayCreate => ({
-      id,
-      name: KL_ORDER_LINE,
-      groupId: OPEN_POS_SLTP_GROUP_ID,
-      lock: false,
-      points: [{ timestamp: anchorMs, value: price }],
-      styles: { line: { color, style: 'dashed', size: 2 } },
-      onPressedMoving: (event) => {
-        const newPrice = event.overlay.points[0]?.value
-        const current = openPositionEditorRef.current
-        if (typeof newPrice !== 'number' || !current) return
-        const next = { slPrice: current.slPrice, tpPrice: current.tpPrice, [field]: newPrice }
-        lastReportedOpenPosSlTpRef.current = next
-        onOpenPositionSlTpChangeRef.current?.(next)
-      },
-    })
-
-    const overlays: OverlayCreate[] = []
-    if (initial.slPrice !== null) overlays.push(makeLine('kl-open-pos-sl', initial.slPrice, baseRef.current.warning, 'slPrice'))
-    if (initial.tpPrice !== null) overlays.push(makeLine('kl-open-pos-tp', initial.tpPrice, colorsRef.current.positive, 'tpPrice'))
-    if (overlays.length > 0) chart.createOverlay(overlays)
-    lastReportedOpenPosSlTpRef.current = null
-
-    return () => {
-      chart.removeOverlay({ groupId: OPEN_POS_SLTP_GROUP_ID })
-      lastReportedOpenPosSlTpRef.current = null
+    for (const spec of specs) {
+      orderLinePricesRef.current.set(spec.id, spec.price)
+      const palette = orderLinePalette(spec.info.role)
+      const hover = hoveredOrderLine === spec.id
+      const extendData: OrderLabelData = { info: spec.info, palette, formatPrice: (v) => fmtPrice(v, instrument ?? ''), hover }
+      // Placed SL/TP are SOLID; a ghost is faint and dashed until hovered or
+      // dragged; the position and working orders keep the reference's dashes.
+      const role = spec.info.role
+      const styles = {
+        line: {
+          color: isGhostRole(role) && !hover ? hexToRgba(palette.line, GHOST_ALPHA) : palette.line,
+          style: (role === 'sl' || role === 'tp' ? 'solid' : 'dashed') as 'solid' | 'dashed',
+          size: hover || draggingOrderLineRef.current === spec.id ? 2 : 1,
+        },
+      }
+      if (existing.has(spec.id)) {
+        const dragging = draggingOrderLineRef.current === spec.id
+        chart.overrideOverlay({
+          id: spec.id,
+          extendData,
+          styles,
+          ...(dragging ? {} : { points: [{ timestamp: anchorMs, value: spec.price }] }),
+        })
+        continue
+      }
+      const id = spec.id
+      chart.createOverlay({
+        id,
+        name: KL_ORDER_LABEL,
+        groupId: ORDER_LINE_GROUP_ID,
+        lock: false,
+        // Always on top: klinecharts numbers overlays as they are created, and a
+        // LOCKED overlay above these (a session fair-value line sitting within a
+        // pixel of the entry, say) would still swallow their clicks and drags.
+        zLevel: ORDER_LINE_Z_LEVEL,
+        fixedZLevel: true,
+        points: [{ timestamp: anchorMs, value: spec.price }],
+        extendData,
+        styles,
+        // klinecharts reports a press as a move-start even when the pointer
+        // never moves (a plain click, e.g. on the x button), so a gesture only
+        // counts as a drag from its first actual move -- else every click would
+        // also "place" the level it sits on, racing the click's own action.
+        onPressedMoveStart: () => {
+          draggingOrderLineRef.current = id
+          orderLineMovedRef.current = false
+        },
+        onMouseEnter: () => {
+          setHoveredOrderLine(id)
+          hoveredOrderLineRef.current = id
+          syncCrosshairForOrderLines()
+        },
+        // A draggable level shows a resize cursor (the x keeps the pointer).
+        onMouseMove: (event) => {
+          if (!orderLinesRef.current.find((l) => l.id === id)?.draggable) return
+          setOrderLineCursor(event.figure?.key === 'close' ? 'pointer' : 'ns-resize')
+        },
+        onMouseLeave: () => {
+          setHoveredOrderLine((h) => (h === id ? null : h))
+          if (hoveredOrderLineRef.current === id) hoveredOrderLineRef.current = null
+          setOrderLineCursor(null)
+          syncCrosshairForOrderLines()
+        },
+        onPressedMoving: (event) => {
+          const price = event.overlay.points[0]?.value
+          if (typeof price !== 'number') return
+          if (!orderLineMovedRef.current) {
+            orderLineMovedRef.current = true
+            if (orderLinesRef.current.find((l) => l.id === id)?.draggable) {
+              // While a level is dragged its own tag is the one price readout:
+              // the crosshair's tag shows the raw pointer price and would
+              // disagree with the tick-snapped level (and strike through the label).
+              syncCrosshairForOrderLines()
+              onOrderLineDragRef.current?.(id, orderLinePricesRef.current.get(id) ?? spec.price, 'start')
+            }
+          }
+          if (!orderLinesRef.current.find((l) => l.id === id)?.draggable) {
+            // Not draggable (position / working order): put it straight back.
+            const home = orderLinePricesRef.current.get(id)
+            if (home !== undefined) chart.overrideOverlay({ id, points: [{ timestamp: (cursorTimeRef.current ?? 0) * 1000, value: home }] })
+            return
+          }
+          // The dragged line snaps to the tick grid as it moves.
+          const tick = orderLinesRef.current.find((l) => l.id === id)?.info.spec.tickSize
+          const snapped = tick ? roundToTick(price, tick) : price
+          if (snapped !== price) {
+            chart.overrideOverlay({ id, points: [{ timestamp: (cursorTimeRef.current ?? 0) * 1000, value: snapped }] })
+          }
+          onOrderLineDragRef.current?.(id, snapped, 'move')
+        },
+        onPressedMoveEnd: (event) => {
+          draggingOrderLineRef.current = null
+          const price = event.overlay.points[0]?.value
+          const moved = orderLineMovedRef.current
+          orderLineMovedRef.current = false
+          syncCrosshairForOrderLines()
+          if (moved && orderLinesRef.current.find((l) => l.id === id)?.draggable && typeof price === 'number') {
+            onOrderLineDragRef.current?.(id, price, 'end')
+          }
+        },
+        onClick: (event) => {
+          if (event.figure?.key === 'close') onOrderLineCloseRef.current?.(id)
+        },
+        onRightClick: (event) => {
+          event.preventDefault?.()
+          rightClickHandledRef.current = true
+          const items = getOrderLineMenuRef.current?.(id) ?? []
+          if (items.length === 0) return
+          setContextMenu({ kind: 'orderLine', x: event.pageX ?? 0, y: event.pageY ?? 0, id, items })
+        },
+      })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openPositionEntryTime])
-
-  // Pushes an EXTERNAL SL/TP change (break-even/trailing firing during
-  // replay, or a mid-trade reload restoring a persisted position) onto the
-  // already-created lines above via overrideOverlay -- deliberately NOT a
-  // dependency of the create-once effect, so it never tears down and
-  // rebuilds the overlay (which would fight a drag already in progress).
-  // Skips the update when the new value is exactly what THIS component
-  // itself last reported (see lastReportedOpenPosSlTpRef's own comment) --
-  // otherwise every drag frame would immediately get echoed back through
-  // this effect, which is harmless but pointless.
-  useEffect(() => {
-    const chart = chartRef.current
-    const current = openPositionEditor
-    if (!chart || !current) return
-    const last = lastReportedOpenPosSlTpRef.current
-    if (last && last.slPrice === current.slPrice && last.tpPrice === current.tpPrice) return
-    const anchorMs = (cursorTimeRef.current ?? current.entryTime) * 1000
-    if (current.slPrice !== null) {
-      chart.overrideOverlay({ id: 'kl-open-pos-sl', points: [{ timestamp: anchorMs, value: current.slPrice }] })
-    }
-    if (current.tpPrice !== null) {
-      chart.overrideOverlay({ id: 'kl-open-pos-tp', points: [{ timestamp: anchorMs, value: current.tpPrice }] })
-    }
-  }, [openPositionEditor?.slPrice, openPositionEditor?.tpPrice])
+  }, [orderLines, cursorTime, colors, base, instrument, hoveredOrderLine])
 
   // Shared by the imperative fitRange handle AND the empty-area menu's
   // "Reset chart view" (which calls it with the full loaded window).
@@ -1662,7 +1782,20 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const resetView = () => {
     const bars = loadedBarsRef.current
     if (bars.length === 0) return
-    fitRangeImpl(bars[0].time, bars[bars.length - 1].time)
+    const margin = rightMarginPxRef.current
+    if (!margin) {
+      fitRangeImpl(bars[0].time, bars[bars.length - 1].time)
+      return
+    }
+    // Fit every bar into the width LESS the right margin, and park the newest
+    // bar that margin short of the edge (the order-label room, G2).
+    withReadyChart(chartRef.current, true, (chart) => {
+      const width = chart.getSize()?.width
+      if (!width) return
+      const space = Math.max(1, (width - margin) / bars.length)
+      chart.setBarSpace(space)
+      chart.scrollToDataIndex(bars.length - 2 + Math.ceil(margin / space), 200)
+    })
   }
   const drawingCount = () => chartRef.current?.getOverlays({ groupId: DRAWING_GROUP_ID }).length ?? 0
   const removeAllDrawings = () => {
@@ -1965,17 +2098,25 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           label="Chart"
           onClose={() => setContextMenu(null)}
           items={[
+            // FXR_V2_SPEC.md 3.3 (R5): the order pair for the clicked price
+            // sits on top, the chart's own items below a separator. Offered
+            // only when the caller supplied them AND the click resolved to a
+            // real price (never on an axis/sub-pane click).
+            ...(() => {
+              const extra =
+                getEmptyAreaMenuExtraItems && contextMenu.time !== null && contextMenu.price !== null
+                  ? getEmptyAreaMenuExtraItems({ time: contextMenu.time, price: contextMenu.price })
+                  : []
+              return extra.length > 0 ? [...extra, { separator: true } as const] : []
+            })(),
             { label: 'Reset chart view', onSelect: resetView },
             { separator: true },
             { label: 'Remove all drawings', onSelect: removeAllDrawings, disabled: drawingCount() === 0, destructive: true },
-            // FXR_SPEC.md phase F3: order-placement actions, appended only
-            // when both the caller supplied them AND the click resolved to
-            // a real price (never on an axis/sub-pane click).
-            ...(getEmptyAreaMenuExtraItems && contextMenu.time !== null && contextMenu.price !== null
-              ? [{ separator: true } as const, ...getEmptyAreaMenuExtraItems({ time: contextMenu.time, price: contextMenu.price })]
-              : []),
           ]}
         />
+      )}
+      {contextMenu?.kind === 'orderLine' && (
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} label="Order line" onClose={() => setContextMenu(null)} items={contextMenu.items} />
       )}
       {contextMenu?.kind === 'drawing' && (
         <ContextMenu

@@ -467,6 +467,44 @@ def list_trades(session_id: str) -> List[models.ManualTrade]:
     return [models.ManualTrade.model_validate(t) for t in _read_trades(session_id)]
 
 
+def _exit_from_request(req: models.CreateManualTradeRequest) -> dict:
+    return models.TradeExit(
+        time=req.exit_time,
+        price=req.exit_price,
+        contracts=req.size_contracts,
+        pnl_usd=req.pnl_usd,
+        commission_usd=req.commission_usd,
+        exit_type=req.exit_type,
+        risk_usd=req.risk_usd,
+        mae_points=req.mae_points,
+    ).model_dump()
+
+
+def _merge_exits(trade: dict) -> dict:
+    """Recomputes a trade's aggregates from its `exits` (FXR_V2_SPEC.md 3.6).
+
+    Order-independent on purpose (exits are folded by time, not arrival), so
+    two exits that reach the server in either order give the same trade. The
+    per-exit numbers themselves come from the sim broker -- this only sums them:
+      pnl/commission = sums, exit_price = contract-weighted average,
+      exit_time/exit_type = the latest exit's, R = total P&L / total risk (only
+      when every exit carries its frozen risk share).
+    """
+    exits = sorted(trade["exits"], key=lambda e: e["time"])
+    contracts = sum(e["contracts"] for e in exits)
+    trade["pnl_usd"] = sum(e["pnl_usd"] for e in exits)
+    trade["commission_usd"] = sum(e["commission_usd"] for e in exits)
+    trade["exit_price"] = sum(e["price"] * e["contracts"] for e in exits) / contracts
+    trade["exit_time"] = exits[-1]["time"]
+    trade["exit_type"] = exits[-1]["exit_type"]
+    risks = [e.get("risk_usd") for e in exits]
+    if all(r for r in risks):
+        trade["r_multiple"] = trade["pnl_usd"] / sum(risks)
+    else:
+        trade["r_multiple"] = None
+    return trade
+
+
 @_serialised
 def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> models.RecordTradeResponse:
     """Journals a closed manual trade and applies its net PnL to the
@@ -475,6 +513,11 @@ def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> model
     already computed every number deterministically from (bars, orders)
     (FXR_SPEC.md section 6) -- this endpoint is durable storage, not a
     second source of truth, so it does not recompute pnl/r/mae/mfe itself.
+
+    Partial exits (FXR_V2_SPEC.md 3.6): the request describes ONE exit. When
+    its `trade_key` matches an already-journaled trade it becomes one more
+    exit of that trade (the trade stays one row; its aggregates are folded
+    from all exits, and only THIS exit's P&L is added to the balance).
     """
     data = _read(session_id)
     if req.instrument != data["instrument"]:
@@ -484,22 +527,52 @@ def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> model
     if req.side not in ("long", "short"):
         raise InvalidSessionRequest(f"side must be 'long' or 'short', got {req.side!r}")
 
-    _check_cap(data, req.size_contracts, "trade")
+    size = req.initial_contracts if req.initial_contracts is not None else req.size_contracts
+    _check_cap(data, size, "trade")
 
     existing = _read_trades(session_id)
-    trade = models.ManualTrade(
-        trade_id=len(existing) + 1,
-        session_id=session_id,
-        **req.model_dump(),
+    new_exit = _exit_from_request(req)
+    match_idx = (
+        next((i for i, t in enumerate(existing) if t.get("trade_key") == req.trade_key), None)
+        if req.trade_key
+        else None
     )
-    existing.append(trade.model_dump())
+    if match_idx is None:
+        body = req.model_dump(exclude={"initial_contracts", "risk_usd"})
+        body["size_contracts"] = size
+        trade = models.ManualTrade(trade_id=len(existing) + 1, session_id=session_id, exits=[new_exit], **body)
+        trade_dict = _merge_exits(trade.model_dump())
+        # The slice's own R stands until a second exit arrives.
+        if req.risk_usd is None:
+            trade_dict["r_multiple"] = req.r_multiple
+        existing.append(trade_dict)
+        out = trade_dict
+    else:
+        t = existing[match_idx]
+        if sum(e["contracts"] for e in t["exits"]) + req.size_contracts > t["size_contracts"]:
+            raise InvalidSessionRequest(
+                f"exit of {req.size_contracts} contracts exceeds the {t['size_contracts']}-contract trade"
+            )
+        t["exits"] = [*t["exits"], new_exit]
+        t = _merge_exits(t)
+        # The deepest excursion over the whole hold wins (each exit's own
+        # numbers span entry..that exit, so the later one already covers more).
+        t["mae_points"] = max(t["mae_points"], req.mae_points)
+        t["mfe_points"] = max(t["mfe_points"], req.mfe_points)
+        t["mae_r"] = max((v for v in (t.get("mae_r"), req.mae_r) if v is not None), default=None)
+        t["mfe_r"] = max((v for v in (t.get("mfe_r"), req.mfe_r) if v is not None), default=None)
+        t["bars_held"] = max(t["bars_held"], req.bars_held)
+        existing[match_idx] = t
+        out = t
     _write_trades(session_id, existing)
 
     data["account"]["balance"] += req.pnl_usd
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
 
-    return models.RecordTradeResponse(trade=trade, session=models.BacktestSessionDetail.model_validate(data))
+    return models.RecordTradeResponse(
+        trade=models.ManualTrade.model_validate(out), session=models.BacktestSessionDetail.model_validate(data)
+    )
 
 
 def _find_trade_index(session_id: str, trades: list, trade_id: int) -> int:

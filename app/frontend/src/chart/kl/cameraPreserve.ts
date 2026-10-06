@@ -47,12 +47,16 @@ export interface CameraRestoreInput {
   afterFirstBarTime: number | null
   afterBarCount: number
   followLatestBar: boolean
+  // Empty bars of space kept to the right of the newest bar (the session
+  // chart's room for order labels, FXR_V2_SPEC.md G2). 0 = flush, the
+  // behaviour every other chart keeps.
+  rightMarginBars?: number
 }
 
 // Returns the dataIndex to hand scrollToDataIndex, or null to leave the
 // camera untouched.
 export function cameraRestoreIndex(input: CameraRestoreInput): number | null {
-  const { beforeRealTo, beforeFirstBarTime, afterFirstBarTime, afterBarCount, followLatestBar } = input
+  const { beforeRealTo, beforeFirstBarTime, afterFirstBarTime, afterBarCount, followLatestBar, rightMarginBars = 0 } = input
   if (afterBarCount <= 0) return null
   // A genuine WINDOW change (the fetch window re-anchored as replay ran off
   // the end of the loaded bars) prepends history, which shifts every index
@@ -66,8 +70,12 @@ export function cameraRestoreIndex(input: CameraRestoreInput): number | null {
   // old right edge: shift by exactly enough to bring it flush to the edge,
   // never a hard recenter. OFF (or nothing new past the edge): hold the
   // right edge exactly where the user left it.
+  // With a margin the newest bar must stay `rightMarginBars` short of the
+  // edge: once it enters that zone the view shifts by exactly enough to put
+  // it back (one bar per step), so the margin never erodes while following.
   const lastBarIndex = afterBarCount - 1
-  const targetRealTo = followLatestBar && lastBarIndex >= beforeRealTo ? afterBarCount : beforeRealTo
+  const targetRealTo =
+    followLatestBar && lastBarIndex + rightMarginBars >= beforeRealTo ? afterBarCount + rightMarginBars : beforeRealTo
   return targetRealTo - RIGHT_EDGE_INDEX_OFFSET
 }
 
@@ -115,12 +123,13 @@ export function reanchorRestoreIndex(
   anchor: ViewAnchor | null,
   afterTimes: readonly number[],
   followLatestBar = false,
+  rightMarginBars = 0,
 ): number | null {
   if (!anchor || afterTimes.length === 0) return null
   const lastIndex = afterTimes.length - 1
   let targetRealTo: number
   if (anchor.time < afterTimes[0]) {
-    targetRealTo = afterTimes.length
+    targetRealTo = afterTimes.length + rightMarginBars
   } else {
     // Last bar at or before the anchor time (binary search; times ascend).
     let lo = 0
@@ -136,7 +145,7 @@ export function reanchorRestoreIndex(
       }
     }
     targetRealTo = found + 1 + anchor.extraBars
-    if (followLatestBar && lastIndex >= targetRealTo) targetRealTo = afterTimes.length
+    if (followLatestBar && lastIndex + rightMarginBars >= targetRealTo) targetRealTo = afterTimes.length + rightMarginBars
   }
   return targetRealTo - RIGHT_EDGE_INDEX_OFFSET
 }

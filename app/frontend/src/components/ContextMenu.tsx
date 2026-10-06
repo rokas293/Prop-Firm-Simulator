@@ -125,7 +125,8 @@ export default function ContextMenu({
       // Rendered off-screen until the post-mount clamp above places it --
       // avoids a one-frame flash at the wrong (unclamped) spot.
       style={{ position: 'fixed', left: pos.x, top: pos.y, visibility: measured ? 'visible' : 'hidden' }}
-      className={`${POPOVER_SHELL} z-40 w-48 py-1`}
+      // w-max: the order items read "Buy 25 MNQ @ 20,050.25 limit" and must not wrap.
+      className={`${POPOVER_SHELL} z-40 w-max min-w-48 py-1`}
     >
       {items.map((entry, i) =>
         isSeparator(entry) ? (
@@ -139,7 +140,7 @@ export default function ContextMenu({
               entry.onSelect()
               onClose()
             }}
-            className={`${POPOVER_MENU_ROW} ${entry.destructive ? '!text-negative-fg' : ''}`}
+            className={`${POPOVER_MENU_ROW} ${entry.destructive && !entry.disabled ? '!text-negative-fg' : ''}`}
           >
             {entry.label}
           </button>

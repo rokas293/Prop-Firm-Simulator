@@ -42,14 +42,6 @@ export const CONTRACT_SPECS: Record<'MES' | 'MNQ', ContractSpec> = {
   MNQ: { pointValue: 2, tickSize: 0.25 },
 }
 
-// FXR_SPEC.md section 2 lists an "optional prop_ruleset (reuse Topstep
-// config)" on SimAccount that no phase has wired up yet -- until it is,
-// this is the sensible default max-position cap for auto-sizing, since the
-// platform is explicitly aimed at Topstep Combine prep (CLAUDE.md section
-// 3: "5 contracts total for the $50k account... 1 micro counts as 1
-// contract"). Revisit once a session can carry its own prop ruleset.
-export const MAX_POSITION_CONTRACTS = 5
-
 export function getContractSpec(instrument: string): ContractSpec {
   const spec = CONTRACT_SPECS[instrument as 'MES' | 'MNQ']
   if (!spec) throw new Error(`no contract spec for instrument ${instrument} (FXR platform is MNQ/MES only)`)
@@ -95,22 +87,23 @@ export function toR(pnlUsd: number, riskUsd: number | null): number | null {
 // FXR_SPEC.md section B: "given risk-per-trade... and the SL distance,
 // compute contracts automatically (respect whole-contract sizing and any
 // prop max-position cap)". Floors to whole contracts (never over-risks to
-// round up), floors at 1 (a ticket always sizes to at least one contract
-// even if the configured risk can't quite cover it at this SL distance --
-// matching default_contracts' own floor elsewhere), and caps at
-// maxContracts.
+// round up) and floors at 1 (a ticket always sizes to at least one contract
+// even if the configured risk can't quite cover it at this SL distance).
+// `maxContracts` is the SESSION's own position cap -- Topstep's 5 applies to
+// prop sessions only (account.max_contracts); null = a practice session, which
+// is uncapped, so this returns the true size (FXR_V2_SPEC.md G2 correction).
 export function computeAutoSize(
   riskUsd: number | null,
   entryPrice: number,
   slPrice: number,
   spec: ContractSpec,
-  maxContracts: number = MAX_POSITION_CONTRACTS,
+  maxContracts: number | null = null,
 ): number {
   const slDistance = Math.abs(entryPrice - slPrice)
   if (!riskUsd || slDistance <= 0) return 1
   const riskPerContract = slDistance * spec.pointValue
-  const contracts = Math.floor(riskUsd / riskPerContract)
-  return Math.min(maxContracts, Math.max(1, contracts))
+  const contracts = Math.max(1, Math.floor(riskUsd / riskPerContract))
+  return maxContracts === null ? contracts : Math.min(maxContracts, contracts)
 }
 
 export interface MaeMfe {
@@ -154,6 +147,15 @@ export interface OpenPosition {
   // F4 optional toggles -- see applyBreakevenAndTrailing.
   autoBreakeven: boolean
   trailingPoints: number | null
+  // FXR_V2_SPEC.md 3.6: the journal identity shared by every exit of this
+  // position (a working order's id when it came from one), and its size at
+  // entry -- `contracts` is only what is still open after partial closes.
+  tradeKey: string
+  initialContracts: number
+  // FXR_V2_SPEC.md 3.2: ghost SL/TP levels not yet placed (null = none /
+  // already placed or removed). Independent per side.
+  ghostSl: number | null
+  ghostTp: number | null
 }
 
 // FXR_SPEC.md section B/3, phase F4: persistence boundary conversions --
@@ -173,6 +175,10 @@ export function toPersistedPosition(position: OpenPosition): PersistedPosition {
     tp_price: position.tpPrice,
     auto_breakeven: position.autoBreakeven,
     trailing_points: position.trailingPoints,
+    trade_key: position.tradeKey,
+    initial_contracts: position.initialContracts,
+    ghost_sl: position.ghostSl,
+    ghost_tp: position.ghostTp,
   }
 }
 
@@ -188,6 +194,11 @@ export function fromPersistedPosition(p: PersistedPosition, entryIndex: number):
     tpPrice: p.tp_price,
     autoBreakeven: p.auto_breakeven,
     trailingPoints: p.trailing_points,
+    // A v1 position has no key/initial size: it journals as one plain trade.
+    tradeKey: p.trade_key ?? `legacy-${p.entry_time}`,
+    initialContracts: p.initial_contracts ?? p.contracts,
+    ghostSl: p.ghost_sl ?? null,
+    ghostTp: p.ghost_tp ?? null,
   }
 }
 
@@ -212,6 +223,13 @@ export interface ClosedTradeResult {
   maeR: number | null
   mfeR: number | null
   barsHeld: number
+  // FXR_V2_SPEC.md 3.6: this is ONE exit of its position -- journaled under
+  // tradeKey so a partial and its remainder merge into one trade. `contracts`
+  // is this exit's slice, `initialContracts` the size at entry, `riskUsd` this
+  // slice's share of the risk frozen at entry (merged R = total P&L / total).
+  tradeKey: string
+  initialContracts: number
+  riskUsd: number | null
 }
 
 // Shared by closePosition (F2's manual market close) and advanceReplay's
@@ -267,6 +285,9 @@ function closePositionAt(
     maeR,
     mfeR,
     barsHeld: exitIndex - position.entryIndex + 1,
+    tradeKey: position.tradeKey,
+    initialContracts: position.initialContracts,
+    riskUsd: position.riskUsd,
   }
 }
 
@@ -549,6 +570,10 @@ export function advanceReplay(
           tpPrice: order.tpPrice,
           autoBreakeven: order.autoBreakeven,
           trailingPoints: order.trailingPoints,
+          tradeKey: order.id,
+          initialContracts: order.contracts,
+          ghostSl: null,
+          ghostTp: null,
         }
         filledOrderIds.push(order.id)
         orders = orders.filter((o) => o.id !== order.id)

@@ -275,6 +275,16 @@ class PersistedPosition(BaseModel):
     # reload same as everything else about it.
     auto_breakeven: bool = False
     trailing_points: Optional[float] = None
+    # FXR_V2_SPEC.md section 3.6 (G2): the position's journal identity and its
+    # size at entry. Every exit of this position (partial or final) is
+    # journaled under `trade_key`, so they merge into ONE trade; `contracts`
+    # above is only what is still open. Optional so v1 positions still load.
+    trade_key: Optional[str] = None
+    initial_contracts: Optional[int] = None
+    # Section 3.2: ghost SL/TP levels still waiting to be placed (drag to set,
+    # or removed) -- persisted so a reload mid-trade restores them as they were.
+    ghost_sl: Optional[float] = None
+    ghost_tp: Optional[float] = None
 
 
 class PersistedWorkingOrder(BaseModel):
@@ -393,6 +403,16 @@ class CreateManualTradeRequest(BaseModel):
     mae_r: Optional[float] = None
     mfe_r: Optional[float] = None
     bars_held: int
+    # FXR_V2_SPEC.md section 3.6 (G2): partial exits. Every field above
+    # describes THIS exit's slice. `trade_key` identifies the position the
+    # slice belongs to: a request whose key matches an already-journaled trade
+    # is merged into it as one more exit (record_trade), not stored as a second
+    # trade. `initial_contracts` is the position's size at entry (the merged
+    # trade's size_contracts) and `risk_usd` this slice's share of the risk
+    # frozen at entry (so the merged R = total P&L / total risk).
+    trade_key: Optional[str] = None
+    initial_contracts: Optional[int] = None
+    risk_usd: Optional[float] = None
 
 
 # --- FXR_SPEC.md section C, phase F5: journaling on top of the auto-logged
@@ -418,9 +438,30 @@ class Screenshot(BaseModel):
     created_at: str
 
 
+class TradeExit(BaseModel):
+    """One exit of a (possibly partially closed) trade -- FXR_V2_SPEC.md 3.6."""
+    time: int
+    price: float
+    contracts: int
+    pnl_usd: float  # net of this exit's commission
+    commission_usd: float
+    exit_type: str
+    risk_usd: Optional[float] = None
+    # This exit's own max adverse excursion (points, entry..this exit): the
+    # prop replay uses it as the low-equity point at THIS exit's time.
+    mae_points: Optional[float] = None
+
+
 class ManualTrade(TradeRecord):
     session_id: str
     source: str = "manual"
+    # Partial exits (3.6): one trade, several exits. The trade-level pnl_usd /
+    # commission_usd / exit_price (contract-weighted) / exit_time (latest) /
+    # r_multiple are aggregates over `exits`; size_contracts is the size at
+    # entry, so a trade is still partly open while sum(exit contracts) <
+    # size_contracts. Empty for trades journaled before G2 (one implicit exit).
+    trade_key: Optional[str] = None
+    exits: List[TradeExit] = Field(default_factory=list)
     # Journal fields (F5): absent from CreateManualTradeRequest below --
     # the sim broker journals a bare trade record the moment it closes
     # (F2), and these are filled in afterward via update_trade_journal (or,

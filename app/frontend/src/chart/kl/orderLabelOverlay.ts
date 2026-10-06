@@ -1,0 +1,258 @@
+// FXR_V2_SPEC.md phase G2 (sections 2 and 3.2): the sim broker's on-chart order
+// lines -- the open position's line, its SL/TP, the ghost SL/TP and working
+// orders -- as ONE klinecharts overlay: a dashed price line across the pane, a
+// segmented label at the right (tag | $ | qty | x), and a price tag on the y
+// axis. Structure follows the reference screenshots (R10 position line, R11
+// ghost SL/TP): grip-less here since the whole line drags.
+//
+// Why a custom overlay and not DOM: canvas figures track pan/zoom/axis-scale
+// for free, and the label text is recomputed from the overlay's OWN live point
+// on every frame, so a drag shows live $/ticks/% with no React round trip.
+// The line is `klOrderLine`'s cousin (same legend-clearing start) -- see
+// orderLineOverlay.ts for why it doesn't span the legend corner.
+import { registerOverlay } from 'klinecharts'
+import { hexToRgba } from '../color'
+import { labelSegments, roundToTick, type LabelSegment, type OrderLineInfo } from '../orderEntry'
+import { orderLineStartX } from './orderLineOverlay'
+
+export const KL_ORDER_LABEL = 'klOrderLabel'
+
+export interface OrderLabelPalette {
+  line: string // the role colour: accent (position/order), orange (SL), green (TP)
+  surface: string // label background
+  text: string
+  textMuted: string
+  positive: string
+  negative: string
+  onRole: string // text on a role-coloured fill (the SL/TP tag, the axis tag)
+}
+
+export interface OrderLabelData {
+  info: OrderLineInfo
+  palette: OrderLabelPalette
+  // Formats a price for the axis tag (instrument precision).
+  formatPrice: (price: number) => string
+  // The pointer is over this line: it brightens (a ghost is otherwise faint).
+  hover?: boolean
+}
+
+export function isGhostRole(role: string): boolean {
+  return role === 'ghost-sl' || role === 'ghost-tp'
+}
+
+// Ghosts are provisional: faint until hovered or dragged. Placed levels and
+// the position are full strength.
+export const GHOST_ALPHA = 0.55
+const GHOST_TEXT_ALPHA = 0.65
+
+const FONT_FAMILY = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+const FONT_SIZE = 11
+const LABEL_HEIGHT = 20 // 4px grid
+const PAD_X = 8
+const RIGHT_MARGIN = 8
+const CLOSE_WIDTH = 20
+const GRIP_WIDTH = 16
+
+// The chart theme styles overlay text with a backdrop and padding; these labels
+// draw their own rectangles, so the text must bring none of that.
+const TEXT_RESET = {
+  style: 'fill',
+  backgroundColor: 'transparent',
+  borderColor: 'transparent',
+  borderSize: 0,
+  paddingLeft: 0,
+  paddingRight: 0,
+  paddingTop: 0,
+  paddingBottom: 0,
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null
+function textWidth(text: string): number {
+  if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d')
+  if (!measureCtx) return text.length * 7
+  measureCtx.font = `500 ${FONT_SIZE}px ${FONT_FAMILY}`
+  return measureCtx.measureText(text).width
+}
+
+function toneColor(seg: LabelSegment, p: OrderLabelPalette): string {
+  switch (seg.tone) {
+    case 'positive':
+      return p.positive
+    case 'negative':
+      return p.negative
+    case 'muted':
+      return p.textMuted
+    case 'tag':
+      return p.onRole
+    default:
+      return p.text
+  }
+}
+
+// Pure layout, exported for tests: segment widths and the label's left edge
+// for a pane `paneWidth` wide. The label hugs the right edge of the pane.
+export function layoutLabel(segments: LabelSegment[], paneWidth: number, measure: (t: string) => number = textWidth) {
+  const widths = segments.map((s) => (s.key === 'close' ? CLOSE_WIDTH : s.key === 'grip' ? GRIP_WIDTH : Math.ceil(measure(s.text)) + PAD_X * 2))
+  const total = widths.reduce((a, b) => a + b, 0)
+  const left = Math.max(0, paneWidth - RIGHT_MARGIN - total)
+  const xs: number[] = []
+  let x = left
+  for (const w of widths) {
+    xs.push(x)
+    x += w
+  }
+  return { widths, xs, left, total }
+}
+
+// Labels whose lines are closer than a label's height would sit on top of each
+// other (a break-even stop is AT the entry; a target can be a tick from the
+// market) and hide each other's P&L and x. Each overlay computes the same
+// deterministic stacking from its siblings, so they sit side by side instead:
+// by role rank (position first, then placed levels, ghosts, working orders; ties
+// by id), each label shifts left of every higher-ranked one it vertically
+// overlaps. Pure, so it can be tested without a chart.
+const ROLE_RANK: Record<string, number> = { position: 0, sl: 1, tp: 1, 'ghost-sl': 2, 'ghost-tp': 2, order: 3 }
+const STACK_GAP = 4
+
+export interface StackEntry {
+  id: string
+  role: string
+  y: number
+  width: number
+}
+
+export function stackOffsets(entries: StackEntry[]): Map<string, number> {
+  const ordered = [...entries].sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || (a.id < b.id ? -1 : 1))
+  const placed: Array<StackEntry & { offset: number }> = []
+  const out = new Map<string, number>()
+  for (const e of ordered) {
+    let offset = 0
+    for (const f of placed) {
+      if (Math.abs(f.y - e.y) < LABEL_HEIGHT) offset = Math.max(offset, f.offset + f.width + STACK_GAP)
+    }
+    placed.push({ ...e, offset })
+    out.set(e.id, offset)
+  }
+  return out
+}
+
+let registered = false
+
+export function ensureOrderLabelOverlayRegistered(): void {
+  if (registered) return
+  registered = true
+  registerOverlay({
+    name: KL_ORDER_LABEL,
+    totalStep: 1,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ chart, coordinates, bounding, overlay, yAxis }) => {
+      const p = coordinates[0]
+      const data = overlay.extendData as OrderLabelData | undefined
+      const price = overlay.points[0]?.value
+      if (!p || !data || typeof price !== 'number') return []
+      const { palette, info } = data
+      const segments = labelSegments(info, price)
+      // Step aside for any sibling label this one would cover.
+      let shift = 0
+      if (yAxis) {
+        const entries: StackEntry[] = []
+        for (const o of chart.getOverlays({ groupId: overlay.groupId })) {
+          const d = o.extendData as OrderLabelData | undefined
+          const v = o.points[0]?.value
+          if (!d || typeof v !== 'number') continue
+          entries.push({ id: o.id, role: d.info.role, y: yAxis.convertToPixel(v), width: layoutLabel(labelSegments(d.info, v), bounding.width).total })
+        }
+        shift = stackOffsets(entries).get(overlay.id) ?? 0
+      }
+      const { widths, xs } = layoutLabel(segments, bounding.width - shift)
+      const ghost = isGhostRole(info.role)
+      const roleFill = info.role === 'sl' || info.role === 'tp'
+      // Ghost: hairline in the role colour at reduced strength, hollow tag --
+      // nothing about it reads as a live order. Hover/drag brings it to full.
+      const border = ghost && !data.hover ? hexToRgba(palette.line, GHOST_ALPHA) : palette.line
+      const figures: unknown[] = [
+        {
+          type: 'line',
+          attrs: { coordinates: [{ x: orderLineStartX(p.y, bounding.width), y: p.y }, { x: bounding.width, y: p.y }] },
+          key: 'line',
+        },
+      ]
+      segments.forEach((seg, i) => {
+        const filled = seg.tone === 'tag' && roleFill
+        figures.push({
+          type: 'rect',
+          key: seg.key,
+          attrs: { x: xs[i], y: p.y - LABEL_HEIGHT / 2, width: widths[i], height: LABEL_HEIGHT },
+          styles: {
+            style: 'stroke_fill',
+            color: filled ? palette.line : palette.surface,
+            borderColor: border,
+            borderSize: 1,
+            borderStyle: ghost ? 'dashed' : 'solid',
+            borderDashedValue: [3, 2],
+            borderRadius: 2,
+          },
+        })
+        if (seg.key === 'grip') {
+          // Two columns of three dots: "this can be dragged".
+          const cx = xs[i] + widths[i] / 2
+          for (const dx of [-2, 2]) {
+            for (const dy of [-4, 0, 4]) {
+              figures.push({
+                type: 'circle',
+                key: 'grip-dot',
+                ignoreEvent: true,
+                attrs: { x: cx + dx, y: p.y + dy, r: 1 },
+                styles: { style: 'fill', color: palette.textMuted },
+              })
+            }
+          }
+          return
+        }
+        // A ghost's tag is hollow, so its text takes the role colour (on a
+        // filled tag it takes the colour that reads on the fill).
+        // A ghost's whole label is faint (not just its border) until hovered or
+        // dragged, so the P&L it quotes never reads like a live stop's.
+        const base = seg.tone === 'tag' && ghost ? palette.line : toneColor(seg, palette)
+        const color = ghost && !data.hover && seg.key !== 'hint' ? hexToRgba(base, GHOST_TEXT_ALPHA) : base
+        figures.push({
+          type: 'text',
+          key: `${seg.key}-text`,
+          ignoreEvent: true,
+          attrs: { x: xs[i] + widths[i] / 2, y: p.y, text: seg.text, align: 'center', baseline: 'middle' },
+          styles: { ...TEXT_RESET, color, size: seg.key === 'close' ? FONT_SIZE + 3 : FONT_SIZE, family: FONT_FAMILY, weight: '500' },
+        })
+      })
+      return figures as never
+    },
+    // The y-axis price tag (R10/R11's coloured tag on the axis).
+    createYAxisFigures: ({ coordinates, bounding, overlay }) => {
+      const p = coordinates[0]
+      const data = overlay.extendData as OrderLabelData | undefined
+      const price = overlay.points[0]?.value
+      if (!p || !data || typeof price !== 'number') return []
+      // The tag shows the tick-snapped price (what a release would set), never
+      // the raw pointer price; a ghost's tag is hollow like its label.
+      const ghost = isGhostRole(data.info.role)
+      const tagBorder = ghost && !data.hover ? hexToRgba(data.palette.line, GHOST_ALPHA) : data.palette.line
+      return [
+        {
+          type: 'rect',
+          ignoreEvent: true,
+          attrs: { x: 0, y: p.y - LABEL_HEIGHT / 2, width: bounding.width, height: LABEL_HEIGHT },
+          styles: ghost
+            ? { style: 'stroke_fill', color: data.palette.surface, borderColor: tagBorder, borderSize: 1, borderRadius: 2 }
+            : { style: 'fill', color: data.palette.line, borderRadius: 2 },
+        },
+        {
+          type: 'text',
+          ignoreEvent: true,
+          attrs: { x: bounding.width / 2, y: p.y, text: data.formatPrice(roundToTick(price, data.info.spec.tickSize)), align: 'center', baseline: 'middle' },
+          styles: { ...TEXT_RESET, color: ghost ? data.palette.line : data.palette.onRole, size: FONT_SIZE, family: FONT_FAMILY, weight: '500' },
+        },
+      ] as never
+    },
+  })
+}

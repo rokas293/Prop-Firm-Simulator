@@ -229,7 +229,7 @@ function PlaybackPill({ pb }: { pb: PlaybackProps }) {
         type="button"
         aria-pressed={pb.autoPlay}
         onClick={pb.onToggleAutoPlay}
-        title="Auto-play: keep the replay running while you open the New Trade ticket (off: opening it pauses the replay). A session never starts playing by itself."
+        title="Auto-play: run the replay continuously (same as Play). Opening an order ticket or dialog always pauses it."
         className={`h-7 rounded px-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
           pb.autoPlay ? 'bg-accent text-on-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text'
         }`}

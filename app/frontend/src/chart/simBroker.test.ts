@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONTRACT_SPECS,
-  MAX_POSITION_CONTRACTS,
   advanceReplay,
   closePosition,
   closePositionPartial,
@@ -136,6 +135,10 @@ describe('closePosition -- deterministic fill reproducibility', () => {
     tpPrice: null,
     autoBreakeven: false,
     trailingPoints: null,
+    tradeKey: 'k1',
+    initialContracts: 2,
+    ghostSl: null,
+    ghostTp: null,
   }
 
   function handCalcExpected() {
@@ -162,6 +165,10 @@ describe('closePosition -- deterministic fill reproducibility', () => {
       maeR: 0.9,
       mfeR: 1.5,
       barsHeld: 4,
+      // One exit of the position (FXR_V2_SPEC.md 3.6): the full close.
+      tradeKey: 'k1',
+      initialContracts: 2,
+      riskUsd: 100,
     }
   }
 
@@ -217,6 +224,10 @@ describe('openPositionAsTradeRecord', () => {
     tpPrice: null,
     autoBreakeven: false,
     trailingPoints: null,
+    tradeKey: 'k2',
+    initialContracts: 1,
+    ghostSl: null,
+    ghostTp: null,
   }
 
   it('marks to market at the current cursor bar and computes live pnl/r', () => {
@@ -288,15 +299,20 @@ describe('openPositionAsTradeRecord', () => {
 })
 
 describe('computeAutoSize (F3 -- auto position sizing)', () => {
-  it('sizes to exactly the risk budget divided by the dollar risk per contract', () => {
-    // $500 risk, 10pt SL distance on MES ($5/pt) = $50/contract -> 10
-    // contracts, but MAX_POSITION_CONTRACTS caps it.
-    expect(computeAutoSize(500, 5010, 5000, CONTRACT_SPECS.MES)).toBe(MAX_POSITION_CONTRACTS)
+  it('a practice session (no cap) gets the TRUE size, not a Topstep-clipped one', () => {
+    // $500 risk, 10pt SL on MES ($5/pt) = $50/contract -> 10 contracts. The
+    // 5-contract limit is a Topstep rule: it must not apply here (G2 correction).
+    expect(computeAutoSize(500, 5010, 5000, CONTRACT_SPECS.MES)).toBe(10)
+    expect(computeAutoSize(500, 5010, 5000, CONTRACT_SPECS.MES, null)).toBe(10)
+    expect(computeAutoSize(100000, 5001, 5000, CONTRACT_SPECS.MES, null)).toBe(20000)
   })
 
-  it('matches a hand calc under the cap: 1% of $50k over a 20pt MES stop', () => {
+  it('a prop session passes its own cap and is clipped to it', () => {
+    expect(computeAutoSize(500, 5010, 5000, CONTRACT_SPECS.MES, 5)).toBe(5)
+  })
+
+  it('matches a hand calc: 1% of $50k over a 20pt MES stop', () => {
     // riskUsd = 50000 * 0.01 = 500. slDistance = 20. riskPerContract = 100.
-    // floor(500/100) = 5 -- exactly AT the cap, not clipped by it.
     const riskUsd = 50000 * 0.01
     expect(computeAutoSize(riskUsd, 5020, 5000, CONTRACT_SPECS.MES)).toBe(5)
   })
@@ -308,10 +324,7 @@ describe('computeAutoSize (F3 -- auto position sizing)', () => {
 
   it('floors at 1 contract even when the budget technically covers less than one', () => {
     expect(computeAutoSize(10, 5020, 5000, CONTRACT_SPECS.MES, 10)).toBe(1)
-  })
-
-  it('caps at the given maxContracts', () => {
-    expect(computeAutoSize(100000, 5001, 5000, CONTRACT_SPECS.MES, 5)).toBe(5)
+    expect(computeAutoSize(10, 5020, 5000, CONTRACT_SPECS.MES)).toBe(1)
   })
 
   it('falls back to 1 with no risk basis or a zero-distance stop', () => {
@@ -410,6 +423,11 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       trailingPoints: null,
       slPrice: null,
       tpPrice: null,
+      // A position that came from a working order journals under that order's id.
+      tradeKey: 'limit-1',
+      initialContracts: 1,
+      ghostSl: null,
+      ghostTp: null,
     })
   })
 
@@ -485,6 +503,10 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       tpPrice: 5040,
       autoBreakeven: false,
       trailingPoints: null,
+      tradeKey: 'k3',
+      initialContracts: 1,
+      ghostSl: null,
+      ghostTp: null,
     }
     // bar5 (idx5): low 4970 <= slPrice 4980 -- closes there, at the SL
     // price exactly, not the bar's own (worse) low.
@@ -515,6 +537,10 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       tpPrice: 5031,
       autoBreakeven: false,
       trailingPoints: null,
+      tradeKey: 'k4',
+      initialContracts: 1,
+      ghostSl: null,
+      ghostTp: null,
     }
     const result = advanceReplay(BARS2, 3, 5, position, [], CONTRACT_SPECS.MES, 1.3)
     expect(result.closedTrades[0].exitType).toBe('stop_loss')
@@ -533,6 +559,10 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       tpPrice: null,
       autoBreakeven: false,
       trailingPoints: null,
+      tradeKey: 'k5',
+      initialContracts: 1,
+      ghostSl: null,
+      ghostTp: null,
     }
     const order = baseOrder({ id: 'limit-1', price: 4988 })
     const result = advanceReplay(BARS2, 0, 3, openPos, [order], CONTRACT_SPECS.MES, 1.3)
@@ -562,6 +592,10 @@ describe('closePositionPartial / closePositionPartialAtMarket (F4)', () => {
     tpPrice: 5040,
     autoBreakeven: false,
     trailingPoints: null,
+    tradeKey: 'k6',
+    initialContracts: 4,
+    ghostSl: null,
+    ghostTp: null,
   }
 
   it('closing 1 of 4 contracts: the closed slice is hand-calculated exactly, and the remainder keeps the same entry/SL/TP with 3/4 the risk', () => {
@@ -639,6 +673,10 @@ describe('advanceReplay -- auto break-even and trailing stop (F4)', () => {
     tpPrice: null,
     autoBreakeven: true,
     trailingPoints: null,
+    tradeKey: 'k7',
+    initialContracts: 1,
+    ghostSl: null,
+    ghostTp: null,
   }
 
   it('does not move the SL before the favorable excursion reaches +1R', () => {
@@ -694,6 +732,10 @@ describe('advanceReplay -- auto break-even and trailing stop (F4)', () => {
     tpPrice: null,
     autoBreakeven: false,
     trailingPoints: 10,
+    tradeKey: 'k8',
+    initialContracts: 1,
+    ghostSl: null,
+    ghostTp: null,
   }
 
   it('sets the SL to exactly trailingPoints behind the first favorable extreme', () => {
@@ -751,6 +793,10 @@ describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder 
     tpPrice: 4990,
     autoBreakeven: true,
     trailingPoints: 8,
+    tradeKey: 'k9',
+    initialContracts: 2,
+    ghostSl: null,
+    ghostTp: null,
   }
 
   it('round-trips every field except entryIndex, which is re-supplied externally', () => {
@@ -771,7 +817,35 @@ describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder 
       tp_price: 4990,
       auto_breakeven: true,
       trailing_points: 8,
+      trade_key: 'k9',
+      initial_contracts: 2,
+      ghost_sl: null,
+      ghost_tp: null,
     })
+  })
+
+  it('restores a v1 position (no key / initial size / ghosts) as one plain journal entry', () => {
+    const legacy = {
+      side: 'long' as const,
+      contracts: 3,
+      entry_price: 5000,
+      entry_time: 777,
+      risk_usd: 300,
+      sl_price: null,
+      tp_price: null,
+      auto_breakeven: false,
+      trailing_points: null,
+    }
+    const restored = fromPersistedPosition(legacy, 0)
+    expect(restored.initialContracts).toBe(3)
+    expect(restored.tradeKey).toBe('legacy-777')
+    expect(restored.ghostSl).toBeNull()
+    expect(restored.ghostTp).toBeNull()
+  })
+
+  it('round-trips the ghost levels, so a reload mid-trade restores them as they were', () => {
+    const withGhosts = { ...position, slPrice: null, tpPrice: null, ghostSl: 5001.25, ghostTp: null }
+    expect(fromPersistedPosition(toPersistedPosition(withGhosts), position.entryIndex)).toEqual(withGhosts)
   })
 
   const order: WorkingOrder = {
@@ -793,5 +867,90 @@ describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder 
     const persisted = toPersistedWorkingOrder(order)
     const restored = fromPersistedWorkingOrder(persisted, 9)
     expect(restored).toEqual({ ...order, placedIndex: 9, autoBreakeven: false, trailingPoints: null })
+  })
+})
+
+
+// FXR_V2_SPEC.md 3.6 (G2): partial exits stay ONE trade with several exits. The
+// broker emits each exit as its own ClosedTradeResult under the position's
+// tradeKey; the server merges them (bt_session_service.record_trade). These
+// pin the per-exit accounting the merge is built from.
+describe('partial close accounting (G2)', () => {
+  const entry = 5000
+  const pos: OpenPosition = {
+    side: 'long',
+    contracts: 3,
+    entryPrice: entry,
+    entryTime: 0,
+    entryIndex: 0,
+    riskUsd: 300, // $100 per contract
+    slPrice: 4980,
+    tpPrice: 5040,
+    autoBreakeven: false,
+    trailingPoints: null,
+    tradeKey: 'trade-A',
+    initialContracts: 3,
+    ghostSl: null,
+    ghostTp: null,
+  }
+  const COMM = 1
+
+  it('every exit of one position carries the same tradeKey and the size at entry', () => {
+    const first = closePositionPartial(BARS, pos, 2, 1, 5010, 'manual_close', CONTRACT_SPECS.MES, COMM)
+    const second = closePositionPartial(BARS, first.remainingPosition!, 3, 2, 5020, 'manual_close', CONTRACT_SPECS.MES, COMM)
+    expect(first.closedTrade.tradeKey).toBe('trade-A')
+    expect(second.closedTrade.tradeKey).toBe('trade-A')
+    expect(first.closedTrade.initialContracts).toBe(3)
+    expect(second.closedTrade.initialContracts).toBe(3)
+    expect(second.remainingPosition).toBeNull()
+  })
+
+  it('exit slices add up to the P&L, commission and R of closing everything in one go at the blended price', () => {
+    // 1 contract out at 5010 (+$50 gross), the remaining 2 at 5025 (+$250).
+    const first = closePositionPartial(BARS, pos, 2, 1, 5010, 'manual_close', CONTRACT_SPECS.MES, COMM)
+    const second = closePositionPartial(BARS, first.remainingPosition!, 3, 2, 5025, 'manual_close', CONTRACT_SPECS.MES, COMM)
+    const total = first.closedTrade.pnlUsd + second.closedTrade.pnlUsd
+    expect(first.closedTrade.pnlUsd).toBeCloseTo(50 - 1)
+    expect(second.closedTrade.pnlUsd).toBeCloseTo(250 - 2)
+    // Same as one 3-contract exit at the contract-weighted average (5020).
+    const blended = (5010 * 1 + 5025 * 2) / 3
+    const single = closePositionPartial(BARS, pos, 3, 3, blended, 'manual_close', CONTRACT_SPECS.MES, COMM)
+    expect(total).toBeCloseTo(single.closedTrade.pnlUsd)
+    expect(first.closedTrade.commissionUsd + second.closedTrade.commissionUsd).toBeCloseTo(single.closedTrade.commissionUsd)
+    // Each slice's frozen risk share sums back to the whole entry risk, so the
+    // merged R (total P&L / total risk) equals the single-exit R.
+    expect(first.closedTrade.riskUsd! + second.closedTrade.riskUsd!).toBeCloseTo(300)
+    expect(total / (first.closedTrade.riskUsd! + second.closedTrade.riskUsd!)).toBeCloseTo(single.closedTrade.rMultiple!)
+  })
+
+  it('the remainder keeps the entry, levels and the entry-time position size on every later exit', () => {
+    const first = closePositionPartial(BARS, pos, 2, 2, 5010, 'manual_close', CONTRACT_SPECS.MES, COMM)
+    const rest = first.remainingPosition!
+    expect(rest.contracts).toBe(1)
+    expect(rest.initialContracts).toBe(3)
+    expect(rest.entryPrice).toBe(entry)
+    expect(rest.slPrice).toBe(4980)
+    expect(rest.tpPrice).toBe(5040)
+    expect(rest.riskUsd).toBeCloseTo(100)
+  })
+
+  it('a stop hit after a partial closes the remaining size under the same tradeKey', () => {
+    const first = closePositionPartial(BARS, pos, 1, 1, 5005, 'manual_close', CONTRACT_SPECS.MES, COMM)
+    const rest = first.remainingPosition!
+    const bars: Bar[] = [
+      { time: 0, open: 5000, high: 5000, low: 5000, close: 5000, volume: 1 },
+      { time: 300, open: 5005, high: 5006, low: 5004, close: 5005, volume: 1 },
+      { time: 600, open: 5004, high: 5004, low: 4970, close: 4975, volume: 1 }, // through the 4980 stop
+    ]
+    const res = advanceReplay(bars, 1, 2, rest, [], CONTRACT_SPECS.MES, COMM)
+    expect(res.position).toBeNull()
+    expect(res.closedTrades).toHaveLength(1)
+    const exit = res.closedTrades[0]
+    expect(exit.tradeKey).toBe('trade-A')
+    expect(exit.exitType).toBe('stop_loss')
+    expect(exit.contracts).toBe(2) // only what was still open
+    expect(exit.initialContracts).toBe(3)
+    expect(exit.exitPrice).toBe(4980)
+    expect(exit.pnlUsd).toBeCloseTo((4980 - 5000) * 5 * 2 - 2 * COMM)
   })
 })

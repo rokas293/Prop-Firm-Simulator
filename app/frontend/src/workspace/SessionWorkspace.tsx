@@ -16,9 +16,24 @@
 // (F3) the "New Trade" drag ticket + right-click limit/stop orders against
 // chart/simBroker.ts's pure fill logic, journaling each closed trade.
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
-import ChartKL, { type ChartKLHandle } from '../chart/kl/ChartKL'
+import ChartKL, { type ChartKLHandle, type OrderLineSpec } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { positionCapMessage } from '../chart/positionCap'
+import {
+  averageTrueRange,
+  breakevenRefusal,
+  fmtSignedUsd,
+  ghostLevels,
+  ghostsApply,
+  levelReadout,
+  levelRefusal,
+  partialCloseChoices,
+  partialCloseRefusal,
+  rightClickOrders,
+  roundToTick,
+  tradeOpenContracts,
+  type LevelKind,
+} from '../chart/orderEntry'
 import { isPropRewind, isRewindBlocked, lockFloorIndex, PROP_REWIND_MESSAGE, REWIND_BLOCKED_MESSAGE } from '../chart/discipline'
 import { magnifierRange } from '../chart/magnifier'
 import { useSessionHotkeys } from '../keyboard/useSessionHotkeys'
@@ -37,9 +52,9 @@ import {
   riskUsdAtEntry,
   toPersistedPosition,
   toPersistedWorkingOrder,
+  unrealizedPnl as positionPnl,
   type ClosedTradeResult,
   type OpenPosition,
-  type PendingOrderType,
   type Side,
   type WorkingOrder,
 } from '../chart/simBroker'
@@ -98,6 +113,7 @@ import {
 } from '../api/types'
 import EmptyState from '../components/EmptyState'
 import { fmtEtDate, fmtEtDateTime } from '../timeFormat'
+import { fmtPrice } from '../format'
 
 // The journal drawer loads on first open, not in the entry chunk.
 const JournalPanel = lazy(() => import('../panels/JournalPanel'))
@@ -189,6 +205,11 @@ export function shouldRefitOnLoad(windowReanchored: boolean): boolean {
 // fall outside the currently fetched window.
 const REVIEW_PAD_BARS = 15
 
+// Empty chart to the right of the newest bar (FXR_V2_SPEC.md G2, references
+// R10/R11): wide enough for a ghost SL/TP label, so order labels never cover
+// recent price action.
+export const ORDER_LABEL_MARGIN_PX = 400
+
 export function reviewFitWindow(entryTime: number, exitTime: number, timeframe: string) {
   const barSeconds = BASE_TF_SECONDS[timeframe] ?? 300
   const pad = barSeconds * REVIEW_PAD_BARS
@@ -231,13 +252,6 @@ export function resyncCursorIndex(bars: Bar[], targetTime: number | null): numbe
 // different point values -- it's a STARTING offset, not a risk figure.
 const DEFAULT_TICKET_SL_POINTS = 10
 const DEFAULT_TICKET_RR = 2
-
-// Snap a right-click/drag price to the instrument's own tick size so a
-// pixel-converted price never shows an ugly, unfillable-in-reality
-// fraction (e.g. 5661.2382).
-function roundToTick(price: number, tickSize: number): number {
-  return Math.round(price / tickSize) * tickSize
-}
 
 export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const { data: session, isLoading, isError, error } = useBtSession(sessionId)
@@ -289,6 +303,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const qtySaveTimerRef = useRef<number | null>(null)
   // Why the last order was refused (Topstep position cap) -- quiet, dismissible.
   const [orderNotice, setOrderNotice] = useState<string | null>(null)
+  // A short confirmation after a level is placed/removed or a partial closes
+  // (FXR_V2_SPEC.md 3.2: "releasing sets the level and shows a toast").
+  const [toast, setToast] = useState<string | null>(null)
+  // Bumped to make ChartKL re-sync the order lines to the broker's state after
+  // a drag the broker refused (the line would otherwise stay where it was dropped).
+  const [lineNonce, setLineNonce] = useState(0)
   // A Topstep session's Combine verdict (the same PropRulesTracker result the
   // analytics Dashboard shows); disabled (null run id) for a practice session.
   const propRunId = session?.account.prop_ruleset ? manualRunId(session.id) : null
@@ -528,6 +548,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // React state inside the same synchronous handler that just called
   // setPosition/setWorkingOrders) so every call site can update the refs
   // first and then call this with no extra parameters.
+  //
+  // Saves are SERIALISED: two quick actions (a level removed right after one
+  // was placed, a partial close then a step) used to fire concurrent PATCHes,
+  // and the browser may deliver them out of order, leaving the OLDER snapshot
+  // as the saved one. Each queued save reads the refs when it is SENT, so it
+  // always carries the latest full state, and they go one at a time.
+  const persistQueueRef = useRef<Promise<unknown>>(Promise.resolve())
   const persist = (cursorTimeOverride?: number) => {
     if (!session) return
     const cursorTime = cursorTimeOverride ?? cursorTimeRef.current
@@ -536,12 +563,18 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (session.discipline_lock && lockFloorRef.current === null && (positionRef.current || workingOrdersRef.current.length > 0)) {
       lockFloorRef.current = cursorTime
     }
-    updateCursor.mutate({
-      sessionId: session.id,
-      cursorTime,
-      position: positionRef.current ? toPersistedPosition(positionRef.current) : null,
-      workingOrders: workingOrdersRef.current.map(toPersistedWorkingOrder),
-    })
+    const sessionId = session.id
+    persistQueueRef.current = persistQueueRef.current
+      .catch(() => undefined)
+      .then(() =>
+        updateCursor.mutateAsync({
+          sessionId,
+          cursorTime: cursorTimeRef.current ?? cursorTime,
+          position: positionRef.current ? toPersistedPosition(positionRef.current) : null,
+          workingOrders: workingOrdersRef.current.map(toPersistedWorkingOrder),
+        }),
+      )
+      .catch(() => undefined)
   }
 
   // Builds the journal request body from a closed trade -- shared by a
@@ -588,6 +621,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       mae_r: trade.maeR,
       mfe_r: trade.mfeR,
       bars_held: trade.barsHeld,
+      // One exit of a position (FXR_V2_SPEC.md 3.6): the server merges every
+      // exit sharing this key into a single trade.
+      trade_key: trade.tradeKey,
+      initial_contracts: trade.initialContracts,
+      risk_usd: trade.riskUsd,
     }
     await createTrade.mutateAsync({ sessionId: session.id, body })
   }
@@ -807,10 +845,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
     setOrderNotice(null)
     const entryBar = bars[cursorIndex]
+    const entryPrice = marketFillPrice(entryBar)
+    // FXR_V2_SPEC.md 3.2: a Quick entry carries no SL/TP, so ghost lines
+    // appear at sensible defaults (an ATR of the bars revealed so far).
+    const ghosts = ghostsApply(null, null)
+      ? ghostLevels(side, entryPrice, getContractSpec(session.instrument), averageTrueRange(bars, cursorIndex))
+      : null
     const newPosition: OpenPosition = {
       side,
       contracts: quickQty,
-      entryPrice: marketFillPrice(entryBar),
+      entryPrice,
       entryTime: entryBar.time,
       entryIndex: cursorIndex,
       riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
@@ -818,6 +862,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       tpPrice: null,
       autoBreakeven: armedAutoBreakeven,
       trailingPoints: armedTrailingPoints,
+      tradeKey: crypto.randomUUID(),
+      initialContracts: quickQty,
+      ghostSl: ghosts?.sl ?? null,
+      ghostTp: ghosts?.tp ?? null,
     }
     positionRef.current = newPosition
     setPosition(newPosition)
@@ -837,21 +885,82 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     persist()
   }
 
-  // FXR_SPEC.md phase F4: closes half the position at market, journaling
-  // that slice as its own closed trade and leaving the remainder open
-  // (same avg entry/SL/TP -- there's only ever one entry fill in this
-  // model, see closePositionPartial's own comment). Rounds to the nearest
-  // whole contract; if that's the WHOLE position (e.g. 1 contract), this
-  // is equivalent to a full Close.
-  const handlePartialClose = async () => {
+  // FXR_V2_SPEC.md 3.6: closes ANY whole quantity (1 .. open-1) at market
+  // (the full size is a plain Close). The slice is journaled as ONE EXIT of the
+  // position's trade -- the server merges it with the remainder's later exits,
+  // so R and P&L are computed across all of them. The remainder keeps the same
+  // entry/SL/TP. With no quantity given it closes half (the Shift hotkey).
+  const handlePartialClose = async (quantity?: number) => {
     if (!session || !bars || !position) return
+    const qty = quantity ?? Math.max(1, Math.round(position.contracts / 2))
+    const refusal = partialCloseRefusal(qty, position.contracts)
+    if (refusal) {
+      setOrderNotice(refusal)
+      return
+    }
     const spec = getContractSpec(session.instrument)
-    const half = Math.max(1, Math.round(position.contracts / 2))
-    const result = closePositionPartialAtMarket(bars, position, cursorIndex, half, spec, session.account.commission_per_contract)
+    const result = closePositionPartialAtMarket(bars, position, cursorIndex, qty, spec, session.account.commission_per_contract)
     positionRef.current = result.remainingPosition
     setPosition(result.remainingPosition)
+    setToast(`Closed ${qty} of ${position.contracts} at ${fmtPrice(result.closedTrade.exitPrice, session.instrument)} | ${fmtSignedUsd(result.closedTrade.pnlUsd)}`)
     await journalClosedTrade(result.closedTrade)
     persist()
+  }
+
+  // FXR_V2_SPEC.md 3.2/3.6: set, move or remove one of the position's two
+  // levels. Every change is persisted; a level on the wrong side of the market
+  // is refused (it would fill on the next bar) and the line snaps back.
+  const setLevel = (kind: LevelKind, price: number | null, source: 'ghost' | 'placed') => {
+    if (!session || !bars || !bars[cursorIndex] || !positionRef.current) return
+    const pos = positionRef.current
+    const spec = getContractSpec(session.instrument)
+    let toastText: string | null = null
+    let next: OpenPosition
+    if (price === null) {
+      next = kind === 'sl' ? { ...pos, slPrice: null, ghostSl: null } : { ...pos, tpPrice: null, ghostTp: null }
+      toastText = kind === 'sl' ? 'Stop loss removed' : 'Take profit removed'
+    } else {
+      const snapped = roundToTick(price, spec.tickSize)
+      const refusal = levelRefusal(pos.side, kind, snapped, bars[cursorIndex].close, spec.tickSize)
+      if (refusal) {
+        setOrderNotice(refusal)
+        setLineNonce((n) => n + 1)
+        return
+      }
+      const r = levelReadout(pos.side, pos.entryPrice, snapped, pos.contracts, spec)
+      toastText = `${kind === 'sl' ? 'Stop loss' : 'Take profit'} ${source === 'ghost' ? 'set' : 'moved'} to ${fmtPrice(snapped, session.instrument)} | ${fmtSignedUsd(r.pnlUsd)} | ${r.ticks} ticks`
+      next =
+        kind === 'sl' ? { ...pos, slPrice: snapped, ghostSl: null } : { ...pos, tpPrice: snapped, ghostTp: null }
+    }
+    positionRef.current = next
+    setPosition(next)
+    setLineNonce((n) => n + 1)
+    persist()
+    if (toastText) setToast(toastText)
+  }
+
+  // Brings a removed ghost back at the default distance ("Add stop loss").
+  const addGhost = (kind: LevelKind) => {
+    if (!session || !bars || !positionRef.current) return
+    const pos = positionRef.current
+    // Default distances are measured from the entry, as the originals were.
+    const g = ghostLevels(pos.side, pos.entryPrice, getContractSpec(session.instrument), averageTrueRange(bars, cursorIndex))
+    const next = kind === 'sl' ? { ...pos, ghostSl: g.sl } : { ...pos, ghostTp: g.tp }
+    positionRef.current = next
+    setPosition(next)
+    persist()
+  }
+
+  // One-click break-even: the stop to the entry price, once the trade is in profit.
+  const handleBreakeven = () => {
+    if (!session || !bars || !bars[cursorIndex] || !positionRef.current) return
+    const pos = positionRef.current
+    const refusal = breakevenRefusal(pos, bars[cursorIndex].close)
+    if (refusal) {
+      setOrderNotice(refusal)
+      return
+    }
+    setLevel('sl', pos.entryPrice, 'placed')
   }
 
   // FXR_SPEC.md phase F4's optional toggles: FLAT, these arm the toggle
@@ -879,26 +988,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   }
 
-  // ChartKL's F4 draggable open-position SL/TP lines (see its
-  // openPositionEditor prop) -- re-computes open R live off the new
-  // levels for free, since PositionTicket's readout already derives R
-  // from `openPositionRecord`, which itself derives from `position`.
-  const handleOpenPositionSlTpChange = (next: { slPrice: number | null; tpPrice: number | null }) => {
-    if (!position) return
-    const updated = { ...position, slPrice: next.slPrice, tpPrice: next.tpPrice }
-    positionRef.current = updated
-    setPosition(updated)
-    persist()
-  }
-
   // "New Trade" (FXR_SPEC.md section B): arms the ticket at sensible
   // defaults around the current market price -- the user drags all 3
   // lines from there (see ChartKL's tradeTicket prop).
   const openTicket = () => {
     if (!bars || !bars[cursorIndex] || !flat || sessionEnded) return
-    // The market would run under the lines being dragged: pause, unless the
-    // pill's Auto-play is on.
-    if (!prefs.autoPlay) setIsPlaying(false)
+    // Opening an order ticket always pauses the replay (FXR_V2_SPEC.md G2):
+    // the market would otherwise run under the lines being dragged.
+    setIsPlaying(false)
     const marketPrice = bars[cursorIndex].close
     setTicket({
       entryPrice: marketPrice,
@@ -920,7 +1017,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const spec = getContractSpec(session.instrument)
     const side: Side = ticket.tpPrice >= ticket.entryPrice ? 'long' : 'short'
     const riskUsd = riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd)
-    const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec)
+    const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec, session.account.max_contracts ?? null)
     const capMsg = positionCapMessage(contracts, session.account.max_contracts, 'Auto-sized order')
     if (capMsg) {
       // Keep the ticket open so the lines can be dragged to a size that fits.
@@ -942,6 +1039,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         tpPrice: ticket.tpPrice,
         autoBreakeven: armedAutoBreakeven,
         trailingPoints: armedTrailingPoints,
+        tradeKey: crypto.randomUUID(),
+        initialContracts: contracts,
+        ghostSl: null,
+        ghostTp: null,
       }
       positionRef.current = newPosition
       setPosition(newPosition)
@@ -974,64 +1075,44 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     persist()
   }
 
-  // Right-click order placement (FXR_SPEC.md section B): BOTH order-type/
-  // side combinations that are actually meaningful at the clicked price
-  // are offered -- a price above market can be either a buy STOP (chase
-  // the breakout up) or a sell LIMIT (fade back down to it); a price
-  // below market is either a buy LIMIT (wait for the pullback) or a sell
-  // STOP (chase the breakdown). Whichever side/type the user picks is what
-  // impliedOrderType would derive for THAT combination -- offering only
-  // one auto-picked pairing (as an earlier version of this did) meant a
-  // limit order could never actually be placed via right-click at all,
-  // since the "obvious" breakout direction is always a stop. No SL/TP
-  // attached via this quick path (the drag ticket above is the "full" flow
-  // for that); size uses the Quick quantity, same as a
-  // quick Buy/Sell, since there's no SL distance here to auto-size against.
+  // Right-click order placement (FXR_V2_SPEC.md 3.3, reference R5): the pair
+  // that is meaningful at the clicked price -- above market a sell limit and a
+  // buy stop, below a buy limit and a sell stop (orderEntry.ts rightClickOrders)
+  // -- sized by the Quick quantity, labelled "Buy 2 MNQ @ 20,050.25 limit". No
+  // SL/TP rides along (the ghost lines / New Trade ticket are for that).
   const handleEmptyAreaMenuItems = (info: { time: number; price: number }): ContextMenuEntry[] => {
     if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return []
     const spec = getContractSpec(session.instrument)
     const marketPrice = bars[cursorIndex].close
-    const price = roundToTick(info.price, spec.tickSize)
-    if (price === marketPrice) return []
-
-    const place = (side: Side, orderType: PendingOrderType) => () => {
-      if (!bars[cursorIndex]) return
-      const capMsg = positionCapMessage(quickQty, session.account.max_contracts, 'Order')
-      if (capMsg) {
-        setOrderNotice(capMsg)
-        return
-      }
-      setOrderNotice(null)
-      const order: WorkingOrder = {
-        id: crypto.randomUUID(),
-        side,
-        orderType,
-        price,
-        contracts: quickQty,
-        slPrice: null,
-        tpPrice: null,
-        riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
-        placedTime: bars[cursorIndex].time,
-        placedIndex: cursorIndex,
-        autoBreakeven: armedAutoBreakeven,
-        trailingPoints: armedTrailingPoints,
-      }
-      workingOrdersRef.current = [order]
-      setWorkingOrders([order])
-      persist()
-    }
-
-    // impliedOrderType already derives the correct type FOR each side
-    // relative to this price/market pair -- both sides are always
-    // offered, no need to branch on which side of market was clicked.
-    const sides: Side[] = ['long', 'short']
-    return sides.map((side) => {
-      const orderType = impliedOrderType(side, price, marketPrice)
-      return {
-        label: `${side === 'long' ? 'Buy' : 'Sell'} ${orderType} here @ ${price.toFixed(2)}`,
-        onSelect: place(side, orderType),
-      }
-    })
+    return rightClickOrders(info.price, marketPrice, quickQty, session.instrument, spec).map((o) => ({
+      label: o.label,
+      onSelect: () => {
+        if (!bars[cursorIndex]) return
+        const capMsg = positionCapMessage(o.contracts, session.account.max_contracts, 'Order')
+        if (capMsg) {
+          setOrderNotice(capMsg)
+          return
+        }
+        setOrderNotice(null)
+        const order: WorkingOrder = {
+          id: crypto.randomUUID(),
+          side: o.side,
+          orderType: o.orderType,
+          price: o.price,
+          contracts: o.contracts,
+          slPrice: null,
+          tpPrice: null,
+          riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
+          placedTime: bars[cursorIndex].time,
+          placedIndex: cursorIndex,
+          autoBreakeven: armedAutoBreakeven,
+          trailingPoints: armedTrailingPoints,
+        }
+        workingOrdersRef.current = [order]
+        setWorkingOrders([order])
+        persist()
+      },
+    }))
   }
 
   // The open position rendered through the SAME TradeRecord shape a closed
@@ -1050,10 +1131,101 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         })
       : null
 
+  // A trade with contracts still open (a partial close) is drawn through the
+  // live position record instead -- not twice.
   const chartTrades: TradeRecord[] = useMemo(
-    () => [...(manualTrades ?? []), ...(openPositionRecord ? [openPositionRecord] : [])],
+    () => [...(manualTrades ?? []).filter((t) => tradeOpenContracts(t) === 0), ...(openPositionRecord ? [openPositionRecord] : [])],
     [manualTrades, openPositionRecord],
   )
+
+  // FXR_V2_SPEC.md section 2/3: the position line, its SL/TP (placed, or ghost
+  // until placed) and working orders, as ChartKL order lines. Ids are stable per
+  // line so ChartKL syncs rather than rebuilds them (and never mid-drag).
+  const markPrice = bars?.[cursorIndex]?.close ?? null
+  const orderLines = useMemo<OrderLineSpec[]>(() => {
+    if (!session || prefs.hideTrades || markPrice === null) return []
+    const spec = getContractSpec(session.instrument)
+    const lines: OrderLineSpec[] = []
+    if (position) {
+      const base = { side: position.side, entryPrice: position.entryPrice, contracts: position.contracts, spec }
+      lines.push({
+        id: 'pos',
+        price: position.entryPrice,
+        draggable: false,
+        info: { ...base, role: 'position', pnlUsd: positionPnl(position.side, position.entryPrice, markPrice, position.contracts, spec) },
+      })
+      if (position.slPrice !== null) lines.push({ id: 'pos-sl', price: position.slPrice, draggable: true, info: { ...base, role: 'sl' } })
+      else if (position.ghostSl !== null) lines.push({ id: 'ghost-sl', price: position.ghostSl, draggable: true, info: { ...base, role: 'ghost-sl' } })
+      if (position.tpPrice !== null) lines.push({ id: 'pos-tp', price: position.tpPrice, draggable: true, info: { ...base, role: 'tp' } })
+      else if (position.ghostTp !== null) lines.push({ id: 'ghost-tp', price: position.ghostTp, draggable: true, info: { ...base, role: 'ghost-tp' } })
+    }
+    for (const o of workingOrders) {
+      const base = { side: o.side, entryPrice: o.price, contracts: o.contracts, spec }
+      lines.push({ id: `order-${o.id}`, price: o.price, draggable: false, info: { ...base, role: 'order', orderType: o.orderType } })
+      if (o.slPrice !== null) lines.push({ id: `order-${o.id}-sl`, price: o.slPrice, draggable: false, info: { ...base, role: 'sl' } })
+      if (o.tpPrice !== null) lines.push({ id: `order-${o.id}-tp`, price: o.tpPrice, draggable: false, info: { ...base, role: 'tp' } })
+    }
+    return lines
+    // lineNonce forces a fresh list after a refused drag so ChartKL re-syncs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.instrument, prefs.hideTrades, markPrice, position, workingOrders, lineNonce])
+
+  // A line's gesture. Pressing one pauses the replay (the market must not run
+  // under a drag); releasing places the level -- or refuses it (setLevel).
+  const handleOrderLineDrag = (id: string, price: number, phase: 'start' | 'move' | 'end') => {
+    if (phase === 'start') setIsPlaying(false)
+    if (phase !== 'end') return
+    if (id === 'pos-sl' || id === 'ghost-sl') setLevel('sl', price, id === 'ghost-sl' ? 'ghost' : 'placed')
+    else if (id === 'pos-tp' || id === 'ghost-tp') setLevel('tp', price, id === 'ghost-tp' ? 'ghost' : 'placed')
+  }
+
+  // The label's x: closes the position, removes a level, or cancels an order.
+  const handleOrderLineClose = (id: string) => {
+    if (id === 'pos') {
+      if (!createTrade.isPending) void handleClosePosition()
+    } else if (id === 'pos-sl' || id === 'ghost-sl') setLevel('sl', null, 'placed')
+    else if (id === 'pos-tp' || id === 'ghost-tp') setLevel('tp', null, 'placed')
+    else if (id.startsWith('order-')) {
+      if (id.endsWith('-sl') || id.endsWith('-tp')) {
+        const kind = id.endsWith('-sl') ? 'slPrice' : 'tpPrice'
+        const orderId = id.slice('order-'.length, -3)
+        const updated = workingOrdersRef.current.map((o) => (o.id === orderId ? { ...o, [kind]: null } : o))
+        workingOrdersRef.current = updated
+        setWorkingOrders(updated)
+        persist()
+      } else cancelWorkingOrder()
+    }
+  }
+
+  // Right-click on the position line (partial close, break-even, levels) or on
+  // any other order line.
+  const getOrderLineMenu = (id: string): ContextMenuEntry[] => {
+    setIsPlaying(false)
+    if (id === 'pos' && position) {
+      const items: ContextMenuEntry[] = [{ label: 'Close position', onSelect: () => void handleClosePosition() }]
+      const choices = partialCloseChoices(position.contracts)
+      if (choices.length > 0) {
+        items.push(...choices.map((q) => ({ label: `Close ${q} of ${position.contracts}`, onSelect: () => void handlePartialClose(q) })))
+      }
+      items.push({ separator: true }, { label: 'Move stop to break-even', onSelect: handleBreakeven })
+      if (position.slPrice === null && position.ghostSl === null) items.push({ label: 'Add stop loss', onSelect: () => addGhost('sl') })
+      if (position.tpPrice === null && position.ghostTp === null) items.push({ label: 'Add take profit', onSelect: () => addGhost('tp') })
+      return items
+    }
+    if (id === 'pos-sl') {
+      return [
+        { label: 'Move to break-even', onSelect: handleBreakeven },
+        { label: 'Remove stop loss', onSelect: () => setLevel('sl', null, 'placed'), destructive: true },
+      ]
+    }
+    if (id === 'pos-tp') return [{ label: 'Remove take profit', onSelect: () => setLevel('tp', null, 'placed'), destructive: true }]
+    if (id === 'ghost-sl') return [{ label: 'Remove stop loss', onSelect: () => setLevel('sl', null, 'placed'), destructive: true }]
+    if (id === 'ghost-tp') return [{ label: 'Remove take profit', onSelect: () => setLevel('tp', null, 'placed'), destructive: true }]
+    if (id.startsWith('order-') && !id.endsWith('-sl') && !id.endsWith('-tp')) {
+      return [{ label: 'Cancel order', onSelect: cancelWorkingOrder, destructive: true }]
+    }
+    return []
+  }
 
   const baseTfSeconds = session ? (BASE_TF_SECONDS[session.base_timeframe] ?? 300) : 300
   const handleCandleBarClick = (bar: { timestamp: number }) => {
@@ -1086,7 +1258,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             session.account.risk_per_trade_percent,
             session.account.risk_per_trade_usd,
           )
-          const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec)
+          const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec, session.account.max_contracts ?? null)
           return {
             instrument: session.instrument,
             side,
@@ -1249,6 +1421,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return () => window.clearTimeout(id)
   }, [orderNotice])
 
+  useEffect(() => {
+    if (!toast) return
+    const id = window.setTimeout(() => setToast(null), 4000)
+    return () => window.clearTimeout(id)
+  }, [toast])
+
   const magnifyActive = magnifyBarTime !== null && magnifierRange(magnifyBarTime, baseTfSeconds, cursorTime) !== null
 
   if (isLoading) {
@@ -1260,7 +1438,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const cursorBar = bars?.[cursorIndex]
   const unrealizedPnl = openPositionRecord?.pnl_usd ?? 0
-  const hasNotices = ticketReadout !== null || orderNotice !== null || banner !== null || sessionEnded
+  const hasNotices = ticketReadout !== null || orderNotice !== null || toast !== null || banner !== null || sessionEnded
 
   return (
     <div className="flex h-full w-full flex-col bg-bg">
@@ -1302,8 +1480,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           granularity,
           onGranularityChange: prefs.setStepGranularity,
           availableGranularities,
-          autoPlay: prefs.autoPlay,
-          onToggleAutoPlay: () => prefs.setAutoPlay(!prefs.autoPlay),
+          autoPlay: isPlaying,
+          onToggleAutoPlay: () => setIsPlaying((v) => !v),
           cursorLabel: cursorBar ? fmtEtDateTime(cursorBar.time) : null,
         }}
         actions={{
@@ -1366,21 +1544,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             slLineColor={themeBase.warning}
             tradeTicket={ticket}
             onTradeTicketChange={handleTicketChange}
-            workingOrderView={
-              workingOrders[0]
-                ? {
-                    side: workingOrders[0].side,
-                    price: workingOrders[0].price,
-                    slPrice: workingOrders[0].slPrice,
-                    tpPrice: workingOrders[0].tpPrice,
-                  }
-                : null
-            }
+            orderLines={orderLines}
+            onOrderLineDrag={handleOrderLineDrag}
+            onOrderLineClose={handleOrderLineClose}
+            getOrderLineMenu={getOrderLineMenu}
+            onEmptyAreaMenuOpen={() => setIsPlaying(false)}
             getEmptyAreaMenuExtraItems={handleEmptyAreaMenuItems}
-            openPositionEditor={
-              position ? { entryTime: position.entryTime, side: position.side, slPrice: position.slPrice, tpPrice: position.tpPrice } : null
-            }
-            onOpenPositionSlTpChange={handleOpenPositionSlTpChange}
+            rightMarginPx={ORDER_LABEL_MARGIN_PX}
             onDrawingsChange={handleDrawingsChange}
             onDrawingArmedChange={setArmedTool}
             candleType={prefs.candleType}
@@ -1417,6 +1587,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               {banner && (
                 <p className="pointer-events-auto rounded bg-surface-2 px-3 py-2 text-xs text-text-muted shadow-lg" role="status">
                   {banner}
+                </p>
+              )}
+              {toast && (
+                <p className="pointer-events-auto rounded bg-surface-2 px-3 py-2 text-xs tabular-nums text-text shadow-lg" role="status">
+                  {toast}
                 </p>
               )}
               {orderNotice && (
@@ -1474,8 +1649,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           trades={manualTrades ?? []}
           closing={createTrade.isPending}
           onClosePosition={handleClosePosition}
-          onPartialClose={handlePartialClose}
-          partialCloseDisabled={!position || position.contracts < 2}
+          onPartialClose={(qty) => void handlePartialClose(qty)}
+          onBreakeven={handleBreakeven}
           onCancelOrder={cancelWorkingOrder}
           autoBreakeven={position ? position.autoBreakeven : armedAutoBreakeven}
           onAutoBreakevenChange={handleAutoBreakevenChange}

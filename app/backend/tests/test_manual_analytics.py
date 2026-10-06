@@ -465,3 +465,105 @@ def test_prop_session_cannot_be_rewound_but_a_practice_session_can(bt_client):
     assert bt_client.patch("/api/bt-sessions/prop/cursor", json={"cursor_time": _ts("15:30")}).status_code == 200
     assert bt_client.patch("/api/bt-sessions/prop/cursor", json={"cursor_time": _ts("15:25")}).status_code == 400
     assert bt_client.patch("/api/bt-sessions/free/cursor", json={"cursor_time": _ts("14:00")}).status_code == 200
+
+
+# --------------------------------------------- partial exits across days (G2)
+#
+# FXR_V2_SPEC.md 3.6 follow-up: ONE journaled trade with several exits, but
+# every exit hits the prop timeline at its OWN time with its OWN P&L. MES
+# ($5/pt), 2 contracts entered on trading day 2025-03-11, 1 contract exited
+# the same day (the "partial") and the last one on 2025-03-12.
+
+DAY1, DAY2 = "2025-03-11", "2025-03-12"
+
+
+def _split_trade(session_id, p1, p2, mae1=0.0, mae2=0.0, t1=("13:30", "14:00"), t2="14:00"):
+    t = _trade(1, session_id, t1[0], "14:00", "long", p1 + p2, 0.0, max(mae1, mae2))
+    t["entry_time"] = _ts(t1[0], DAY1)
+    t["size_contracts"] = 2
+    t["exit_time"] = _ts(t2, DAY2)
+    t["trade_key"] = "pos-1"
+    t["exits"] = [
+        {"time": _ts(t1[1], DAY1), "price": 5000.0, "contracts": 1, "pnl_usd": p1, "commission_usd": 0.0,
+         "exit_type": "manual_close", "risk_usd": 100.0, "mae_points": mae1},
+        {"time": _ts(t2, DAY2), "price": 5000.0, "contracts": 1, "pnl_usd": p2, "commission_usd": 0.0,
+         "exit_type": "stop_loss", "risk_usd": 100.0, "mae_points": mae2},
+    ]
+    return t
+
+
+def test_partial_on_day1_and_final_on_day2_give_each_day_its_own_eod_balance_and_loss(bt_client):
+    _write_session("split", prop_ruleset="topstep_50k", balance=50300.0)
+    bts._write_trades("split", [_split_trade("split", -600.0, 900.0)])
+
+    # The journal still shows ONE trade with its exits list.
+    trades = bt_client.get("/api/bt-sessions/split/trades").json()
+    assert len(trades) == 1 and len(trades[0]["exits"]) == 2
+
+    # Combine: day 1 closes at 49,400 (-600), day 2 at 50,300 (+900). Lumping the
+    # whole +300 onto the last exit would instead show day 1 flat at 50,000.
+    cfg_replay = pytest.importorskip("app.backend.services.manual_analytics")
+    df = cfg_replay.load_trades_frame("bt:split")
+    assert len(df) == 1                                   # statistics still count one trade
+    replay = cfg_replay.replay_prop_rules(df, "MES")
+    logs = replay.combine.day_logs
+    assert [l.trading_day.isoformat() for l in logs] == [DAY1, DAY2]
+    assert [l.start_balance for l in logs] == [50000.0, 49400.0]
+    assert [l.end_balance for l in logs] == [49400.0, 50300.0]
+    assert [l.daily_pnl for l in logs] == [-600.0, 900.0]
+    assert logs[0].mll_floor_after == 48000.0             # max(48,000, 49,400 - 2,000)
+    assert replay.combine.status == "incomplete"
+
+    # Equity timeline: a vertex at each exit's own time with the balance then.
+    eq = bt_client.get("/api/runs/bt:split/equity").json()
+    by_time = {p["time"]: p["balance"] for p in eq}
+    assert by_time[_ts("14:00", DAY1)] == pytest.approx(49400.0)
+    assert by_time[_ts("14:00", DAY2)] == pytest.approx(50300.0)
+
+
+def test_partial_loss_locks_its_own_day_not_the_final_exits(bt_client):
+    _write_session("lock", prop_ruleset="topstep_50k", balance=50000.0)
+    # Day 1 partial loses $1,100 (>= the $1,000 daily limit); day 2 gets it back.
+    bts._write_trades("lock", [_split_trade("lock", -1100.0, 1100.0)])
+    days = {d["trading_day"]: d for d in bt_client.get("/api/runs/bt:lock/daily_risk").json()}
+    assert days[DAY1]["daily_locked"] is True
+    assert days[DAY2]["daily_locked"] is False
+    stats = bt_client.get("/api/runs/bt:lock/stats").json()
+    assert stats["result"]["daily_loss_lock_days"] == 1
+    assert stats["overall"]["trades"] == 1
+
+
+def test_a_day1_partial_profit_freezes_the_trailing_mll_so_a_day2_loss_fails_the_combine(bt_client):
+    # Day 1 partial +$2,200 -> EOD balance 52,200 >= 52,000: the MLL floor freezes
+    # at 50,000. Day 2 final -$2,300 -> balance 49,900 <= 50,000 -> FAILED.
+    # (Lumped at the last exit the net is -$100: balance 49,900 vs a 48,000 floor
+    # would be "incomplete" -- the verdict depends on the exits landing on their days.)
+    _write_session("freeze", prop_ruleset="topstep_50k", balance=49900.0)
+    bts._write_trades("freeze", [_split_trade("freeze", 2200.0, -2300.0)])
+    r = bt_client.get("/api/runs/bt:freeze/stats").json()["result"]
+    assert r["status"] == "failed"
+    assert r["fail_reason"] == "mll_breach"
+    assert r["resolved_trade_id"] == 1 and r["trades_to_result"] == 1
+    assert r["resolved_time"] == _ts("14:00", DAY2)       # the day-2 exit, not day 1
+    assert r["mll_floor_at_result"] == pytest.approx(50000.0)
+    eq = bt_client.get("/api/runs/bt:freeze/equity").json()
+    day1 = next(p for p in eq if p["time"] == _ts("14:00", DAY1))
+    assert day1["balance"] == pytest.approx(52200.0)
+
+
+def test_each_partials_low_point_is_checked_at_its_own_time(bt_client):
+    # The day-1 partial's own worst point (50,000 - 410 pts x $5 x 2 open =
+    # 47,950) breaches the 48,000 floor at the PARTIAL's time, before day 2.
+    _write_session("lowpt", prop_ruleset="topstep_50k", balance=50000.0)
+    bts._write_trades("lowpt", [_split_trade("lowpt", -100.0, 100.0, mae1=410.0, mae2=0.0)])
+    r = bt_client.get("/api/runs/bt:lowpt/stats").json()["result"]
+    assert r["status"] == "failed"
+    assert r["resolved_time"] == _ts("14:00", DAY1)
+
+
+def test_plain_session_equity_steps_at_each_exit(bt_client):
+    _write_session("plainsplit", prop_ruleset=None)
+    bts._write_trades("plainsplit", [_split_trade("plainsplit", -600.0, 900.0)])
+    eq = bt_client.get("/api/runs/bt:plainsplit/equity").json()
+    assert [p["balance"] for p in eq] == [50000.0, 49400.0, 50300.0]
+    assert eq[1]["trading_day"] == DAY1 and eq[2]["trading_day"] == DAY2

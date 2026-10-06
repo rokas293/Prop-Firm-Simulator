@@ -218,6 +218,10 @@ def _position_payload(**overrides):
         "tp_price": 5030.0,
         "auto_breakeven": False,
         "trailing_points": None,
+        "trade_key": None,
+        "initial_contracts": None,
+        "ghost_sl": None,
+        "ghost_tp": None,
     }
     body.update(overrides)
     return body
@@ -875,3 +879,119 @@ def test_v1_session_json_is_migrated_without_data_loss(bt_client, tmp_path):
     bt_client.patch(f"/api/bt-sessions/{sid}/notes", json={"notes": "edited"})
     on_disk = json.loads((d / "session.json").read_text(encoding="utf-8"))
     assert on_disk["quick_quantity"] == 3 and on_disk["assets"] == ["MNQ"] and "default_contracts" not in on_disk["account"]
+
+
+# --- FXR_V2_SPEC.md 3.6 (G2): partial exits stay ONE trade with several exits.
+
+def _slice_body(**overrides):
+    # A 3-contract long entered at 5000 (risk $300 => $100/contract); this body
+    # is one exit slice, journaled under the position's trade_key.
+    body = _manual_trade_body(
+        entry_price=5000.0,
+        exit_price=5010.0,
+        size_contracts=1,
+        pnl_usd=49.0,  # 10pts * $5 - $1 commission
+        commission_usd=1.0,
+        r_multiple=0.49,
+        mae_points=2.0,
+        mfe_points=10.0,
+        mae_r=0.1,
+        mfe_r=0.5,
+        bars_held=3,
+        trade_key="pos-1",
+        initial_contracts=3,
+        risk_usd=100.0,
+    )
+    body.update(overrides)
+    return body
+
+
+def test_partial_exits_merge_into_one_trade_with_summed_pnl_and_weighted_exit(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client, risk_per_trade_percent=0.6).json()
+    base = f"/api/bt-sessions/{session['id']}/trades"
+    t0 = _manual_trade_body()["exit_time"]
+    first = bt_client.post(base, json=_slice_body(exit_time=t0)).json()
+    # Second exit: the other 2 contracts 20pts higher.
+    second = bt_client.post(
+        base,
+        json=_slice_body(
+            exit_time=t0 + 300, exit_price=5020.0, size_contracts=2, pnl_usd=198.0, commission_usd=2.0,
+            risk_usd=200.0, mae_points=1.0, mfe_points=22.0, mae_r=0.05, mfe_r=1.1, bars_held=6,
+            exit_type="take_profit",
+        ),
+    ).json()
+
+    assert first["trade"]["trade_id"] == second["trade"]["trade_id"] == 1
+    trades = bt_client.get(base).json()
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["size_contracts"] == 3  # the size at entry
+    assert [e["contracts"] for e in t["exits"]] == [1, 2]
+    assert t["pnl_usd"] == pytest.approx(49.0 + 198.0)
+    assert t["commission_usd"] == pytest.approx(3.0)
+    assert t["exit_price"] == pytest.approx((5010 * 1 + 5020 * 2) / 3)
+    assert t["exit_time"] == t0 + 300
+    assert t["exit_type"] == "take_profit"
+    assert t["r_multiple"] == pytest.approx((49.0 + 198.0) / 300.0)  # total P&L over the whole entry risk
+    assert t["mae_points"] == 2.0  # deepest excursion across the hold
+    assert t["mfe_points"] == 22.0
+    assert t["bars_held"] == 6
+
+
+def test_each_partial_exit_hits_the_balance_once(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    base = f"/api/bt-sessions/{session['id']}/trades"
+    start = session["account"]["balance"]
+    r1 = bt_client.post(base, json=_slice_body()).json()
+    assert r1["session"]["account"]["balance"] == pytest.approx(start + 49.0)
+    r2 = bt_client.post(base, json=_slice_body(size_contracts=2, pnl_usd=198.0, risk_usd=200.0)).json()
+    assert r2["session"]["account"]["balance"] == pytest.approx(start + 49.0 + 198.0)
+
+
+def test_partial_exits_merge_regardless_of_arrival_order(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    base = f"/api/bt-sessions/{session['id']}/trades"
+    t0 = _manual_trade_body()["exit_time"]
+    # The LATER exit lands first (two journal calls racing).
+    bt_client.post(base, json=_slice_body(exit_time=t0 + 300, exit_price=5020.0, size_contracts=2, pnl_usd=198.0, risk_usd=200.0, exit_type="take_profit"))
+    bt_client.post(base, json=_slice_body(exit_time=t0))
+    t = bt_client.get(base).json()[0]
+    assert t["exit_time"] == t0 + 300
+    assert t["exit_type"] == "take_profit"
+    assert t["pnl_usd"] == pytest.approx(247.0)
+
+
+def test_exit_beyond_the_entry_size_is_refused(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    base = f"/api/bt-sessions/{session['id']}/trades"
+    bt_client.post(base, json=_slice_body(size_contracts=2, risk_usd=200.0))
+    r = bt_client.post(base, json=_slice_body(size_contracts=2, risk_usd=200.0))
+    assert r.status_code == 400
+    assert len(bt_client.get(base).json()) == 1
+
+
+def test_trades_without_a_key_stay_separate_and_legacy_shape_holds(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    base = f"/api/bt-sessions/{session['id']}/trades"
+    bt_client.post(base, json=_manual_trade_body(pnl_usd=10.0))
+    bt_client.post(base, json=_manual_trade_body(pnl_usd=20.0))
+    trades = bt_client.get(base).json()
+    assert [t["pnl_usd"] for t in trades] == [10.0, 20.0]
+    assert all(len(t["exits"]) == 1 for t in trades)
+
+
+def test_position_roundtrips_trade_key_initial_size_and_ghosts(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    payload = _position_payload(trade_key="k1", initial_contracts=4, ghost_sl=4990.0, ghost_tp=None, sl_price=None, tp_price=None)
+    r = bt_client.patch(
+        f"/api/bt-sessions/{created['id']}/cursor",
+        json={"cursor_time": created["start_time"] + 600, "position": payload},
+    )
+    assert r.json()["position"] == payload
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] == payload

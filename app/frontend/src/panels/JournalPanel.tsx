@@ -29,7 +29,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AddScreenshotRequest, ManualTrade, UpdateTradeJournalRequest } from '../api/types'
 import { filterManualTrades, nyHourOfDay } from '../compass/breakdowns'
 import { useTradeStore } from '../state/tradeStore'
-import { fmtR, fmtUsd } from '../format'
+import { fmtPrice, fmtR, fmtUsd } from '../format'
 import { fmtEtShort } from '../timeFormat'
 import EmptyState from '../components/EmptyState'
 import { FILTER_SELECT, FilterChips, FilterField, FiltersPopover } from '../components/FilterBar'
@@ -331,6 +331,25 @@ export default function JournalPanel({
                 Jump to bar
               </button>
             </div>
+
+            {/* FXR_V2_SPEC.md 3.6: a trade closed in several pieces is ONE trade; its exits are listed here. */}
+            {selected.exits && selected.exits.length > 1 && (
+              <div>
+                <div className="micro-label mb-2">Exits ({selected.exits.length})</div>
+                <table className="w-full border-collapse">
+                  <tbody>
+                    {selected.exits.map((e, i) => (
+                      <tr key={i}>
+                        <td className="h-7 text-text-muted">{fmtEtShort(e.time)}</td>
+                        <td className="num h-7 text-text">{e.contracts}</td>
+                        <td className="num h-7 text-text">{fmtPrice(e.price, selected.instrument)}</td>
+                        <td className={`num h-7 ${e.pnl_usd > 0 ? 'text-positive-fg' : e.pnl_usd < 0 ? 'text-negative-fg' : 'text-text'}`}>{fmtUsd(e.pnl_usd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <label className="flex flex-col gap-1">
               <span className="micro-label">Setup name</span>

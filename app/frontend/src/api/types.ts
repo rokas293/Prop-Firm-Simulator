@@ -208,6 +208,13 @@ export interface PersistedPosition {
   tp_price: number | null
   auto_breakeven: boolean
   trailing_points: number | null
+  // FXR_V2_SPEC.md 3.6/3.2 (G2): journal identity + size at entry (every exit
+  // journals under trade_key and merges into one trade), and the ghost SL/TP
+  // levels still waiting to be placed. Optional: v1 positions lack them.
+  trade_key?: string | null
+  initial_contracts?: number | null
+  ghost_sl?: number | null
+  ghost_tp?: number | null
 }
 
 export interface PersistedWorkingOrder {
@@ -318,9 +325,24 @@ export interface JournalScreenshot {
   created_at: string
 }
 
+// One exit of a (possibly partially closed) trade -- FXR_V2_SPEC.md 3.6.
+export interface TradeExit {
+  time: number
+  price: number
+  contracts: number
+  pnl_usd: number
+  commission_usd: number
+  exit_type: string
+  risk_usd: number | null
+  mae_points?: number | null
+}
+
 export interface ManualTrade extends TradeRecord {
   session_id: string
   source: 'manual'
+  trade_key?: string | null
+  // Empty for a trade journaled before G2 (one implicit exit).
+  exits?: TradeExit[]
   notes: string
   tags: string[]
   setup_name: string | null
@@ -368,6 +390,11 @@ export interface CreateManualTradeRequest {
   mae_r: number | null
   mfe_r: number | null
   bars_held: number
+  // Partial exits (3.6): this request is ONE exit; a matching trade_key merges
+  // it into the trade already journaled for that position.
+  trade_key?: string | null
+  initial_contracts?: number | null
+  risk_usd?: number | null
 }
 
 export interface RecordTradeResponse {

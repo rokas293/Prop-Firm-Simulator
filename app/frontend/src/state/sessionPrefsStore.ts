@@ -21,9 +21,6 @@ export function clampPanelHeight(height: number, viewportHeight: number): number
 }
 
 interface SessionPrefsState {
-  // Start playing as soon as a session opens (the pill's auto-play toggle).
-  autoPlay: boolean
-  setAutoPlay: (v: boolean) => void
   stepGranularity: StepGranularityLabel
   setStepGranularity: (g: StepGranularityLabel) => void
   candleType: KLCandleType
@@ -43,8 +40,6 @@ interface SessionPrefsState {
 export const useSessionPrefsStore = create<SessionPrefsState>()(
   persist(
     (set) => ({
-      autoPlay: false,
-      setAutoPlay: (autoPlay) => set({ autoPlay }),
       stepGranularity: '1m',
       setStepGranularity: (stepGranularity) => set({ stepGranularity }),
       candleType: 'candle_solid',

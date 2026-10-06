@@ -594,3 +594,12 @@ input[type='datetime-local'].propbt-input::-webkit-datetime-edit {
 input[type='datetime-local'].propbt-input::-webkit-datetime-edit-fields-wrapper {
   padding: 0;
 }
+
+/* Over a draggable order line (ChartKL sets the attribute): a resize cursor
+   everywhere on the chart canvas, overriding klinecharts' own pointer. */
+[data-order-cursor='ns-resize'] * {
+  cursor: ns-resize !important;
+}
+[data-order-cursor='pointer'] * {
+  cursor: pointer !important;
+}

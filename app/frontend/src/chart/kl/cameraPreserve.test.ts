@@ -321,3 +321,106 @@ describe('window re-anchor -- no camera jump in a long replay', () => {
     expect(reanchorRestoreIndex({ time: 0, extraBars: 0 }, [])).toBeNull()
   })
 })
+
+// FXR_V2_SPEC.md G2: the session chart keeps empty space to the right of the
+// newest bar so order labels never cover recent price. The camera must hold
+// that margin while following, hold the exact view when not, and survive a
+// window re-anchor -- the same guarantees as the flush camera above.
+describe('right margin (order-label room)', () => {
+  const MARGIN = 40
+  const firstBarTime = 1_000
+  const marginChart = (barCount = 500) => new ChartModel(barCount, VISIBLE, barCount + MARGIN)
+
+  it('follow on: the margin never erodes over 200 steps and the newest bar stays in view', () => {
+    const chart = marginChart()
+    for (let step = 0; step < 200; step++) {
+      const before = chart.visibleRange
+      chart.appendBar()
+      const idx = cameraRestoreIndex({
+        beforeRealTo: before.realTo,
+        beforeFirstBarTime: firstBarTime,
+        afterFirstBarTime: firstBarTime,
+        afterBarCount: chart.barCount,
+        followLatestBar: true,
+        rightMarginBars: MARGIN,
+      })
+      chart.scrollToDataIndex(idx as number)
+      expect(chart.visibleRange.realTo - chart.barCount).toBe(MARGIN) // exactly MARGIN empty bars to the right
+      expect(chart.barCount - 1).toBeLessThan(chart.visibleRange.to)
+    }
+  })
+
+  it('follow off: the right edge is byte-identical after 200 steps (the margin simply absorbs the new bars)', () => {
+    const chart = marginChart()
+    const initial = chart.visibleRange
+    for (let step = 0; step < 200; step++) {
+      const before = chart.visibleRange
+      chart.appendBar()
+      const idx = cameraRestoreIndex({
+        beforeRealTo: before.realTo,
+        beforeFirstBarTime: firstBarTime,
+        afterFirstBarTime: firstBarTime,
+        afterBarCount: chart.barCount,
+        followLatestBar: false,
+        rightMarginBars: MARGIN,
+      })
+      chart.scrollToDataIndex(idx as number)
+    }
+    // The edge never moves; the 200 new bars filled the margin (`to` is clamped
+    // to the bar count, so only realTo -- the true edge -- is compared).
+    expect(chart.visibleRange.realTo).toBe(initial.realTo)
+    expect(chart.visibleRange.realTo - VISIBLE).toBe(initial.realTo - VISIBLE)
+  })
+
+  it('zero margin is exactly the old flush behaviour', () => {
+    const a = freshChart()
+    const b = freshChart()
+    for (let step = 0; step < 50; step++) {
+      const beforeA = a.visibleRange
+      const beforeB = b.visibleRange
+      a.appendBar()
+      b.appendBar()
+      const base = { beforeFirstBarTime: firstBarTime, afterFirstBarTime: firstBarTime, followLatestBar: true }
+      a.scrollToDataIndex(cameraRestoreIndex({ ...base, beforeRealTo: beforeA.realTo, afterBarCount: a.barCount }) as number)
+      b.scrollToDataIndex(cameraRestoreIndex({ ...base, beforeRealTo: beforeB.realTo, afterBarCount: b.barCount, rightMarginBars: 0 }) as number)
+    }
+    expect(a.visibleRange).toEqual(b.visibleRange)
+  })
+
+  it('follow off: a view panned back into history stays exactly where the user left it', () => {
+    const chart = new ChartModel(500, VISIBLE, 400)
+    const before = chart.visibleRange
+    chart.appendBar()
+    const idx = cameraRestoreIndex({
+      beforeRealTo: before.realTo,
+      beforeFirstBarTime: firstBarTime,
+      afterFirstBarTime: firstBarTime,
+      afterBarCount: chart.barCount,
+      followLatestBar: false,
+      rightMarginBars: MARGIN,
+    })
+    chart.scrollToDataIndex(idx as number)
+    expect(chart.visibleRange.realTo).toBe(before.realTo)
+  })
+
+  it('a window re-anchor restores the same margin (view held in time, follow on or off)', () => {
+    const old = Array.from({ length: 3000 }, (_, i) => 1_000 + i)
+    const before = new ChartModel(old.length, VISIBLE, old.length + MARGIN)
+    const anchor = captureViewAnchor(old, before.visibleRange.realTo)
+    expect(anchor).toEqual({ time: old[old.length - 1], extraBars: MARGIN })
+    const list = old.slice(500) // the window's history was trimmed in front; the last bar is the same
+    const after = new ChartModel(list.length, VISIBLE, list.length)
+    for (const follow of [false, true]) {
+      after.scrollToDataIndex(reanchorRestoreIndex(anchor, list, follow, MARGIN) as number)
+      expect(after.visibleRange.realTo - list.length).toBe(MARGIN)
+    }
+  })
+
+  it('a re-anchor whose view bars are gone snaps the cursor to the edge WITH the margin', () => {
+    const anchor = { time: 0, extraBars: 0 }
+    const list = Array.from({ length: 800 }, (_, i) => 5_000 + i)
+    const after = new ChartModel(list.length, VISIBLE, list.length)
+    after.scrollToDataIndex(reanchorRestoreIndex(anchor, list, false, MARGIN) as number)
+    expect(after.visibleRange.realTo - list.length).toBe(MARGIN)
+  })
+})

@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import type { ManualTrade } from '../api/types'
 import { fmtPrice, fmtR, fmtUsd } from '../format'
+import { partialCloseRefusal } from '../chart/orderEntry'
 import { fmtEtDateTime } from '../timeFormat'
 import type { TradePanelTab } from '../state/sessionPrefsStore'
 
@@ -55,12 +56,52 @@ function Empty({ children }: { children: string }) {
   return <p className="px-2 py-6 text-xs text-text-muted">{children}</p>
 }
 
+// FXR_V2_SPEC.md 3.6: close ANY whole quantity of the open position, with the
+// refusal reason inline (the same rule the workspace re-checks). Defaults to
+// half; re-defaults whenever the open size changes.
+function PartialClose({ contracts, disabled, onPartialClose }: { contracts: number; disabled: boolean; onPartialClose: (qty: number) => void }) {
+  const half = String(Math.max(1, Math.round(contracts / 2)))
+  const [draft, setDraft] = useState(half)
+  const [lastContracts, setLastContracts] = useState(contracts)
+  if (lastContracts !== contracts) {
+    setLastContracts(contracts)
+    setDraft(half)
+  }
+  const qty = Number(draft)
+  const refusal = partialCloseRefusal(qty, contracts)
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        type="number"
+        min={1}
+        max={Math.max(1, contracts - 1)}
+        step={1}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        aria-label="Partial close quantity (contracts)"
+        title={refusal ?? `Contracts to close at market (1 to ${contracts - 1})`}
+        disabled={contracts < 2}
+        className="propbt-input w-14 text-right"
+      />
+      <button
+        type="button"
+        onClick={() => onPartialClose(qty)}
+        disabled={disabled || contracts < 2 || refusal !== null}
+        title={refusal ?? `Close ${qty} of ${contracts} contracts at market`}
+        className={ROW_ACTION}
+      >
+        Close partial
+      </button>
+    </span>
+  )
+}
+
 function PositionsTab({
   position,
   closing,
   onClose,
   onPartialClose,
-  partialCloseDisabled,
+  onBreakeven,
   autoBreakeven,
   onAutoBreakevenChange,
   trailingPoints,
@@ -69,8 +110,8 @@ function PositionsTab({
   position: PositionRow | null
   closing: boolean
   onClose: () => void
-  onPartialClose: () => void
-  partialCloseDisabled: boolean
+  onPartialClose: (qty: number) => void
+  onBreakeven: () => void
   autoBreakeven: boolean
   onAutoBreakevenChange: (v: boolean) => void
   trailingPoints: number | null
@@ -104,7 +145,20 @@ function PositionsTab({
         </label>
       </div>
       {position ? (
-        <table className="w-full border-collapse">
+        // table-fixed + a <colgroup>: the columns keep their widths whatever the
+        // numbers do (an SL appearing, a P&L gaining a digit), so nothing reflows.
+        <table className="w-full table-fixed border-collapse">
+          <colgroup>
+            <col className="w-20" />
+            <col className="w-16" />
+            <col className="w-16" />
+            <col className="w-28" />
+            <col className="w-28" />
+            <col className="w-28" />
+            <col className="w-28" />
+            <col className="w-24" />
+            <col />
+          </colgroup>
           <thead>
             <tr>
               <th className={TH}>Symbol</th>
@@ -131,8 +185,15 @@ function PositionsTab({
                 {position.rMultiple !== null ? `${position.rMultiple > 0 ? '+' : ''}${fmtR(position.rMultiple)}` : '—'}
               </td>
               <td className="h-7 whitespace-nowrap px-2 text-right">
-                <button type="button" onClick={onPartialClose} disabled={partialCloseDisabled || closing} className={ROW_ACTION}>
-                  Close ½
+                <PartialClose contracts={position.contracts} disabled={closing} onPartialClose={onPartialClose} />
+                <button
+                  type="button"
+                  onClick={onBreakeven}
+                  disabled={closing}
+                  title="Move the stop loss to the entry price (needs the trade in profit)"
+                  className={ROW_ACTION}
+                >
+                  Break-even
                 </button>
                 <button type="button" onClick={onClose} disabled={closing} className={ROW_ACTION}>
                   {closing ? 'Closing…' : 'Close'}
@@ -200,6 +261,7 @@ function HistoryTab({ trades, onOpenTrade }: { trades: readonly ManualTrade[]; o
             <th className={THN}>Qty</th>
             <th className={THN}>Entry</th>
             <th className={THN}>Exit</th>
+            <th className={THN}>Exits</th>
             <th className={THN}>P&amp;L</th>
             <th className={THN}>R</th>
           </tr>
@@ -225,7 +287,10 @@ function HistoryTab({ trades, onOpenTrade }: { trades: readonly ManualTrade[]; o
               <td className={TD}>{t.side === 'long' ? 'Long' : 'Short'}</td>
               <td className={TDN}>{t.size_contracts}</td>
               <td className={TDN}>{fmtPrice(t.entry_price, t.instrument)}</td>
-              <td className={TDN}>{fmtPrice(t.exit_price, t.instrument)}</td>
+              <td className={TDN} title={t.exits && t.exits.length > 1 ? 'Contract-weighted average of the exits' : undefined}>
+                {fmtPrice(t.exit_price, t.instrument)}
+              </td>
+              <td className={`${TDN} text-text-muted`}>{t.exits && t.exits.length > 0 ? t.exits.length : 1}</td>
               <td className={`num h-7 px-2 text-xs ${sign(t.pnl_usd)}`}>{fmtUsd(t.pnl_usd)}</td>
               <td className={`num h-7 px-2 text-xs ${t.r_multiple !== null ? sign(t.r_multiple) : 'text-text-muted'}`}>
                 {t.r_multiple !== null ? `${t.r_multiple > 0 ? '+' : ''}${fmtR(t.r_multiple)}` : '—'}
@@ -267,7 +332,7 @@ export default function TradePanel({
   closing,
   onClosePosition,
   onPartialClose,
-  partialCloseDisabled,
+  onBreakeven,
   onCancelOrder,
   autoBreakeven,
   onAutoBreakevenChange,
@@ -283,8 +348,8 @@ export default function TradePanel({
   trades: readonly ManualTrade[]
   closing: boolean
   onClosePosition: () => void
-  onPartialClose: () => void
-  partialCloseDisabled: boolean
+  onPartialClose: (qty: number) => void
+  onBreakeven: () => void
   onCancelOrder: () => void
   autoBreakeven: boolean
   onAutoBreakevenChange: (v: boolean) => void
@@ -325,7 +390,7 @@ export default function TradePanel({
             closing={closing}
             onClose={onClosePosition}
             onPartialClose={onPartialClose}
-            partialCloseDisabled={partialCloseDisabled}
+            onBreakeven={onBreakeven}
             autoBreakeven={autoBreakeven}
             onAutoBreakevenChange={onAutoBreakevenChange}
             trailingPoints={trailingPoints}

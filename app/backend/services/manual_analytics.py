@@ -43,7 +43,9 @@ from propbt.reporting import run_bundle as rb
 MANUAL_PREFIX = "bt:"
 ALL_PREFIX = "bt:all:"
 
-EXTRA_COLUMNS = ["source", "session_id", "session_trade_id", "tags", "setup_name", "grade"]
+# `exits` is the trade's exit list (FXR_V2_SPEC.md 3.6): the journal shows ONE trade, but the
+# prop replay and the equity timeline walk its exits (see _legs).
+EXTRA_COLUMNS = ["source", "session_id", "session_trade_id", "tags", "setup_name", "grade", "exits"]
 FRAME_COLUMNS = rb.TRADE_COLUMNS + EXTRA_COLUMNS
 
 
@@ -108,6 +110,7 @@ def _build_frame(run_id: str, sessions: List[models.BacktestSessionDetail]) -> p
             row["tags"] = list(d.get("tags") or [])
             row["setup_name"] = d.get("setup_name")
             row["grade"] = d.get("grade")
+            row["exits"] = list(d.get("exits") or [])
             rows.append(row)
     if not rows:
         return _empty_frame()
@@ -129,6 +132,35 @@ def load_trades_frame(run_id: str) -> pd.DataFrame:
 
 
 # ------------------------------- prop replay --------------------------------
+
+@dataclass(frozen=True)
+class Leg:
+    """One exit of a trade, as the timeline sees it."""
+    ts: pd.Timestamp
+    pnl_usd: float
+    contracts: int
+    mae_points: float
+
+
+def _legs(t) -> List[Leg]:
+    """A trade's exits in time order. A partial exit hits the timeline at ITS
+    OWN exit time with its own P&L (so a day-1 partial and a day-2 final land
+    on their own trading days, EOD balances and daily-loss tallies), while the
+    journal and trade statistics still see one trade. A trade journaled before
+    exits existed (or with none) is one leg at its exit time."""
+    exits = list(t.exits) if isinstance(t.exits, list) else []
+    if not exits:
+        return [Leg(t.exit_time, float(t.pnl_usd), int(t.size_contracts), float(t.mae_points))]
+    legs = []
+    for e in sorted(exits, key=lambda e: e["time"]):
+        mae = e.get("mae_points")
+        legs.append(Leg(
+            pd.Timestamp(e["time"], unit="s", tz="UTC"),
+            float(e["pnl_usd"]),
+            int(e["contracts"]),
+            float(t.mae_points if mae is None else mae),
+        ))
+    return legs
 
 @dataclass
 class PropReplay:
@@ -162,6 +194,13 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str) -> PropReplay:
     trade's exit time. Limitations (documented, not hidden): the MAE low
     excludes commission, and a partial-close slice's MAE ignores the
     still-open remainder's float at the moment of the partial.
+
+    Partial exits (3.6): the same walk is done PER EXIT -- each exit observes
+    its low point (that exit's own MAE x the contracts still open until it) and
+    then its realized balance at its own time and trading day. So the day
+    boundary closes with the balance as it really stood (the EOD balance that
+    trails/freezes the MLL), and the daily-loss limit sees each exit's loss on
+    the day it happened.
     """
     cfg = load_prop_rules()
     spec = load_contracts()[instrument]
@@ -192,23 +231,29 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str) -> PropReplay:
 
     sessions_cfg = load_sessions()
     for i, t in enumerate(df.itertuples(index=False), start=1):
-        entry_ts, exit_ts = t.entry_time, t.exit_time
+        entry_ts = t.entry_time
         day_in = trading_day_of(entry_ts, sessions_cfg)
-        day_out = trading_day_of(exit_ts, sessions_cfg)
 
         observe(entry_ts, day_in, balance, balance)
 
-        mae_usd = float(t.mae_points) * spec.point_value * int(t.size_contracts)
-        st = observe(exit_ts, day_out, balance, balance - mae_usd)
-        resolved = st.failed
-        if not resolved:
-            balance += float(t.pnl_usd)
-            # Replace the low-point row's equity with the realized point: the
-            # low only feeds the breach verdict and daily-risk samples, it is
-            # not a timeline vertex (same timestamp as the exit row below).
-            replay.rows.pop()
-            st = observe(exit_ts, day_out, balance, balance)
-            resolved = st.failed or st.passed
+        resolved = False
+        open_contracts = int(t.size_contracts)
+        for leg in _legs(t):
+            leg_day = trading_day_of(leg.ts, sessions_cfg)
+            mae_usd = leg.mae_points * spec.point_value * open_contracts
+            st = observe(leg.ts, leg_day, balance, balance - mae_usd)
+            resolved = st.failed
+            if not resolved:
+                balance += leg.pnl_usd
+                # Replace the low-point row's equity with the realized point: the
+                # low only feeds the breach verdict and daily-risk samples, it is
+                # not a timeline vertex (same timestamp as the exit row below).
+                replay.rows.pop()
+                st = observe(leg.ts, leg_day, balance, balance)
+                resolved = st.failed or st.passed
+            open_contracts -= leg.contracts
+            if resolved:
+                break
         if resolved:
             last = replay.rows[-1]
             replay.resolved_time = _unix(last["time"])
@@ -319,9 +364,17 @@ def build_equity_frame(run_id: str) -> pd.DataFrame:
         first = df["entry_time"].min()
         rows.append(_plain_row(first, start_balance, None))
         balance = start_balance
+        sessions_cfg = load_sessions()
         for t in df.itertuples(index=False):
-            balance += float(t.pnl_usd)
-            rows.append(_plain_row(t.exit_time, balance, t.trading_day))
+            legs = _legs(t)
+            for leg in legs:
+                balance += leg.pnl_usd
+                if len(legs) == 1:
+                    day = t.trading_day
+                else:  # each exit of a split trade sits on its own trading day
+                    d = trading_day_of(leg.ts, sessions_cfg)
+                    day = d.isoformat() if d else None
+                rows.append(_plain_row(leg.ts, balance, day))
     out = pd.DataFrame(rows, columns=rb.EQUITY_COLUMNS)
     out["time"] = pd.to_datetime(out["time"], utc=True)
     return out.drop_duplicates("time", keep="last").reset_index(drop=True)
