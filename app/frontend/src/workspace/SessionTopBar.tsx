@@ -100,6 +100,10 @@ export interface PlaybackProps {
 export interface TopBarActionsProps {
   onPlaceOrder: () => void
   placeOrderDisabled: boolean
+  // A position tool is on the chart, so Place order opens pre-filled from it.
+  placeOrderReady: boolean
+  // Why Place order is unavailable, for its tooltip.
+  placeOrderDisabledReason?: string
   onToggleJournal: () => void
   journalOpen: boolean
   onToggleTheme: () => void
@@ -293,9 +297,20 @@ export default function SessionTopBar({
       </div>
 
       <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-        <IconButton label="Place order (drag entry, stop and target on the chart)" onClick={actions.onPlaceOrder} disabled={actions.placeOrderDisabled}>
-          <PlusSquare size={16} aria-hidden />
-        </IconButton>
+        {/* The one primary action on the bar, and only once a position tool is on
+            the chart (then it is the next step); otherwise a quiet secondary. */}
+        <button
+          type="button"
+          onClick={actions.onPlaceOrder}
+          disabled={actions.placeOrderDisabled}
+          title={actions.placeOrderDisabled && actions.placeOrderDisabledReason ? actions.placeOrderDisabledReason : actions.placeOrderReady ? 'Place order from the position tool (Shift+N)' : 'Place order (Shift+N)'}
+          className={`inline-flex h-7 items-center gap-1 rounded px-3 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40 ${
+            actions.placeOrderReady ? 'bg-accent text-on-accent hover:brightness-110 active:brightness-95' : 'bg-surface text-text hover:bg-surface-2 disabled:hover:bg-surface'
+          }`}
+        >
+          <PlusSquare size={14} aria-hidden />
+          Place order
+        </button>
         <IconButton label="Journal" onClick={actions.onToggleJournal} pressed={actions.journalOpen}>
           <BookOpen size={16} aria-hidden />
         </IconButton>

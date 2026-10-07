@@ -1,6 +1,6 @@
-// A horizontal price line for the sim broker's own order levels (FXR_SPEC
-// section B: the New-Trade ticket's entry/SL/TP, a working order's preview,
-// and an open position's draggable SL/TP).
+// Where an order level's price line starts (FXR_V2_SPEC.md G2): the sim broker's
+// order lines (orderLabelOverlay.ts) and the position tool never run through the
+// candle legend in the pane's top-left corner.
 //
 // Why not the built-in `horizontalStraightLine`: that one spans the pane
 // edge to edge, which means a level sitting near the top of the visible
@@ -11,10 +11,7 @@
 // end up hard to read. There is no z-order or clip knob for this, so the
 // line yields instead: inside the legend's band it starts to the right of
 // the text, everywhere else it spans the full pane.
-import { registerOverlay } from 'klinecharts'
-
-export const KL_ORDER_LINE = 'klOrderLine'
-
+//
 // The legend block's footprint, in pane pixels. Both track the tooltip
 // styles set in ChartKL's themeStyles (a 14px title row above a 12px
 // OHLC row, 4px offset) -- keep them in step if that template changes.
@@ -29,31 +26,4 @@ export function orderLineStartX(y: number, paneWidth: number): number {
   // Never eat the whole line on a narrow pane -- past halfway the gap is
   // worse than the overlap it avoids.
   return Math.min(LEGEND_CLEAR_WIDTH, paneWidth / 2)
-}
-
-let registered = false
-
-export function ensureOrderLineOverlayRegistered(): void {
-  if (registered) return
-  registered = true
-  registerOverlay({
-    name: KL_ORDER_LINE,
-    totalStep: 1,
-    needDefaultPointFigure: false,
-    needDefaultXAxisFigure: false,
-    needDefaultYAxisFigure: false,
-    createPointFigures: ({ coordinates, bounding }) => {
-      const [p] = coordinates
-      if (!p) return []
-      const startX = orderLineStartX(p.y, bounding.width)
-      return [
-        {
-          type: 'line',
-          attrs: { coordinates: [{ x: startX, y: p.y }, { x: bounding.width, y: p.y }] },
-          // Interactive on purpose: these lines are dragged to modify a
-          // live order (F4), so the figure has to stay hit-testable.
-        },
-      ]
-    },
-  })
 }

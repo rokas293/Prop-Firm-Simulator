@@ -216,6 +216,27 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
     )
 
 
+# FXR_V2_SPEC.md section 3.5/4 (G3): the strategy checklist is a short list of
+# free-text rules, shown as tick-boxes in the Place Order dialog.
+MAX_CHECKLIST_ITEMS = 30
+MAX_CHECKLIST_ITEM_LENGTH = 200
+
+
+def _clean_checklist(items: Optional[List[str]]) -> List[str]:
+    """Trims each rule, drops blanks and repeats, and bounds the list's size."""
+    cleaned: List[str] = []
+    for raw in items or []:
+        text = raw.strip()
+        if not text or text in cleaned:
+            continue
+        if len(text) > MAX_CHECKLIST_ITEM_LENGTH:
+            raise InvalidSessionRequest(f"a checklist rule may be at most {MAX_CHECKLIST_ITEM_LENGTH} characters")
+        cleaned.append(text)
+    if len(cleaned) > MAX_CHECKLIST_ITEMS:
+        raise InvalidSessionRequest(f"a checklist may have at most {MAX_CHECKLIST_ITEMS} rules")
+    return cleaned
+
+
 def _contract_cap(data: dict):
     """The session's position limit, or None. Falls back to the ruleset's own
     limit so a session saved before max_contracts existed is still capped."""
@@ -283,6 +304,7 @@ def _migrate(data: dict) -> dict:
         data["assets"] = [data["instrument"]]
     data.setdefault("end_date", None)
     data.setdefault("name", None)
+    data.setdefault("checklist", [])
     return data
 
 
@@ -307,6 +329,8 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         if req.end_date <= start_time:
             raise InvalidSessionRequest(f"end_date {req.end_date} must be after start_time {start_time}")
 
+    checklist = _clean_checklist(req.checklist)
+
     now = dt.datetime.now(dt.timezone.utc)
     session_id = _generate_session_id(now)
     data = {
@@ -318,6 +342,7 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         "start_time": start_time,
         "end_date": req.end_date,
         "quick_quantity": req.quick_quantity,
+        "checklist": checklist,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
         # Replay always begins exactly at the anchor -- resuming with no
@@ -444,9 +469,10 @@ def update_session_notes(session_id: str, req: models.UpdateSessionNotesRequest)
 
 @_serialised
 def update_session_settings(session_id: str, req: models.UpdateSessionSettingsRequest) -> models.BacktestSessionDetail:
-    """Per-session settings the workspace edits in place: the display name and
-    the Quick Buy/Sell quantity (FXR_V2_SPEC.md section 3.1: "persists per
-    session"). Only the fields actually sent change."""
+    """Per-session settings the workspace edits in place: the display name, the
+    Quick Buy/Sell quantity (FXR_V2_SPEC.md section 3.1: "persists per
+    session"), the strategy checklist (3.5) and Scalper Mode (3.4). Only the
+    fields actually sent change."""
     data = _read(session_id)
     updates = req.model_dump(exclude_unset=True)
     if "quick_quantity" in updates:
@@ -457,6 +483,11 @@ def update_session_settings(session_id: str, req: models.UpdateSessionSettingsRe
         data["quick_quantity"] = qty
     if "name" in updates:
         data["name"] = (updates["name"] or "").strip() or None
+    if "checklist" in updates:
+        data["checklist"] = _clean_checklist(updates["checklist"])
+    if "scalper" in updates:
+        # Validated and normalised by models.ScalperConfig (already applied to `req`).
+        data["scalper"] = req.scalper.model_dump() if req.scalper is not None else None
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)

@@ -194,6 +194,13 @@ export function rightClickOrders(
   })
 }
 
+// Armed Scalper Mode brackets every right-click order, so its rows say so (G4):
+// "Buy 2 MNQ @ 20,050.25 limit · with brackets". Only when a stop or a target
+// will really be placed (armed with both off places nothing).
+export function withBracketsNote(label: string, brackets: { slPrice: number | null; tpPrice: number | null } | null): string {
+  return brackets && (brackets.slPrice !== null || brackets.tpPrice !== null) ? `${label} · with brackets` : label
+}
+
 // --- 3.6 Partials and management -------------------------------------------
 
 // A partial close needs a whole quantity from 1 up to (not including) the open

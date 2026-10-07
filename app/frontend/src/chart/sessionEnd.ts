@@ -69,3 +69,19 @@ export function stepBarCount(granularitySeconds: number, baseSeconds: number): n
 export function steppedIndex(index: number, direction: 1 | -1, count: number, minIndex: number, maxIndex: number): number {
   return Math.max(minIndex, Math.min(maxIndex, index + direction * count))
 }
+
+// The granularity one notch finer (-1) or coarser (+1) in the dropdown's order,
+// skipping any the session's base bar cannot step by (G4's hotkeys: until the
+// 1m forming-candle replay of G5, only granularities at or above the base
+// timeframe are available). Stays where it is at either end.
+export function shiftGranularity(
+  current: StepGranularityLabel,
+  direction: 1 | -1,
+  available: ReadonlySet<StepGranularityLabel>,
+): StepGranularityLabel {
+  const index = STEP_GRANULARITIES.findIndex((g) => g.label === current)
+  for (let i = index + direction; i >= 0 && i < STEP_GRANULARITIES.length; i += direction) {
+    if (available.has(STEP_GRANULARITIES[i].label)) return STEP_GRANULARITIES[i].label
+  }
+  return current
+}

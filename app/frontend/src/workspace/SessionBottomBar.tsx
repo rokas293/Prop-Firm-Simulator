@@ -1,6 +1,6 @@
 // FXR_V2_SPEC.md section 2 (G1): the session workspace's one-row bottom bar.
-// Left: hide-trades eye, Buy, Sell, Quantity, Scalper toggle (a placeholder
-// until phase G4). Centre: a grip that opens/drags up the trade panel. Right:
+// Left: hide-trades eye, Buy, Sell, Quantity, Scalper button (opens the Scalper
+// Mode settings popover; accent while armed, G4). Centre: a grip that opens/drags up the trade panel. Right:
 // Analytics, Prop Rules (prop sessions only), the three balance figures
 // (colour on the number only, DESIGN_LANGUAGE.md section 9), hide-balances
 // eye, expand-panel chevron and fullscreen.
@@ -10,7 +10,8 @@
 import { useRef, useState } from 'react'
 import { BarChart3, ChevronUp, Eye, EyeOff, GripHorizontal, Maximize2, Minimize2, ShieldCheck, Zap } from 'lucide-react'
 import { fmtUsd } from '../format'
-import { IconButton } from './SessionTopBar'
+import { ICON_BUTTON, IconButton } from './SessionTopBar'
+import ScalperPopover, { type ScalperPopoverProps } from './ScalperPopover'
 
 const MASK = '••••'
 
@@ -71,6 +72,38 @@ function QuantityInput({ value, max, onChange }: QuantityProps) {
   )
 }
 
+export interface ScalperBarProps {
+  // Accent while armed: the one active thing on the bar (DESIGN_LANGUAGE.md section 2).
+  armed: boolean
+  open: boolean
+  onToggleOpen: () => void
+  popover: ScalperPopoverProps
+}
+
+function ScalperButton({ scalper }: { scalper: ScalperBarProps }) {
+  const { armed, open } = scalper
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={scalper.onToggleOpen}
+        aria-label={armed ? 'Scalper Mode (armed)' : 'Scalper Mode'}
+        title={armed ? 'Scalper Mode is armed: Buy/Sell and right-click orders carry your SL/TP' : 'Scalper Mode: preset SL / TP / break-even for every entry'}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={
+          armed
+            ? 'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-accent text-on-accent transition-colors hover:brightness-110 active:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+            : `${ICON_BUTTON} ${open ? 'bg-surface-2 text-text' : ''}`
+        }
+      >
+        <Zap size={16} aria-hidden />
+      </button>
+      {open && <ScalperPopover {...scalper.popover} />}
+    </div>
+  )
+}
+
 export default function SessionBottomBar({
   hideTrades,
   onToggleHideTrades,
@@ -79,6 +112,7 @@ export default function SessionBottomBar({
   tradingDisabled,
   disabledReason,
   quantity,
+  scalper,
   panelOpen,
   onTogglePanel,
   onGripDrag,
@@ -101,6 +135,7 @@ export default function SessionBottomBar({
   // Shown as the Buy/Sell tooltip while disabled.
   disabledReason: string
   quantity: QuantityProps
+  scalper: ScalperBarProps
   panelOpen: boolean
   onTogglePanel: () => void
   // Called with the pointer's vertical movement (px, up = positive) since the
@@ -165,10 +200,7 @@ export default function SessionBottomBar({
           Sell
         </button>
         <QuantityInput {...quantity} />
-        {/* Placeholder until phase G4 (Scalper Mode: preset SL/TP/break-even). */}
-        <IconButton label="Scalper Mode (arrives in a later phase)" onClick={() => {}} disabled>
-          <Zap size={16} aria-hidden />
-        </IconButton>
+        <ScalperButton scalper={scalper} />
       </div>
 
       <button

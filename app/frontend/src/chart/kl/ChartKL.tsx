@@ -41,8 +41,21 @@ import {
   ensureSessionBandOverlayRegistered,
   type SessionBand,
 } from './sessionOverlay'
-import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
-import { KL_ORDER_LINE, ensureOrderLineOverlayRegistered } from './orderLineOverlay'
+import { cameraRestoreIndex, captureViewAnchor, firstViewPlan, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
+import {
+  HANDLE_INDEX,
+  KL_POSITION_TOOL,
+  POSITION_TOOL_GROUP_ID,
+  POSITION_TOOL_ID,
+  POSITION_TOOL_LONG,
+  POSITION_TOOL_SHORT,
+  ensurePositionToolOverlayRegistered,
+  toolPoints,
+  type PositionToolData,
+  type PositionToolPalette,
+} from './positionToolOverlay'
+import { moveToolLevel, type PositionToolLevels, type ToolHandle, type ToolSizing } from '../positionTool'
+import type { ContractSpec } from '../simBroker'
 import { KL_ORDER_LABEL, ensureOrderLabelOverlayRegistered, ghostStroke, isGhostRole, type OrderLabelData, type OrderLabelPalette } from './orderLabelOverlay'
 import { roundToTick, type OrderLineInfo, type OrderLineRole } from '../orderEntry'
 import { fmtPrice } from '../../format'
@@ -73,6 +86,9 @@ export interface ChartKLHandle {
   // bar-space (zoom level) that fits the range into the pane's current
   // pixel width, then scrolls to center it.
   fitRange: (from: number, to: number) => void
+  // The first view of a session: the newest (cursor) bar in view, `visibleBars`
+  // across the pane, the right margin applied -- placed instantly, never animated.
+  showLatest: (visibleBars: number) => void
   scrollToTrade: (time: number) => void
   // Phase A2's drawing toolbar levers.
   startDrawing: (toolName: string) => void
@@ -105,6 +121,19 @@ export interface ChartKLHandle {
   // Re-reads this instrument's drawings from the persisted store and redraws
   // them (the session toolbar's undo/redo writes the store, then calls this).
   reloadDrawings: () => void
+  // FXR_V2_SPEC.md 3.5 (G3): arms the Long/Short Position tool. The next click on
+  // the chart places it (anchored on that bar, clamped to the cursor bar) with
+  // the given levels -- already at the current price -- and reports it through
+  // onPositionToolDrawn. Replaces any tool already on the chart.
+  startPositionTool: (tool: PositionToolSpec) => void
+}
+
+// A position tool as the caller owns it: its three levels plus what its live
+// labels need (the instrument's spec and the risk budget that sizes them).
+export interface PositionToolSpec {
+  levels: PositionToolLevels
+  spec: ContractSpec
+  sizing: ToolSizing
 }
 
 interface ChartKLProps {
@@ -175,17 +204,22 @@ interface ChartKLProps {
   // automated-backtest review (ChartPanel) leaves this unset and keeps
   // its own already-shipped red SL line.
   slLineColor?: string
-  // The "New Trade" drag ticket (FXR_SPEC.md section B), non-null while
-  // armed: renders 3 draggable ghost lines (entry/SL/TP) at these prices.
-  // Deliberately read only ONCE per arm/disarm transition (see the effect
-  // this drives) -- ChartKL owns the actual drag, the caller owns what the
-  // numbers MEAN (R:R, $ risk, auto-sized contracts); re-pushing a price
-  // on every drag frame would fight the user's own drag.
-  tradeTicket?: { entryPrice: number; slPrice: number; tpPrice: number } | null
-  // Fires live as any one of the 3 ticket lines is dragged, with the
-  // COMPLETE updated price set (not just the moved field) -- the caller's
-  // R:R/risk/contracts readout recomputes from this on every frame.
-  onTradeTicketChange?: (prices: { entryPrice: number; slPrice: number; tpPrice: number }) => void
+  // FXR_V2_SPEC.md 3.5 (G3): the Long/Short Position tool on the chart, or null
+  // for none. The caller owns its levels; ChartKL owns the drag and reports each
+  // move. While a drag is in progress the incoming levels are not pushed back
+  // (klinecharts owns the handle for the rest of the gesture).
+  positionTool?: PositionToolSpec | null
+  // The armed tool was placed by its click (the levels are already the defaults).
+  onPositionToolDrawn?: (levels: PositionToolLevels) => void
+  // A handle moved: the COMPLETE updated levels, on every frame of the drag.
+  onPositionToolChange?: (levels: PositionToolLevels) => void
+  // The tool's own x was clicked.
+  onPositionToolRemove?: () => void
+  // Right-click on the tool -> its menu items.
+  getPositionToolMenu?: () => ContextMenuEntry[]
+  // A press on / drag of the tool (the caller pauses the replay: the market must
+  // not run under the levels being set).
+  onPositionToolInteract?: () => void
   // FXR_V2_SPEC.md G2: the sim broker's on-chart order lines -- the open
   // position's line, its SL/TP (placed or ghost) and working orders, each a
   // dashed line with a segmented label and a y-axis price tag
@@ -455,8 +489,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     onCandleBarClick,
     pickMode = false,
     slLineColor,
-    tradeTicket = null,
-    onTradeTicketChange,
+    positionTool = null,
+    onPositionToolDrawn,
+    onPositionToolChange,
+    onPositionToolRemove,
+    getPositionToolMenu,
+    onPositionToolInteract,
     orderLines,
     onOrderLineDrag,
     onOrderLineClose,
@@ -1018,7 +1056,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     ensureDrawingOverlaysRegistered()
     ensureIndicatorsRegistered()
     ensureSessionBandOverlayRegistered()
-    ensureOrderLineOverlayRegistered()
+    ensurePositionToolOverlayRegistered()
     ensureOrderLabelOverlayRegistered()
     if (!containerRef.current) return
     const chart = init(containerRef.current, { timezone: 'America/New_York' })
@@ -1127,6 +1165,16 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     // edge is normal chart behavior), so they're clamped defensively
     // rather than trusted as valid array positions.
     const handleVisibleRangeChange = (data?: unknown) => {
+      // Diagnostics (read by the browser checks of the first view): how many bars
+      // are loaded and where the viewport's right edge sits, in bar indices.
+      // Right edge minus bar count = the empty room right of the newest bar.
+      const host = containerRef.current
+      if (host) {
+        const vr = chart.getVisibleRange()
+        host.dataset.barCount = String(chart.getDataList().length)
+        host.dataset.viewRealTo = String(vr.realTo)
+        host.dataset.viewRealFrom = String(vr.realFrom)
+      }
       const onChange = onVisibleRangeChangeRef.current
       if (!onChange) return
       const range = data as { from: number; to: number } | undefined
@@ -1545,55 +1593,6 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rightMarginPx])
 
-  // FXR_SPEC.md phase F3's "New Trade" drag ticket: 3 draggable ghost
-  // lines (entry/SL/TP), created ONCE per arm/disarm transition -- keyed
-  // on `tradeTicketActive`'s boolean flip, NOT the live prices themselves.
-  // Re-creating the overlays on every drag frame (if this depended on the
-  // prices) would fight the user's own in-progress drag, since klinecharts
-  // already owns the line's visual position for the rest of that gesture;
-  // the ARMING prices are read once via a ref for exactly that reason.
-  // Confirming or cancelling sets tradeTicket back to null, which tears
-  // these down via the cleanup below.
-  const TICKET_GROUP_ID = 'kl-trade-ticket'
-  const tradeTicketRef = useRef(tradeTicket)
-  tradeTicketRef.current = tradeTicket
-  const onTradeTicketChangeRef = useRef(onTradeTicketChange)
-  onTradeTicketChangeRef.current = onTradeTicketChange
-  const tradeTicketActive = tradeTicket !== null
-
-  useEffect(() => {
-    const chart = chartRef.current
-    const initial = tradeTicketRef.current
-    if (!chart || !tradeTicketActive || !initial) return
-    const anchorMs = (cursorTimeRef.current ?? 0) * 1000
-
-    const makeLine = (id: string, price: number, color: string, field: 'entryPrice' | 'slPrice' | 'tpPrice'): OverlayCreate => ({
-      id,
-      name: KL_ORDER_LINE,
-      groupId: TICKET_GROUP_ID,
-      lock: false,
-      points: [{ timestamp: anchorMs, value: price }],
-      styles: { line: { color, style: 'dashed', size: 2 } },
-      onPressedMoving: (event) => {
-        const newPrice = event.overlay.points[0]?.value
-        const current = tradeTicketRef.current
-        if (typeof newPrice !== 'number' || !current) return
-        onTradeTicketChangeRef.current?.({ ...current, [field]: newPrice })
-      },
-    })
-
-    chart.createOverlay([
-      makeLine('kl-ticket-entry', initial.entryPrice, colorsRef.current.accent, 'entryPrice'),
-      makeLine('kl-ticket-sl', initial.slPrice, baseRef.current.warning, 'slPrice'),
-      makeLine('kl-ticket-tp', initial.tpPrice, colorsRef.current.positive, 'tpPrice'),
-    ])
-
-    return () => {
-      chart.removeOverlay({ groupId: TICKET_GROUP_ID })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tradeTicketActive])
-
   // FXR_V2_SPEC.md G2: the order lines (position / SL / TP / ghosts / working
   // orders). Reconciled by id whenever the spec list, the cursor (the anchor
   // point follows the revealed bars) or the theme changes:
@@ -1627,8 +1626,9 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // Over an order line the crosshair's horizontal line and price tag are
   // hidden: they run through the label and their tag (the raw pointer price)
   // covers the line's own tick-snapped one. The level's own tag is the readout.
+  const positionToolHoverRef = useRef(false)
   const syncCrosshairForOrderLines = () => {
-    const over = hoveredOrderLineRef.current !== null || draggingOrderLineRef.current !== null
+    const over = hoveredOrderLineRef.current !== null || draggingOrderLineRef.current !== null || positionToolHoverRef.current
     chartRef.current?.setStyles({ crosshair: { horizontal: { show: !over } } })
   }
   const setOrderLineCursor = (kind: 'ns-resize' | 'pointer' | null) => {
@@ -1789,6 +1789,196 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderLines, cursorTime, colors, base, instrument, hoveredOrderLine])
+
+
+  // FXR_V2_SPEC.md 3.5 (G3, reference R2): the Long / Short Position tool.
+  // `startPositionTool` arms it (klinecharts' own one-click placement), the
+  // click anchors it on a bar -- never later than the cursor bar, so nothing
+  // reaches into unrevealed data -- and from then on the CALLER owns its levels:
+  // this effect syncs the overlay to them (price tags, labels and zones all
+  // redraw from the overlay's own points), except while a handle is mid-drag,
+  // when klinecharts owns the handle until release. Drags are vertical only:
+  // onPressedMoving turns the pointer's price into one handle's new level
+  // (moveToolLevel keeps the tool coherent) and puts every point back on the
+  // anchor at the authoritative prices.
+  const onPositionToolDrawnRef = useRef(onPositionToolDrawn)
+  onPositionToolDrawnRef.current = onPositionToolDrawn
+  const onPositionToolChangeRef = useRef(onPositionToolChange)
+  onPositionToolChangeRef.current = onPositionToolChange
+  const onPositionToolRemoveRef = useRef(onPositionToolRemove)
+  onPositionToolRemoveRef.current = onPositionToolRemove
+  const getPositionToolMenuRef = useRef(getPositionToolMenu)
+  getPositionToolMenuRef.current = getPositionToolMenu
+  const onPositionToolInteractRef = useRef(onPositionToolInteract)
+  onPositionToolInteractRef.current = onPositionToolInteract
+  // The spec the overlay was last given (the placing phase has no caller state yet).
+  const toolSpecRef = useRef<PositionToolSpec | null>(null)
+  const toolLevelsRef = useRef<PositionToolLevels | null>(null)
+  // The anchor bar, ms. Fixed at placement; the tool does not follow the cursor.
+  const toolAnchorRef = useRef<number | null>(null)
+  const toolPlacingRef = useRef(false)
+  const toolDraggingRef = useRef(false)
+  const toolMovedRef = useRef(false)
+
+  const positionToolPalette = (): PositionToolPalette => {
+    const c = colorsRef.current
+    const b = baseRef.current
+    return {
+      entry: c.accent,
+      sl: b.warning,
+      tp: c.positive,
+      surface: b.surface,
+      text: b.text,
+      textMuted: b.textMuted,
+      positive: ensureTextVariant(c.positive, b.surface),
+      negative: ensureTextVariant(c.negative, b.surface),
+      onEntry: pickOnAccent(c.accent, ON_ACCENT_LIGHT, ON_ACCENT_DARK),
+      onSl: pickOnAccent(b.warning, ON_ACCENT_LIGHT, ON_ACCENT_DARK),
+      onTp: pickOnAccent(c.positive, ON_ACCENT_LIGHT, ON_ACCENT_DARK),
+    }
+  }
+  const positionToolData = (tool: PositionToolSpec, hover: boolean): PositionToolData => ({
+    levels: tool.levels,
+    spec: tool.spec,
+    sizing: tool.sizing,
+    instrument: instrument ?? '',
+    palette: positionToolPalette(),
+    hover,
+    anchorMs: toolAnchorRef.current ?? (cursorTimeRef.current ?? 0) * 1000,
+  })
+  const setPositionToolHover = (hover: boolean) => {
+    positionToolHoverRef.current = hover
+    const tool = toolSpecRef.current
+    if (tool && chartRef.current?.getOverlays({ id: POSITION_TOOL_ID }).length) {
+      chartRef.current.overrideOverlay({ id: POSITION_TOOL_ID, extendData: positionToolData(tool, hover) })
+    }
+    if (!hover) setOrderLineCursor(null)
+    syncCrosshairForOrderLines()
+  }
+
+  const positionToolCallbacks = (): Partial<OverlayCreate> => ({
+    onPressedMoveStart: () => {
+      toolDraggingRef.current = true
+      toolMovedRef.current = false
+    },
+    onMouseEnter: () => setPositionToolHover(true),
+    onMouseLeave: () => setPositionToolHover(false),
+    // A handle or level shows a resize cursor; the x keeps the pointer.
+    onMouseMove: (event) => {
+      const key = event.figure?.key
+      setOrderLineCursor(key === 'close' ? 'pointer' : key && key in HANDLE_INDEX ? 'ns-resize' : null)
+    },
+    onPressedMoving: (event) => {
+      const chart = chartRef.current
+      const current = toolLevelsRef.current
+      const tool = toolSpecRef.current
+      if (!chart || !current || !tool) return
+      if (!toolMovedRef.current) {
+        toolMovedRef.current = true
+        onPositionToolInteractRef.current?.()
+      }
+      const key = event.figure?.key
+      if (key === 'entry' || key === 'sl' || key === 'tp') {
+        const raw = event.overlay.points[HANDLE_INDEX[key as ToolHandle]]?.value
+        if (typeof raw === 'number') {
+          const next = moveToolLevel(current, key as ToolHandle, raw, tool.spec.tickSize)
+          toolLevelsRef.current = next
+          onPositionToolChangeRef.current?.(next)
+        }
+      }
+      // Whatever was grabbed, every point goes back on the anchor at the
+      // authoritative prices: the drag is vertical and the tool never slides.
+      const anchor = toolAnchorRef.current ?? (cursorTimeRef.current ?? 0) * 1000
+      chart.overrideOverlay({ id: POSITION_TOOL_ID, points: toolPoints(toolLevelsRef.current ?? current, anchor) })
+    },
+    onPressedMoveEnd: () => {
+      toolDraggingRef.current = false
+      toolMovedRef.current = false
+    },
+    onClick: (event) => {
+      if (event.figure?.key === 'close') onPositionToolRemoveRef.current?.()
+    },
+    onRightClick: (event) => {
+      event.preventDefault?.()
+      rightClickHandledRef.current = true
+      const items = getPositionToolMenuRef.current?.() ?? []
+      if (items.length === 0) return
+      setContextMenu({ kind: 'orderLine', x: event.pageX ?? 0, y: event.pageY ?? 0, id: POSITION_TOOL_ID, items })
+    },
+    // The placing click: the tool is anchored on the cursor bar -- "now", where its
+    // entry price is -- wherever on the chart the click landed. Its three levels
+    // go on the anchor and it is reported.
+    onDrawEnd: () => {
+      const chart = chartRef.current
+      const tool = toolSpecRef.current
+      toolPlacingRef.current = false
+      activeDrawingIdRef.current = null
+      onDrawingArmedChangeRef.current?.(null)
+      if (!chart || !tool) return
+      const cursor = cursorTimeRef.current
+      const latest = loadedBarsRef.current[loadedBarsRef.current.length - 1]
+      const anchor = (cursor ?? latest?.time ?? 0) * 1000
+      toolAnchorRef.current = anchor
+      toolLevelsRef.current = tool.levels
+      chart.overrideOverlay({ id: POSITION_TOOL_ID, points: toolPoints(tool.levels, anchor) })
+      onPositionToolDrawnRef.current?.(tool.levels)
+    },
+  })
+
+  const createPositionToolOverlay = (tool: PositionToolSpec, points?: ReturnType<typeof toolPoints>) =>
+    chartRef.current?.createOverlay({
+      id: POSITION_TOOL_ID,
+      name: KL_POSITION_TOOL,
+      groupId: POSITION_TOOL_GROUP_ID,
+      lock: false,
+      // Under the order lines (which must always win a click), over the drawings.
+      zLevel: 9_000,
+      fixedZLevel: true,
+      ...(points ? { points } : {}),
+      extendData: positionToolData(tool, false),
+      ...positionToolCallbacks(),
+    })
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const [existing] = chart.getOverlays({ id: POSITION_TOOL_ID })
+    if (!positionTool) {
+      // Cleared by the caller (placed, discarded, replaced). Not while the first
+      // click is still pending -- that overlay is the one being placed.
+      if (existing && !toolPlacingRef.current) {
+        chart.removeOverlay({ id: POSITION_TOOL_ID })
+        toolLevelsRef.current = null
+        toolAnchorRef.current = null
+        toolDraggingRef.current = false
+        if (positionToolHoverRef.current) setPositionToolHover(false)
+      }
+      return
+    }
+    toolSpecRef.current = positionTool
+    // The anchor never sits past the cursor: stepping the replay BACK (practice
+    // sessions) re-anchors the tool on the cursor bar rather than leaving it on a
+    // bar that is no longer revealed.
+    const cursorMs = (cursorTimeRef.current ?? 0) * 1000
+    const anchor = cursorTimeRef.current !== null && toolAnchorRef.current !== null ? Math.min(toolAnchorRef.current, cursorMs) : (toolAnchorRef.current ?? cursorMs)
+    toolAnchorRef.current = anchor
+    if (!existing) {
+      // Given levels with no click (the caller restored a tool): anchor on the cursor bar.
+      toolAnchorRef.current = anchor
+      toolLevelsRef.current = positionTool.levels
+      createPositionToolOverlay(positionTool, toolPoints(positionTool.levels, anchor))
+      return
+    }
+    if (toolPlacingRef.current) return
+    const extendData = positionToolData(positionTool, positionToolHoverRef.current)
+    if (toolDraggingRef.current) {
+      chart.overrideOverlay({ id: POSITION_TOOL_ID, extendData })
+      return
+    }
+    toolLevelsRef.current = positionTool.levels
+    chart.overrideOverlay({ id: POSITION_TOOL_ID, extendData, points: toolPoints(positionTool.levels, anchor) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionTool, colors, base, instrument, cursorTime])
 
   // Shared by the imperative fitRange handle AND the empty-area menu's
   // "Reset chart view" (which calls it with the full loaded window).
@@ -1974,6 +2164,19 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     ref,
     () => ({
       fitRange: fitRangeImpl,
+      showLatest: (visibleBars) => {
+        withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
+          const plan = firstViewPlan({
+            paneWidth: containerRef.current?.clientWidth ?? chart.getSize()?.width ?? 0,
+            marginPx: effectiveRightMarginPx(chart),
+            barCount: chart.getDataList().length,
+            visibleBars,
+          })
+          if (!plan) return
+          chart.setBarSpace(plan.barSpace)
+          chart.scrollToDataIndex(plan.scrollIndex, 0)
+        })
+      },
       scrollToTrade: (time) => {
         withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
           chart.scrollToTimestamp(time * 1000, 200)
@@ -2008,6 +2211,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         if (!chart || !id) return
         chart.removeOverlay({ id })
         activeDrawingIdRef.current = null
+        toolPlacingRef.current = false
         onDrawingArmedChangeRef.current?.(null)
         // Explicit, not just relying on onRemoved: verified live that
         // removing a still-incomplete overlay (points placed < totalStep,
@@ -2018,6 +2222,22 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         persistDrawingsRef.current()
       },
       reloadDrawings: () => restoreDrawingsRef.current(),
+      startPositionTool: (tool) => {
+        const chart = chartRef.current
+        if (!chart || loadedBarsRef.current.length === 0) return
+        // One drawing in progress at a time; one position tool on the chart.
+        const active = activeDrawingIdRef.current
+        if (active) chart.removeOverlay({ id: active })
+        chart.removeOverlay({ groupId: POSITION_TOOL_GROUP_ID })
+        toolSpecRef.current = tool
+        toolLevelsRef.current = null
+        toolAnchorRef.current = null
+        toolPlacingRef.current = true
+        activeDrawingIdRef.current = POSITION_TOOL_ID
+        onDrawingArmedChangeRef.current?.(tool.levels.side === 'long' ? POSITION_TOOL_LONG : POSITION_TOOL_SHORT)
+        onPositionToolInteractRef.current?.()
+        createPositionToolOverlay(tool)
+      },
       removeDrawing: deleteDrawing,
       clearDrawings: () => {
         const chart = chartRef.current

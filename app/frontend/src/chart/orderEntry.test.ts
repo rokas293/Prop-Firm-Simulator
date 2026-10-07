@@ -6,6 +6,7 @@ import {
   GHOST_REWARD_RISK,
   averageTrueRange,
   breakevenRefusal,
+  withBracketsNote,
   fmtSignedUsd,
   ghostLevels,
   ghostsApply,
@@ -264,5 +265,19 @@ describe('partial close and break-even (3.6)', () => {
     expect(tradeOpenContracts({ size_contracts: 3, exits: [exit(1), exit(2)] })).toBe(0)
     expect(tradeOpenContracts({ size_contracts: 3, exits: [] })).toBe(0) // pre-G2 trade
     expect(tradeOpenContracts({ size_contracts: 3 })).toBe(0)
+  })
+})
+
+
+describe('withBracketsNote (right-click rows while Scalper Mode is armed)', () => {
+  const label = 'Buy 2 MNQ @ 20,050.25 limit'
+  it('adds "with brackets" only when a stop or a target will really be placed', () => {
+    expect(withBracketsNote(label, { slPrice: 20040, tpPrice: 20070 })).toBe(`${label} · with brackets`)
+    expect(withBracketsNote(label, { slPrice: 20040, tpPrice: null })).toBe(`${label} · with brackets`)
+    expect(withBracketsNote(label, { slPrice: null, tpPrice: 20070 })).toBe(`${label} · with brackets`)
+  })
+  it('leaves the row exactly as it was when disarmed or when armed with nothing on', () => {
+    expect(withBracketsNote(label, null)).toBe(label)
+    expect(withBracketsNote(label, { slPrice: null, tpPrice: null })).toBe(label)
   })
 })

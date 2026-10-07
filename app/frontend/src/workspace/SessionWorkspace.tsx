@@ -13,12 +13,16 @@
 // exist here). Renders ChartKL directly in permanent replay mode, restores
 // the cursor saved on the session, PATCHes it back to the backend as the
 // user steps (F1), drives the sim broker's market Buy/Sell/Close (F2), and
-// (F3) the "New Trade" drag ticket + right-click limit/stop orders against
-// chart/simBroker.ts's pure fill logic, journaling each closed trade.
+// (F3) right-click limit/stop orders against chart/simBroker.ts's pure fill
+// logic, journaling each closed trade. (G3) The Long/Short Position tool and the
+// Place Order dialog replaced F3's drag-to-place "New Trade" ticket.
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
-import ChartKL, { type ChartKLHandle, type OrderLineSpec } from '../chart/kl/ChartKL'
+import ChartKL, { type ChartKLHandle, type OrderLineSpec, type PositionToolSpec } from '../chart/kl/ChartKL'
 import type { SessionBand } from '../chart/kl/sessionOverlay'
 import { positionCapMessage } from '../chart/positionCap'
+import { defaultToolLevels } from '../chart/positionTool'
+import { balanceFor, riskPctFromUsd, type OrderContext, type OrderKind, type OrderRequest, type PositionToolLevels } from '../chart/orderTicket'
+import { DEFAULT_SCALPER, entryBrackets, fromScalperConfig, scalperPreview, toScalperConfig, type ScalperBrackets } from '../chart/scalper'
 import {
   averageTrueRange,
   breakevenRefusal,
@@ -31,6 +35,7 @@ import {
   partialCloseRefusal,
   rightClickOrders,
   roundToTick,
+  withBracketsNote,
   tradeOpenContracts,
   type LevelKind,
 } from '../chart/orderEntry'
@@ -42,11 +47,9 @@ import {
   advanceReplay,
   closePosition,
   closePositionPartialAtMarket,
-  computeAutoSize,
   fromPersistedPosition,
   fromPersistedWorkingOrder,
   getContractSpec,
-  impliedOrderType,
   marketFillPrice,
   openPositionAsTradeRecord,
   riskUsdAtEntry,
@@ -55,13 +58,15 @@ import {
   unrealizedPnl as positionPnl,
   type ClosedTradeResult,
   type OpenPosition,
+  NO_JOURNAL,
+  type OrderJournal,
   type Side,
   type WorkingOrder,
 } from '../chart/simBroker'
 import type { ContextMenuEntry } from '../components/ContextMenu'
 import { stepSpeed } from '../panels/ReplayControls'
 import MagnifierPanel from '../panels/MagnifierPanel'
-import TradeTicketPanel, { type TicketReadout } from '../panels/TradeTicketPanel'
+import PlaceOrderDialog from './PlaceOrderDialog'
 import SessionTopBar from './SessionTopBar'
 import SessionBottomBar from './SessionBottomBar'
 import SessionChartToolbar from './SessionChartToolbar'
@@ -79,10 +84,12 @@ import {
   sessionDisplayName,
   STEP_GRANULARITIES,
   stepBarCount,
+  shiftGranularity,
   steppedIndex,
   type StepGranularityLabel,
 } from '../chart/sessionEnd'
 import { clampPanelHeight, PANEL_DEFAULT_HEIGHT, useSessionPrefsStore } from '../state/sessionPrefsStore'
+import { dropLegacyScalper, readLegacyScalper, readScalper, useScalperStore } from '../state/scalperStore'
 import {
   useBtSession,
   useBtSessionTrades,
@@ -114,6 +121,7 @@ import {
 import EmptyState from '../components/EmptyState'
 import { fmtEtDate, fmtEtDateTime } from '../timeFormat'
 import { fmtPrice } from '../format'
+import { OPEN_ENTRY_ID, type OpenJournalEntry } from '../panels/journalEntry'
 
 // The journal drawer loads on first open, not in the entry chunk.
 const JournalPanel = lazy(() => import('../panels/JournalPanel'))
@@ -245,14 +253,6 @@ export function resyncCursorIndex(bars: Bar[], targetTime: number | null): numbe
   return best
 }
 
-// FXR_SPEC.md phase F3's "New Trade" ticket defaults -- a simple fixed
-// starting point the user is expected to drag to fit their own analysis,
-// not a "smart" volatility-derived guess (the whole point is the 3 lines
-// are draggable). Deliberately the same for MES/MNQ despite their
-// different point values -- it's a STARTING offset, not a risk figure.
-const DEFAULT_TICKET_SL_POINTS = 10
-const DEFAULT_TICKET_RR = 2
-
 export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const { data: session, isLoading, isError, error } = useBtSession(sessionId)
   const { data: manualTrades } = useBtSessionTrades(sessionId)
@@ -280,6 +280,54 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const drawingHistoryRef = useRef<DrawingHistory>(emptyHistory())
   const [, setHistoryVersion] = useState(0)
   const prefs = useSessionPrefsStore()
+  // FXR_V2_SPEC.md 3.4 (G4): Scalper Mode -- preset SL/TP/break-even distances
+  // for every Quick Buy/Sell and right-click order while armed. Remembered per
+  // session: the session file is the source of truth (loaded below, saved on
+  // change), the store is the in-memory working copy; `scalperOpen` is just the popover.
+  const scalperBySession = useScalperStore((s) => s.bySession)
+  const seedScalper = useScalperStore((s) => s.seed)
+  const setScalperArmed = useScalperStore((s) => s.setArmed)
+  const patchScalper = useScalperStore((s) => s.patch)
+  const scalper = useMemo(() => readScalper(scalperBySession, sessionId), [scalperBySession, sessionId])
+  const [scalperOpen, setScalperOpen] = useState(false)
+  // Which session the working copy was loaded for, and the JSON last known to be
+  // in the session file (so only a real change is saved, never the load itself).
+  const scalperSeededForRef = useRef<string | null>(null)
+  const scalperSavedRef = useRef<string>('null')
+  const scalperSaveTimerRef = useRef<number | null>(null)
+  const scalperPendingRef = useRef<{ sessionId: string; json: string } | null>(null)
+  const saveScalperNow = () => {
+    const pending = scalperPendingRef.current
+    if (scalperSaveTimerRef.current !== null) window.clearTimeout(scalperSaveTimerRef.current)
+    scalperSaveTimerRef.current = null
+    scalperPendingRef.current = null
+    if (!pending) return
+    scalperSavedRef.current = pending.json
+    updateSessionSettings.mutate(
+      { sessionId: pending.sessionId, body: { scalper: JSON.parse(pending.json) } },
+      { onSuccess: () => dropLegacyScalper(pending.sessionId) },
+    )
+  }
+  const saveScalperNowRef = useRef(saveScalperNow)
+  saveScalperNowRef.current = saveScalperNow
+  // Save a real change to the session file: a toggle of Armed at once, typing in
+  // the popover after a short pause, and whatever is pending when the workspace
+  // closes. The load itself never counts as a change (scalperSavedRef).
+  useEffect(() => {
+    if (!session || scalperSeededForRef.current !== session.id) return
+    const json = JSON.stringify(toScalperConfig(scalper.armed, scalper.settings))
+    if (json === scalperSavedRef.current) {
+      scalperPendingRef.current = null
+      return
+    }
+    const armedChanged = (JSON.parse(scalperSavedRef.current) as { armed?: boolean } | null)?.armed !== scalper.armed
+    scalperPendingRef.current = { sessionId: session.id, json }
+    if (scalperSaveTimerRef.current !== null) window.clearTimeout(scalperSaveTimerRef.current)
+    if (armedChanged) saveScalperNowRef.current()
+    else scalperSaveTimerRef.current = window.setTimeout(() => saveScalperNowRef.current(), 300)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scalper, session?.id])
+  useEffect(() => () => saveScalperNowRef.current(), [])
   const themeMode = useThemeStore((s) => s.mode)
   const setThemeMode = useThemeStore((s) => s.setMode)
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
@@ -320,6 +368,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const pendingJournalTrade = useUiStore((s) => s.pendingJournalTrade)
   const consumeJournalTrade = useUiStore((s) => s.consumeJournalTrade)
   const [journalInitialTrade, setJournalInitialTrade] = useState<number | null>(null)
+  // "Save & Journal": the open trade's entry (it has no journaled trade until its
+  // first exit) -- open the drawer on it.
+  const openOpenEntryInJournal = () => {
+    setJournalInitialTrade(OPEN_ENTRY_ID)
+    setJournalOpen(true)
+  }
   useEffect(() => {
     if (pendingJournalTrade === null) return
     setJournalInitialTrade(pendingJournalTrade)
@@ -341,10 +395,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // position can't be opened until the first is fully closed.
   const [position, setPosition] = useState<OpenPosition | null>(null)
   const [workingOrders, setWorkingOrders] = useState<WorkingOrder[]>([])
-  // The "New Trade" drag ticket in progress -- entry/SL/TP prices only;
-  // side is DERIVED (tpPrice relative to entryPrice), never stored, so it
-  // can never drift out of sync with the lines actually drawn.
-  const [ticket, setTicket] = useState<{ entryPrice: number; slPrice: number; tpPrice: number } | null>(null)
+  // FXR_V2_SPEC.md 3.5 (G3): the Long/Short Position tool on the chart (entry,
+  // stop and target; the side is the tool's own), and whether the Place Order
+  // dialog is open over it. The tool is a plan on screen, not an order: it
+  // places nothing until the dialog's Save.
+  const [positionTool, setPositionTool] = useState<PositionToolLevels | null>(null)
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false)
+  // The type the order dialog opened on (the Shift+M / L / T hotkeys); null = the
+  // dialog's own default, derived from the price.
+  const [orderDialogType, setOrderDialogType] = useState<OrderKind | null>(null)
   // F4's optional toggles, ARMED state for the next trade while flat --
   // once a position is open, PositionTicket's same two controls instead
   // read/write that position's own autoBreakeven/trailingPoints fields
@@ -417,6 +476,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       quickQtySeededRef.current = session.id
       setQuickQty(session.quick_quantity)
     }
+    // Scalper Mode: the session file's saved state; a session that has none yet
+    // adopts what the first G4 kept in browser storage (saved to the file below,
+    // then dropped from storage once the server has it).
+    const legacyScalper = session.scalper ? null : readLegacyScalper(session.id)
+    const savedScalper = session.scalper ? fromScalperConfig(session.scalper) : (legacyScalper ?? { armed: false, settings: DEFAULT_SCALPER })
+    scalperSavedRef.current = JSON.stringify(legacyScalper ? null : toScalperConfig(savedScalper.armed, savedScalper.settings))
+    seedScalper(session.id, savedScalper)
+    scalperSeededForRef.current = session.id
     setMagnifyBarTime(null)
     setMagnifierArmed(false)
     setWindowAnchor(session.cursor_time)
@@ -428,7 +495,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     positionRef.current = null
     setWorkingOrders([])
     workingOrdersRef.current = []
-    setTicket(null)
+    setPositionTool(null)
+    setOrderDialogOpen(false)
   }, [session])
 
   const barsWindow = useMemo(
@@ -537,8 +605,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (!range || initialFitAppliedRef.current || windowAnchor === null || !session) return
     initialFitAppliedRef.current = true
     if (!shouldRefitOnLoad(reanchoredAnchorRef.current === windowAnchor)) return
-    const fit = defaultFitWindow(windowAnchor, session.base_timeframe)
-    klChartRef.current?.fitRange(fit.from, fit.to)
+    klChartRef.current?.showLatest(DEFAULT_FIT_BARS)
   }
 
   // F4: every position-changing action (not just a replay step) PATCHes
@@ -626,6 +693,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       trade_key: trade.tradeKey,
       initial_contracts: trade.initialContracts,
       risk_usd: trade.riskUsd,
+      // FXR_V2_SPEC.md 3.5: what the Place Order dialog attached (the server only
+      // applies these when this exit creates the trade).
+      tags: trade.journal?.tags ?? [],
+      checklist: trade.journal?.checklist ?? [],
+      notes: trade.journal?.notes ?? '',
     }
     await createTrade.mutateAsync({ sessionId: session.id, body })
   }
@@ -678,6 +750,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       return
     }
     const spec = getContractSpec(session.instrument)
+    const positionBefore = positionRef.current
     const result = advanceReplay(
       bars,
       cursorIndexRef.current,
@@ -687,10 +760,28 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       spec,
       session.account.commission_per_contract,
     )
+    // "Save & Journal" on a limit/stop order: the journal entry opens when it fills.
+    const journalFill = workingOrdersRef.current.some((o) => o.journalOnFill && result.filledOrderIds.includes(o.id))
     positionRef.current = result.position
     workingOrdersRef.current = result.workingOrders
+    // Auto break-even just moved the stop to the entry (this step, not before).
+    const after = result.position
+    if (
+      positionBefore &&
+      after &&
+      after.tradeKey === positionBefore.tradeKey &&
+      after.autoBreakeven &&
+      positionBefore.slPrice !== positionBefore.entryPrice &&
+      after.slPrice === after.entryPrice
+    ) {
+      setToast(`Stop moved to break-even at ${fmtPrice(after.entryPrice, session.instrument)}`)
+    }
     setPosition(result.position)
     setWorkingOrders(result.workingOrders)
+    if (journalFill && result.position) {
+      setIsPlaying(false)
+      openOpenEntryInJournal()
+    }
 
     cursorIndexRef.current = newIndex
     setCursorIndexState(newIndex)
@@ -827,11 +918,32 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [indicatorData],
   )
 
-  // True while nothing is armed/working/open -- the shared gate for every
-  // action that starts a new trade (Buy/Sell, New Trade, a right-click
-  // order): at most one position-in-progress at a time, same single-
-  // position simplification F2 already established.
-  const flat = !position && workingOrders.length === 0 && !ticket
+  // True while nothing is working/open -- the shared gate for every action
+  // that starts a new trade (Buy/Sell, Place Order, a right-click order): at
+  // most one position-in-progress at a time, same single-position
+  // simplification F2 already established.
+  const flat = !position && workingOrders.length === 0
+  // A position tool is a plan for the NEXT trade: once any trade is open or
+  // working (a Quick Buy/Sell, a right-click order) it has nothing left to plan.
+  useEffect(() => {
+    if (!flat) setPositionTool(null)
+  }, [flat])
+
+  const accountRiskUsd = () =>
+    session ? riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd) : null
+
+  // The armed Scalper's brackets for an entry at `entry`, or null when it is
+  // not armed (then everything behaves exactly as in G2).
+  const armedScalperBrackets = (side: Side, entry: number, contracts: number, spec: ReturnType<typeof getContractSpec>): ScalperBrackets | null =>
+    entryBrackets(scalper, side, entry, contracts, spec)
+
+  const scalperToast = (side: Side, contracts: number, pos: Pick<OpenPosition, 'entryPrice' | 'slPrice' | 'tpPrice'>, instrument: string) => {
+    const levels = [
+      pos.slPrice !== null ? `SL ${fmtPrice(pos.slPrice, instrument)}` : null,
+      pos.tpPrice !== null ? `TP ${fmtPrice(pos.tpPrice, instrument)}` : null,
+    ].filter(Boolean)
+    return `Scalper: ${side === 'long' ? 'Buy' : 'Sell'} ${contracts} ${instrument} at ${fmtPrice(pos.entryPrice, instrument)}${levels.length ? ` | ${levels.join(' | ')}` : ''}`
+  }
 
   // FXR_SPEC.md section 3/6: market orders fill at the current cursor bar's
   // close (chart/simBroker.ts's documented convention) -- entry and exit
@@ -846,21 +958,25 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setOrderNotice(null)
     const entryBar = bars[cursorIndex]
     const entryPrice = marketFillPrice(entryBar)
-    // FXR_V2_SPEC.md 3.2: a Quick entry carries no SL/TP, so ghost lines
+    const spec = getContractSpec(session.instrument)
+    // FXR_V2_SPEC.md 3.4: an armed Scalper Mode brackets the entry from its preset
+    // distances, measured from the fill, and no ghost lines appear.
+    const sc = armedScalperBrackets(side, entryPrice, quickQty, spec)
+    // FXR_V2_SPEC.md 3.2: otherwise a Quick entry carries no SL/TP, so ghost lines
     // appear at sensible defaults (an ATR of the bars revealed so far).
-    const ghosts = ghostsApply(null, null)
-      ? ghostLevels(side, entryPrice, getContractSpec(session.instrument), averageTrueRange(bars, cursorIndex))
-      : null
+    const ghosts = !sc && ghostsApply(null, null) ? ghostLevels(side, entryPrice, spec, averageTrueRange(bars, cursorIndex)) : null
     const newPosition: OpenPosition = {
       side,
       contracts: quickQty,
       entryPrice,
       entryTime: entryBar.time,
       entryIndex: cursorIndex,
-      riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
-      slPrice: null,
-      tpPrice: null,
-      autoBreakeven: armedAutoBreakeven,
+      riskUsd: sc?.riskUsd ?? accountRiskUsd(),
+      slPrice: sc?.slPrice ?? null,
+      tpPrice: sc?.tpPrice ?? null,
+      autoBreakeven: (sc?.autoBreakeven ?? false) || armedAutoBreakeven,
+      breakevenR: sc?.breakevenR ?? null,
+      breakevenPoints: sc?.breakevenPoints ?? null,
       trailingPoints: armedTrailingPoints,
       tradeKey: crypto.randomUUID(),
       initialContracts: quickQty,
@@ -870,6 +986,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     positionRef.current = newPosition
     setPosition(newPosition)
     persist()
+    if (sc) setToast(scalperToast(side, quickQty, newPosition, session.instrument))
   }
 
   const handleClosePosition = async () => {
@@ -988,85 +1105,134 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   }
 
-  // "New Trade" (FXR_SPEC.md section B): arms the ticket at sensible
-  // defaults around the current market price -- the user drags all 3
-  // lines from there (see ChartKL's tradeTicket prop).
-  const openTicket = () => {
-    if (!bars || !bars[cursorIndex] || !flat || sessionEnded) return
-    // Opening an order ticket always pauses the replay (FXR_V2_SPEC.md G2):
-    // the market would otherwise run under the lines being dragged.
-    setIsPlaying(false)
-    const marketPrice = bars[cursorIndex].close
-    setTicket({
-      entryPrice: marketPrice,
-      slPrice: marketPrice - DEFAULT_TICKET_SL_POINTS,
-      tpPrice: marketPrice + DEFAULT_TICKET_SL_POINTS * DEFAULT_TICKET_RR,
-    })
-  }
-  const handleTicketChange = (prices: { entryPrice: number; slPrice: number; tpPrice: number }) => {
-    setTicket(prices)
-  }
-  const cancelTicket = () => setTicket(null)
+  // The default risk budget (the session's configured risk) on the chosen
+  // balance basis: what the position tool's live labels size against, and what
+  // the Place Order dialog opens with.
+  const riskBasis = prefs.riskBasis
+  const balances = session ? { initial: session.account.starting_balance, current: session.account.balance } : null
+  const defaultRiskPct = (() => {
+    if (!session || !balances) return 1
+    const { risk_per_trade_percent: pct, risk_per_trade_usd: usd } = session.account
+    if (pct !== null) return pct
+    return usd !== null ? riskPctFromUsd(usd, balanceFor(riskBasis, balances)) : 1
+  })()
+  const defaultRiskUsd = balances ? Math.round((defaultRiskPct / 100) * balanceFor(riskBasis, balances) * 100) / 100 : null
+  const positionCap = session?.account.max_contracts ?? null
 
-  // Confirm: at the current market price, fills immediately as a position
-  // (identical to Buy/Sell, just with real SL/TP attached); anywhere else,
-  // places a working limit/stop order instead -- auto-detected from which
-  // side of market the dragged entry line ended up on (impliedOrderType).
-  const confirmTicket = () => {
-    if (!ticket || !session || !bars || !bars[cursorIndex]) return
-    const spec = getContractSpec(session.instrument)
-    const side: Side = ticket.tpPrice >= ticket.entryPrice ? 'long' : 'short'
-    const riskUsd = riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd)
-    const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec, session.account.max_contracts ?? null)
-    const capMsg = positionCapMessage(contracts, session.account.max_contracts, 'Auto-sized order')
+  // What the dialog (and its rules) need to know about the market right now --
+  // the cursor bar's close and the ATR up to it, never a later bar.
+  const buildOrderContext = (): OrderContext | null => {
+    if (!session || !balances || !bars || !bars[cursorIndex]) return null
+    return {
+      instrument: session.instrument,
+      spec: getContractSpec(session.instrument),
+      mark: bars[cursorIndex].close,
+      balances,
+      cap: positionCap,
+      quickQuantity: quickQty,
+      atr: averageTrueRange(bars, cursorIndex),
+    }
+  }
+
+  // The Long / Short Position tool (toolbar): arms ChartKL's one-click
+  // placement. The tool appears at the CURRENT price with the default stop and
+  // target; nothing is ordered until the dialog saves.
+  const startPositionTool = (side: Side) => {
+    const ctx = buildOrderContext()
+    if (!ctx || !flat || sessionEnded) return
+    setIsPlaying(false)
+    const levels = defaultToolLevels(side, ctx.mark, ctx.spec, ctx.atr)
+    // Cleared first so a tool already on the chart is replaced, not restored.
+    setPositionTool(null)
+    klChartRef.current?.startPositionTool({ levels, spec: ctx.spec, sizing: { riskUsd: defaultRiskUsd, cap: positionCap } })
+  }
+  const positionToolSpec = useMemo<PositionToolSpec | null>(
+    () =>
+      positionTool && session
+        ? { levels: positionTool, spec: getContractSpec(session.instrument), sizing: { riskUsd: defaultRiskUsd, cap: positionCap } }
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [positionTool, session?.instrument, defaultRiskUsd, positionCap],
+  )
+
+  // Opening the dialog (the top bar's Place order, Shift+N, the tool's menu)
+  // always pauses the replay: the market would otherwise run under the form.
+  // `type` is the Shift+M / L / T hotkeys' preset; the buttons pass none.
+  const openOrderDialog = (type?: OrderKind) => {
+    if (!bars || !bars[cursorIndex] || !flat || sessionEnded) return
+    setIsPlaying(false)
+    setOrderDialogType(type ?? null)
+    setOrderDialogOpen(true)
+  }
+
+  // Save / Save & Journal. A Market order fills now (the cursor bar's close,
+  // like Buy/Sell, but with the dialog's SL/TP, size and tags); a Limit / Stop
+  // becomes the working order. The dialog already refused an over-cap size with
+  // its reason -- this re-checks, as every entry path does.
+  const placeOrder = (order: OrderRequest, journal: boolean) => {
+    if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return
+    const capMsg = positionCapMessage(order.contracts, session.account.max_contracts, 'Order')
     if (capMsg) {
-      // Keep the ticket open so the lines can be dragged to a size that fits.
       setOrderNotice(capMsg)
       return
     }
     setOrderNotice(null)
     const marketBar = bars[cursorIndex]
-
-    if (ticket.entryPrice === marketBar.close) {
+    const spec = getContractSpec(session.instrument)
+    const orderJournal: OrderJournal = { tags: order.tags, checklist: order.checklist, notes: '' }
+    const verb = order.side === 'long' ? 'Buy' : 'Sell'
+    if (order.type === 'market') {
+      // No SL/TP at all: the ghost lines appear, as for a Quick entry (3.1).
+      const ghosts = ghostsApply(order.slPrice, order.tpPrice)
+        ? ghostLevels(order.side, marketBar.close, spec, averageTrueRange(bars, cursorIndex))
+        : null
       const newPosition: OpenPosition = {
-        side,
-        contracts,
-        entryPrice: marketBar.close,
+        side: order.side,
+        contracts: order.contracts,
+        entryPrice: marketFillPrice(marketBar),
         entryTime: marketBar.time,
         entryIndex: cursorIndex,
-        riskUsd,
-        slPrice: ticket.slPrice,
-        tpPrice: ticket.tpPrice,
-        autoBreakeven: armedAutoBreakeven,
+        riskUsd: order.riskUsd,
+        slPrice: order.slPrice,
+        tpPrice: order.tpPrice,
+        autoBreakeven: order.autoBreakeven,
         trailingPoints: armedTrailingPoints,
         tradeKey: crypto.randomUUID(),
-        initialContracts: contracts,
-        ghostSl: null,
-        ghostTp: null,
+        initialContracts: order.contracts,
+        ghostSl: ghosts?.sl ?? null,
+        ghostTp: ghosts?.tp ?? null,
+        journal: orderJournal,
       }
       positionRef.current = newPosition
       setPosition(newPosition)
+      setToast(`${verb} ${order.contracts} ${session.instrument} at market, ${fmtPrice(newPosition.entryPrice, session.instrument)}`)
     } else {
-      const orderType = impliedOrderType(side, ticket.entryPrice, marketBar.close)
-      const order: WorkingOrder = {
+      const working: WorkingOrder = {
         id: crypto.randomUUID(),
-        side,
-        orderType,
-        price: ticket.entryPrice,
-        contracts,
-        slPrice: ticket.slPrice,
-        tpPrice: ticket.tpPrice,
-        riskUsd,
+        side: order.side,
+        orderType: order.type,
+        price: order.entryPrice,
+        contracts: order.contracts,
+        slPrice: order.slPrice,
+        tpPrice: order.tpPrice,
+        riskUsd: order.riskUsd,
         placedTime: marketBar.time,
         placedIndex: cursorIndex,
-        autoBreakeven: armedAutoBreakeven,
+        autoBreakeven: order.autoBreakeven,
         trailingPoints: armedTrailingPoints,
+        journal: orderJournal,
+        journalOnFill: journal,
       }
-      workingOrdersRef.current = [order]
-      setWorkingOrders([order])
+      workingOrdersRef.current = [working]
+      setWorkingOrders([working])
+      setToast(`${verb} ${order.type} ${order.contracts} ${session.instrument} placed at ${fmtPrice(order.entryPrice, session.instrument)}`)
     }
-    setTicket(null)
+    setPositionTool(null)
+    setOrderDialogOpen(false)
     persist()
+    // A market order has filled already: its journal entry opens now. A limit /
+    // stop opens it when it fills (advanceTo).
+    if (journal && order.type === 'market') openOpenEntryInJournal()
   }
 
   const cancelWorkingOrder = () => {
@@ -1079,13 +1245,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // that is meaningful at the clicked price -- above market a sell limit and a
   // buy stop, below a buy limit and a sell stop (orderEntry.ts rightClickOrders)
   // -- sized by the Quick quantity, labelled "Buy 2 MNQ @ 20,050.25 limit". No
-  // SL/TP rides along (the ghost lines / New Trade ticket are for that).
+  // SL/TP rides along unless Scalper Mode is armed (G4), which brackets it.
   const handleEmptyAreaMenuItems = (info: { time: number; price: number }): ContextMenuEntry[] => {
     if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return []
     const spec = getContractSpec(session.instrument)
     const marketPrice = bars[cursorIndex].close
     return rightClickOrders(info.price, marketPrice, quickQty, session.instrument, spec).map((o) => ({
-      label: o.label,
+      label: withBracketsNote(o.label, armedScalperBrackets(o.side, o.price, o.contracts, spec)),
       onSelect: () => {
         if (!bars[cursorIndex]) return
         const capMsg = positionCapMessage(o.contracts, session.account.max_contracts, 'Order')
@@ -1094,18 +1260,22 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           return
         }
         setOrderNotice(null)
+        // An armed Scalper brackets the order from ITS price (where it will fill).
+        const sc = armedScalperBrackets(o.side, o.price, o.contracts, spec)
         const order: WorkingOrder = {
           id: crypto.randomUUID(),
           side: o.side,
           orderType: o.orderType,
           price: o.price,
           contracts: o.contracts,
-          slPrice: null,
-          tpPrice: null,
-          riskUsd: riskUsdAtEntry(session.account.balance, session.account.risk_per_trade_percent, session.account.risk_per_trade_usd),
+          slPrice: sc?.slPrice ?? null,
+          tpPrice: sc?.tpPrice ?? null,
+          riskUsd: sc?.riskUsd ?? accountRiskUsd(),
           placedTime: bars[cursorIndex].time,
           placedIndex: cursorIndex,
-          autoBreakeven: armedAutoBreakeven,
+          autoBreakeven: (sc?.autoBreakeven ?? false) || armedAutoBreakeven,
+          breakevenR: sc?.breakevenR ?? null,
+          breakevenPoints: sc?.breakevenPoints ?? null,
           trailingPoints: armedTrailingPoints,
         }
         workingOrdersRef.current = [order]
@@ -1243,34 +1413,34 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setPickingReplayStart(false)
   }
 
-  // The live R:R/$risk/contracts readout for TradeTicketPanel -- purely
-  // derived from `ticket` + the account's risk config on every render, no
-  // separate effect needed.
-  const ticketReadout: TicketReadout | null =
-    ticket && session
-      ? (() => {
-          const spec = getContractSpec(session.instrument)
-          const side: Side = ticket.tpPrice >= ticket.entryPrice ? 'long' : 'short'
-          const slDistance = Math.abs(ticket.entryPrice - ticket.slPrice)
-          const tpDistance = Math.abs(ticket.tpPrice - ticket.entryPrice)
-          const riskUsd = riskUsdAtEntry(
-            session.account.balance,
-            session.account.risk_per_trade_percent,
-            session.account.risk_per_trade_usd,
-          )
-          const contracts = computeAutoSize(riskUsd, ticket.entryPrice, ticket.slPrice, spec, session.account.max_contracts ?? null)
-          return {
-            instrument: session.instrument,
-            side,
-            entryPrice: ticket.entryPrice,
-            slPrice: ticket.slPrice,
-            tpPrice: ticket.tpPrice,
-            rr: slDistance > 0 ? tpDistance / slDistance : null,
-            contracts,
-            dollarRisk: slDistance > 0 ? slDistance * spec.pointValue * contracts : null,
-          }
-        })()
+  // The open position's journal entry, until its first exit creates the trade
+  // (record_trade): notes and tags written now ride on the position and land on
+  // that trade. After a partial close the real trade exists and the drawer
+  // shows it instead.
+  const journalOpenEntry: OpenJournalEntry | null =
+    position && session && !(manualTrades ?? []).some((t) => t.trade_key === position.tradeKey)
+      ? {
+          tradeKey: position.tradeKey,
+          instrument: session.instrument,
+          side: position.side,
+          contracts: position.initialContracts,
+          entryTime: position.entryTime,
+          entryPrice: position.entryPrice,
+          slPrice: position.slPrice,
+          tpPrice: position.tpPrice,
+          tags: position.journal?.tags ?? [],
+          checklist: position.journal?.checklist ?? [],
+          notes: position.journal?.notes ?? '',
+        }
       : null
+  const handleUpdateOpenEntry = (patch: Partial<Pick<OrderJournal, 'notes' | 'tags'>>) => {
+    const pos = positionRef.current
+    if (!pos) return
+    const next: OpenPosition = { ...pos, journal: { ...(pos.journal ?? NO_JOURNAL), ...patch } }
+    positionRef.current = next
+    setPosition(next)
+    persist()
+  }
 
   const workingOrderRow: WorkingOrderRow | null =
     workingOrders[0] && session
@@ -1405,7 +1575,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     sessionCloseHalf: () => {
       if (position && position.contracts >= 2 && !createTrade.isPending) handlePartialClose()
     },
-    sessionNewTrade: openTicket,
+    sessionNewTrade: () => openOrderDialog(),
+    sessionNewMarket: () => openOrderDialog('market'),
+    sessionNewLimit: () => openOrderDialog('limit'),
+    sessionNewStop: () => openOrderDialog('stop'),
+    // Only sizes the session's base timeframe can step by (until G5).
+    sessionGranularityUp: () => prefs.setStepGranularity(shiftGranularity(granularity, 1, availableGranularities)),
+    sessionGranularityDown: () => prefs.setStepGranularity(shiftGranularity(granularity, -1, availableGranularities)),
     sessionStep: stepForward,
     sessionStepBack: stepBack,
     sessionPlayPause: () => setIsPlaying((v) => !v),
@@ -1438,7 +1614,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const cursorBar = bars?.[cursorIndex]
   const unrealizedPnl = openPositionRecord?.pnl_usd ?? 0
-  const hasNotices = ticketReadout !== null || orderNotice !== null || toast !== null || banner !== null || sessionEnded
+  const hasNotices = orderNotice !== null || toast !== null || banner !== null || sessionEnded
 
   return (
     <div className="flex h-full w-full flex-col bg-bg">
@@ -1485,8 +1661,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           cursorLabel: cursorBar ? fmtEtDateTime(cursorBar.time) : null,
         }}
         actions={{
-          onPlaceOrder: openTicket,
+          onPlaceOrder: () => openOrderDialog(),
           placeOrderDisabled: !bars || bars.length === 0 || !flat || sessionEnded,
+          // A position tool is on the chart: Place order is the next step.
+          placeOrderReady: positionTool !== null,
+          placeOrderDisabledReason: sessionEnded ? 'The session has ended' : !flat ? 'Close or cancel the open trade first' : 'Waiting for bars',
           onToggleJournal: () => setJournalOpen((v) => !v),
           journalOpen,
           onToggleTheme: () => setThemeMode(themeMode === 'dark' ? 'light' : 'dark'),
@@ -1513,7 +1692,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       <IndicatorDialog open={indicatorDialogOpen} onClose={() => setIndicatorDialogOpen(false)} />
 
       <div className="flex min-h-0 flex-1">
-        <KLDrawingToolbar klChartRef={klChartRef} drawings={klDrawings} armedTool={armedTool} />
+        <KLDrawingToolbar
+          klChartRef={klChartRef}
+          drawings={klDrawings}
+          armedTool={armedTool}
+          positionTools={{
+            onStart: startPositionTool,
+            disabled: !bars || bars.length === 0 || !flat || sessionEnded,
+            disabledReason: sessionEnded ? 'The session has ended' : !flat ? 'Close or cancel the open trade first' : 'Waiting for bars',
+          }}
+        />
         {/* min-w-0 matters here, not just min-h-0: without it, this flex
             item's automatic minimum width is its content's min-content size
             -- klinecharts' canvas still carries its PRE-drawer pixel width
@@ -1542,8 +1730,19 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             onVisibleRangeChange={handleChartVisibleRangeChange}
             pickMode={pickingReplayStart || magnifierArmed}
             slLineColor={themeBase.warning}
-            tradeTicket={ticket}
-            onTradeTicketChange={handleTicketChange}
+            positionTool={positionToolSpec}
+            onPositionToolDrawn={setPositionTool}
+            onPositionToolChange={setPositionTool}
+            onPositionToolRemove={() => setPositionTool(null)}
+            onPositionToolInteract={() => setIsPlaying(false)}
+            getPositionToolMenu={() => {
+              setIsPlaying(false)
+              return [
+                { label: 'Place order…', onSelect: () => openOrderDialog() },
+                { separator: true },
+                { label: 'Delete', onSelect: () => setPositionTool(null), destructive: true },
+              ]
+            }}
             orderLines={orderLines}
             onOrderLineDrag={handleOrderLineDrag}
             onOrderLineClose={handleOrderLineClose}
@@ -1556,7 +1755,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             candleType={prefs.candleType}
           />
           {/* Transient messages float over the chart's upper edge (clear of the
-              volume pane and time axis) so they never shift the chart's size: the drag ticket's readout, why an order
+              volume pane and time axis) so they never shift the chart's size: why an order
               was refused, the resolved Combine, and the session-complete state. */}
           {hasNotices && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2 px-4">
@@ -1578,11 +1777,6 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
                     View analytics
                   </button>
                 </p>
-              )}
-              {ticketReadout && (
-                <div className="pointer-events-auto">
-                  <TradeTicketPanel ticket={ticketReadout} onConfirm={confirmTicket} onCancel={cancelTicket} />
-                </div>
               )}
               {banner && (
                 <p className="pointer-events-auto rounded bg-surface-2 px-3 py-2 text-xs text-text-muted shadow-lg" role="status">
@@ -1614,6 +1808,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             <JournalPanel
               key={journalInitialTrade ?? 'journal'}
               trades={manualTrades ?? []}
+              openEntry={journalOpenEntry}
+              onUpdateOpenEntry={handleUpdateOpenEntry}
+              checklistRules={session.checklist ?? []}
               sessionNotes={session.notes}
               onUpdateSessionNotes={handleUpdateSessionNotes}
               onJumpToTrade={handleJumpToTrade}
@@ -1627,6 +1824,29 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </Suspense>
         )}
       </div>
+
+      {orderDialogOpen &&
+        (() => {
+          const ctx = buildOrderContext()
+          if (!ctx) return null
+          return (
+            <PlaceOrderDialog
+              ctx={ctx}
+              tool={positionTool}
+              initial={{ riskPct: defaultRiskPct, basis: riskBasis, autoBreakeven: armedAutoBreakeven, type: orderDialogType ?? undefined }}
+              existingTags={[...new Set((manualTrades ?? []).flatMap((t) => t.tags))].sort()}
+              checklistRules={session.checklist ?? []}
+              capLabel={session.account.prop_ruleset ? 'Topstep' : null}
+              onBasisChange={prefs.setRiskBasis}
+              onSave={placeOrder}
+              onDiscard={() => {
+                setPositionTool(null)
+                setOrderDialogOpen(false)
+              }}
+              onClose={() => setOrderDialogOpen(false)}
+            />
+          )
+        })()}
 
       {magnifyActive && magnifyBarTime !== null && (
         <MagnifierPanel
@@ -1679,6 +1899,21 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           tradingDisabled={!bars || bars.length === 0 || !flat || sessionEnded}
           disabledReason={sessionEnded ? 'The session has ended' : !flat ? 'Close or cancel the open trade first' : 'Waiting for bars'}
           quantity={{ value: quickQty, max: session.account.max_contracts ?? null, onChange: handleQuantityChange }}
+          scalper={{
+            armed: scalper.armed,
+            open: scalperOpen,
+            onToggleOpen: () => setScalperOpen((v) => !v),
+            popover: {
+              armed: scalper.armed,
+              onArmedChange: (armed) => setScalperArmed(session.id, armed),
+              settings: scalper.settings,
+              onChange: (patch) => patchScalper(session.id, patch),
+              preview: markPrice !== null ? scalperPreview(scalper.settings, markPrice, quickQty, getContractSpec(session.instrument)) : null,
+              quantity: quickQty,
+              instrument: session.instrument,
+              onClose: () => setScalperOpen(false),
+            },
+          }}
           panelOpen={prefs.panelOpen}
           onTogglePanel={() => prefs.setPanelOpen(!prefs.panelOpen)}
           onGripDrag={handleGripDrag}

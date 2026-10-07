@@ -84,27 +84,17 @@ export function toR(pnlUsd: number, riskUsd: number | null): number | null {
   return pnlUsd / riskUsd
 }
 
-// FXR_SPEC.md section B: "given risk-per-trade... and the SL distance,
-// compute contracts automatically (respect whole-contract sizing and any
-// prop max-position cap)". Floors to whole contracts (never over-risks to
-// round up) and floors at 1 (a ticket always sizes to at least one contract
-// even if the configured risk can't quite cover it at this SL distance).
-// `maxContracts` is the SESSION's own position cap -- Topstep's 5 applies to
-// prop sessions only (account.max_contracts); null = a practice session, which
-// is uncapped, so this returns the true size (FXR_V2_SPEC.md G2 correction).
-export function computeAutoSize(
-  riskUsd: number | null,
-  entryPrice: number,
-  slPrice: number,
-  spec: ContractSpec,
-  maxContracts: number | null = null,
-): number {
-  const slDistance = Math.abs(entryPrice - slPrice)
-  if (!riskUsd || slDistance <= 0) return 1
-  const riskPerContract = slDistance * spec.pointValue
-  const contracts = Math.max(1, Math.floor(riskUsd / riskPerContract))
-  return maxContracts === null ? contracts : Math.min(maxContracts, contracts)
+// What the Place Order dialog (FXR_V2_SPEC.md 3.5) attached to a trade: its
+// tags, the checklist rules that were ticked, and the journal draft. It rides on
+// the working order, then the position, until the first exit is journaled and it
+// lands on the trade. (Sizing from risk lives in orderTicket.ts, not here.)
+export interface OrderJournal {
+  tags: string[]
+  checklist: string[]
+  notes: string
 }
+
+export const NO_JOURNAL: OrderJournal = { tags: [], checklist: [], notes: '' }
 
 export interface MaeMfe {
   maePoints: number
@@ -147,6 +137,11 @@ export interface OpenPosition {
   // F4 optional toggles -- see applyBreakevenAndTrailing.
   autoBreakeven: boolean
   trailingPoints: number | null
+  // FXR_V2_SPEC.md 3.4 (G4): where auto break-even triggers -- a multiple of the
+  // risk, or a distance in price points in profit (the points win if both are
+  // set). Both absent/null = the original rule, +1R. Scalper Mode sets one.
+  breakevenR?: number | null
+  breakevenPoints?: number | null
   // FXR_V2_SPEC.md 3.6: the journal identity shared by every exit of this
   // position (a working order's id when it came from one), and its size at
   // entry -- `contracts` is only what is still open after partial closes.
@@ -156,6 +151,8 @@ export interface OpenPosition {
   // already placed or removed). Independent per side.
   ghostSl: number | null
   ghostTp: number | null
+  // FXR_V2_SPEC.md 3.5: absent for a Quick Buy/Sell, set by the dialog.
+  journal?: OrderJournal
 }
 
 // FXR_SPEC.md section B/3, phase F4: persistence boundary conversions --
@@ -175,10 +172,15 @@ export function toPersistedPosition(position: OpenPosition): PersistedPosition {
     tp_price: position.tpPrice,
     auto_breakeven: position.autoBreakeven,
     trailing_points: position.trailingPoints,
+    breakeven_r: position.breakevenR ?? null,
+    breakeven_points: position.breakevenPoints ?? null,
     trade_key: position.tradeKey,
     initial_contracts: position.initialContracts,
     ghost_sl: position.ghostSl,
     ghost_tp: position.ghostTp,
+    tags: position.journal?.tags ?? [],
+    checklist: position.journal?.checklist ?? [],
+    journal_notes: position.journal?.notes ?? '',
   }
 }
 
@@ -194,12 +196,20 @@ export function fromPersistedPosition(p: PersistedPosition, entryIndex: number):
     tpPrice: p.tp_price,
     autoBreakeven: p.auto_breakeven,
     trailingPoints: p.trailing_points,
+    breakevenR: p.breakeven_r ?? undefined,
+    breakevenPoints: p.breakeven_points ?? undefined,
     // A v1 position has no key/initial size: it journals as one plain trade.
     tradeKey: p.trade_key ?? `legacy-${p.entry_time}`,
     initialContracts: p.initial_contracts ?? p.contracts,
     ghostSl: p.ghost_sl ?? null,
     ghostTp: p.ghost_tp ?? null,
+    journal: journalFromPersisted(p.tags, p.checklist, p.journal_notes),
   }
+}
+
+function journalFromPersisted(tags?: string[], checklist?: string[], notes?: string): OrderJournal | undefined {
+  if (!tags?.length && !checklist?.length && !notes) return undefined
+  return { tags: tags ?? [], checklist: checklist ?? [], notes: notes ?? '' }
 }
 
 export interface ClosedTradeResult {
@@ -230,6 +240,9 @@ export interface ClosedTradeResult {
   tradeKey: string
   initialContracts: number
   riskUsd: number | null
+  // FXR_V2_SPEC.md 3.5: the Place Order dialog's tags / checklist / journal draft,
+  // carried to the journaled trade by the first exit.
+  journal?: OrderJournal
 }
 
 // Shared by closePosition (F2's manual market close) and advanceReplay's
@@ -288,6 +301,7 @@ function closePositionAt(
     tradeKey: position.tradeKey,
     initialContracts: position.initialContracts,
     riskUsd: position.riskUsd,
+    journal: position.journal,
   }
 }
 
@@ -326,12 +340,19 @@ export interface WorkingOrder {
   // whether it fills immediately (a market order) or later (a working one).
   autoBreakeven: boolean
   trailingPoints: number | null
+  // G4: the break-even trigger, handed to the position on fill (OpenPosition).
+  breakevenR?: number | null
+  breakevenPoints?: number | null
+  // FXR_V2_SPEC.md 3.5 (G3): the dialog's tags/checklist/draft notes, handed to
+  // the position when this order fills, and "Save & Journal" (open the journal
+  // entry at that fill).
+  journal?: OrderJournal
+  journalOnFill?: boolean
 }
 
-// PersistedWorkingOrder deliberately has no auto_breakeven/trailing_points
-// fields -- FXR_SPEC.md phase F4 only asks for these toggles on an OPEN
-// position, not a still-pending order; a WORKING order that hasn't filled
-// yet carries neither, so there's nothing to lose across a reload.
+// A working order persists its auto break-even / trailing choice too (G3: the
+// dialog sets them per order, so a reload while it is still working must not
+// drop them).
 export function toPersistedWorkingOrder(order: WorkingOrder): PersistedWorkingOrder {
   return {
     id: order.id,
@@ -343,6 +364,14 @@ export function toPersistedWorkingOrder(order: WorkingOrder): PersistedWorkingOr
     tp_price: order.tpPrice,
     risk_usd: order.riskUsd,
     placed_time: order.placedTime,
+    auto_breakeven: order.autoBreakeven,
+    trailing_points: order.trailingPoints,
+    breakeven_r: order.breakevenR ?? null,
+    breakeven_points: order.breakevenPoints ?? null,
+    tags: order.journal?.tags ?? [],
+    checklist: order.journal?.checklist ?? [],
+    journal_notes: order.journal?.notes ?? '',
+    journal_on_fill: order.journalOnFill ?? false,
   }
 }
 
@@ -358,8 +387,12 @@ export function fromPersistedWorkingOrder(o: PersistedWorkingOrder, placedIndex:
     riskUsd: o.risk_usd,
     placedTime: o.placed_time,
     placedIndex,
-    autoBreakeven: false,
-    trailingPoints: null,
+    autoBreakeven: o.auto_breakeven ?? false,
+    trailingPoints: o.trailing_points ?? null,
+    breakevenR: o.breakeven_r ?? undefined,
+    breakevenPoints: o.breakeven_points ?? undefined,
+    journal: journalFromPersisted(o.tags, o.checklist, o.journal_notes),
+    journalOnFill: o.journal_on_fill ?? false,
   }
 }
 
@@ -407,21 +440,35 @@ function slTpHit(position: OpenPosition, bar: Bar): ExitType | null {
 //
 // Break-even moves the SL to entry (never a fee-inclusive "entry + costs"
 // figure -- SL is a PRICE, commission is separate) the first bar the
-// favorable excursion reaches +1R, and only that once (`slPrice !==
-// entryPrice` guards against re-triggering every subsequent bar).
+// favorable excursion reaches the trigger -- +1R by default, or the position's
+// own R multiple / price distance (Scalper Mode, G4) -- and only that once
+// (`slPrice !== entryPrice` guards against re-triggering every subsequent bar).
 //
 // Trailing keeps the SL exactly trailingPoints behind the best price seen
 // so far, and -- critically -- only ever moves it TOWARD the position's
 // favor, never back: a bar that pulls back doesn't drag the stop with it.
+// Break-even only ever TIGHTENS the stop: one already at or past the entry (a
+// trail that has run, or a hand-placed lock-in) is left where it is.
+function stopBeyondEntry(pos: OpenPosition): boolean {
+  return pos.slPrice !== null && sideSign(pos.side) * (pos.slPrice - pos.entryPrice) >= 0
+}
+
 function applyBreakevenAndTrailing(position: OpenPosition, bar: Bar, spec: ContractSpec): OpenPosition {
   let pos = position
   const favorableExtreme = pos.side === 'long' ? bar.high : bar.low
 
-  if (pos.autoBreakeven && pos.riskUsd && pos.slPrice !== pos.entryPrice) {
-    const profitAtExtreme = unrealizedPnl(pos.side, pos.entryPrice, favorableExtreme, pos.contracts, spec)
-    if (profitAtExtreme >= pos.riskUsd) {
-      pos = { ...pos, slPrice: pos.entryPrice }
+  if (pos.autoBreakeven && pos.slPrice !== pos.entryPrice && !stopBeyondEntry(pos)) {
+    const beDistance = pos.breakevenPoints ?? null
+    let triggered = false
+    if (beDistance !== null && beDistance > 0) {
+      // A distance: the bar's favorable extreme is at least this far past entry.
+      triggered = sideSign(pos.side) * (favorableExtreme - pos.entryPrice) >= beDistance - 1e-9
+    } else if (pos.riskUsd) {
+      // A multiple of the risk frozen at entry (default 1R).
+      const profitAtExtreme = unrealizedPnl(pos.side, pos.entryPrice, favorableExtreme, pos.contracts, spec)
+      triggered = profitAtExtreme >= pos.riskUsd * (pos.breakevenR ?? 1) - 1e-9
     }
+    if (triggered) pos = { ...pos, slPrice: pos.entryPrice }
   }
 
   if (pos.trailingPoints !== null && pos.trailingPoints > 0) {
@@ -570,10 +617,13 @@ export function advanceReplay(
           tpPrice: order.tpPrice,
           autoBreakeven: order.autoBreakeven,
           trailingPoints: order.trailingPoints,
+          breakevenR: order.breakevenR,
+          breakevenPoints: order.breakevenPoints,
           tradeKey: order.id,
           initialContracts: order.contracts,
           ghostSl: null,
           ghostTp: null,
+          journal: order.journal,
         }
         filledOrderIds.push(order.id)
         orders = orders.filter((o) => o.id !== order.id)

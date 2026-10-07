@@ -5,9 +5,9 @@ so nothing downstream has to think about timezones again.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RunResultModel(BaseModel):
@@ -252,6 +252,10 @@ class CreateSessionRequest(BaseModel):
     prop_ruleset: Optional[str] = None
     # FXR_SPEC.md section F, phase F7b: "no rewind past a placed trade".
     discipline_lock: bool = False
+    # FXR_V2_SPEC.md section 3.5/4 (G3): the session's strategy rules, shown as
+    # tick-boxes in the Place Order dialog. The editor lands in G6; the field
+    # exists now so the dialog has something to render.
+    checklist: List[str] = Field(default_factory=list)
 
 
 # --- FXR_SPEC.md section B/3, phase F4: the sim broker's open position and
@@ -275,6 +279,11 @@ class PersistedPosition(BaseModel):
     # reload same as everything else about it.
     auto_breakeven: bool = False
     trailing_points: Optional[float] = None
+    # Section 3.4 (G4): where auto break-even triggers -- a multiple of the risk
+    # (`breakeven_r`) or a distance in price points (`breakeven_points`, which
+    # wins if both are set). Both None = the original +1R rule.
+    breakeven_r: Optional[float] = None
+    breakeven_points: Optional[float] = None
     # FXR_V2_SPEC.md section 3.6 (G2): the position's journal identity and its
     # size at entry. Every exit of this position (partial or final) is
     # journaled under `trade_key`, so they merge into ONE trade; `contracts`
@@ -285,6 +294,12 @@ class PersistedPosition(BaseModel):
     # or removed) -- persisted so a reload mid-trade restores them as they were.
     ghost_sl: Optional[float] = None
     ghost_tp: Optional[float] = None
+    # Section 3.5 (G3): what the Place Order dialog attached to the trade. They
+    # ride on the position until its first exit is journaled, then land on the
+    # trade (record_trade). `journal_notes` is the open journal entry's draft.
+    tags: List[str] = Field(default_factory=list)
+    checklist: List[str] = Field(default_factory=list)
+    journal_notes: str = ""
 
 
 class PersistedWorkingOrder(BaseModel):
@@ -297,6 +312,17 @@ class PersistedWorkingOrder(BaseModel):
     tp_price: Optional[float] = None
     risk_usd: Optional[float] = None
     placed_time: int
+    # Section 3.5 (G3): the dialog's per-order choices. They must survive a
+    # reload while the order is still working, and pass to the position when it
+    # fills. `journal_on_fill` is "Save & Journal": open the journal entry then.
+    auto_breakeven: bool = False
+    trailing_points: Optional[float] = None
+    breakeven_r: Optional[float] = None
+    breakeven_points: Optional[float] = None
+    tags: List[str] = Field(default_factory=list)
+    checklist: List[str] = Field(default_factory=list)
+    journal_notes: str = ""
+    journal_on_fill: bool = False
 
 
 class PropStatus(BaseModel):
@@ -306,6 +332,30 @@ class PropStatus(BaseModel):
     fail_reason: Optional[str] = None
     resolved_trade_id: Optional[int] = None
     trades_to_result: Optional[int] = None
+
+
+class ScalperConfig(BaseModel):
+    """FXR_V2_SPEC.md section 3.4 (G4): Scalper Mode's preset brackets and
+    whether it is armed, persisted PER SESSION. Every value is a DISTANCE, never
+    a price. The same rules the frontend applies (chart/scalper.ts): values are
+    positive; break-even moves the stop, so it is off without one."""
+    armed: bool = False
+    sl_on: bool = True
+    sl_value: float = Field(40, gt=0)
+    sl_unit: Literal["ticks", "percent", "usd"] = "ticks"
+    tp_on: bool = True
+    tp_value: float = Field(2, gt=0)
+    # "r" is a multiple of the stop distance; with no stop it places no target.
+    tp_unit: Literal["ticks", "percent", "r"] = "r"
+    be_on: bool = False
+    be_mode: Literal["r", "ticks"] = "r"
+    be_value: float = Field(1, gt=0)
+
+    @model_validator(mode="after")
+    def _break_even_needs_a_stop(self) -> "ScalperConfig":
+        if self.be_on and not self.sl_on:
+            self.be_on = False
+        return self
 
 
 class BacktestSessionSummary(BaseModel):
@@ -323,6 +373,12 @@ class BacktestSessionSummary(BaseModel):
     end_date: Optional[int] = None
     # Whole contracts the Quick Buy/Sell uses; persisted per session.
     quick_quantity: int = 1
+    # The session's strategy checklist (G3: rendered in the Place Order dialog;
+    # the editor is G6). Empty for v1 sessions.
+    checklist: List[str] = Field(default_factory=list)
+    # G4: Scalper Mode's settings and armed state. None = never configured (the
+    # defaults apply); a pre-G4 session.json validates unchanged.
+    scalper: Optional[ScalperConfig] = None
     created_at: str
     updated_at: str
     cursor_time: int
@@ -356,6 +412,8 @@ class UpdateSessionSettingsRequest(BaseModel):
     # Only the fields actually sent are applied (exclude_unset).
     name: Optional[str] = None
     quick_quantity: Optional[int] = None
+    checklist: Optional[List[str]] = None
+    scalper: Optional[ScalperConfig] = None
 
 
 class UpdateCursorRequest(BaseModel):
@@ -413,6 +471,12 @@ class CreateManualTradeRequest(BaseModel):
     trade_key: Optional[str] = None
     initial_contracts: Optional[int] = None
     risk_usd: Optional[float] = None
+    # Section 3.5 (G3): the Place Order dialog's tags / ticked checklist rules /
+    # journal draft, applied when this request CREATES the trade (a later exit
+    # merging into it leaves them alone).
+    tags: List[str] = Field(default_factory=list)
+    checklist: List[str] = Field(default_factory=list)
+    notes: str = ""
 
 
 # --- FXR_SPEC.md section C, phase F5: journaling on top of the auto-logged
@@ -472,6 +536,8 @@ class ManualTrade(TradeRecord):
     # since the UI treats them as single-value pickers, not tags.
     notes: str = ""
     tags: List[str] = Field(default_factory=list)
+    # The strategy-checklist rules that were ticked in the Place Order dialog.
+    checklist: List[str] = Field(default_factory=list)
     setup_name: Optional[str] = None
     grade: Optional[str] = None  # "A" | "B" | "C" | None, validated in the service layer
     screenshots: List[Screenshot] = Field(default_factory=list)

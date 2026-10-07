@@ -32,6 +32,7 @@ import { useTradeStore } from '../state/tradeStore'
 import { fmtPrice, fmtR, fmtUsd } from '../format'
 import { fmtEtShort } from '../timeFormat'
 import EmptyState from '../components/EmptyState'
+import { OPEN_ENTRY_ID, type OpenJournalEntry } from './journalEntry'
 import { FILTER_SELECT, FilterChips, FilterField, FiltersPopover } from '../components/FilterBar'
 import { activeFilterChips } from '../compass/filterChips'
 
@@ -43,6 +44,11 @@ const MOMENTS: CaptureMoment[] = ['entry', 'exit', 'custom']
 
 interface JournalPanelProps {
   trades: ManualTrade[]
+  // The open trade's entry, until its first exit creates the journaled trade.
+  openEntry?: OpenJournalEntry | null
+  onUpdateOpenEntry?: (patch: { notes?: string; tags?: string[] }) => void
+  // The session's strategy rules (for showing which were ticked).
+  checklistRules?: string[]
   sessionNotes: string | null
   onUpdateSessionNotes: (notes: string) => void
   onJumpToTrade: (trade: ManualTrade) => void
@@ -58,6 +64,9 @@ interface JournalPanelProps {
 
 export default function JournalPanel({
   trades,
+  openEntry = null,
+  onUpdateOpenEntry,
+  checklistRules = [],
   sessionNotes,
   onUpdateSessionNotes,
   onJumpToTrade,
@@ -93,6 +102,20 @@ export default function JournalPanel({
   const hasFilters = Object.values(filters).some((v) => v !== null)
 
   const selected = trades.find((t) => t.trade_id === selectedId) ?? null
+  const openSelected = selectedId === OPEN_ENTRY_ID ? openEntry : null
+
+  // The open trade's first exit creates its journaled trade: follow the entry
+  // there. (Until that trade is in the list there is nothing to select yet.)
+  const openKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (openEntry) {
+      openKeyRef.current = openEntry.tradeKey
+      return
+    }
+    if (selectedId !== OPEN_ENTRY_ID) return
+    const created = trades.find((t) => t.trade_key === openKeyRef.current)
+    if (created) setSelectedId(created.trade_id)
+  }, [openEntry, trades, selectedId])
 
   // Drafts re-seeded only on trade switch (not on every `trades` update),
   // so a save to one field while another is mid-edit can't clobber it.
@@ -108,6 +131,15 @@ export default function JournalPanel({
   const seededForRef = useRef<number | null>(null)
   useEffect(() => {
     if (seededForRef.current === selectedId) return
+    if (selectedId === OPEN_ENTRY_ID) {
+      if (!openEntry) return
+      seededForRef.current = selectedId
+      setDraftNotes(openEntry.notes)
+      setDraftSetup('')
+      setDraftTags(openEntry.tags)
+      setTagInput('')
+      return
+    }
     // A trade preselected from outside (initialSelectedId) can arrive before
     // `trades` has loaded -- seeding then would stamp empty drafts and, since
     // this effect never re-seeds for the same id, hide the trade's real
@@ -118,9 +150,13 @@ export default function JournalPanel({
     setDraftSetup(selected?.setup_name ?? '')
     setDraftTags(selected?.tags ?? [])
     setTagInput('')
-  }, [selectedId, selected])
+  }, [selectedId, selected, openEntry])
 
   const saveNotes = () => {
+    if (openSelected) {
+      if (draftNotes !== openSelected.notes) onUpdateOpenEntry?.({ notes: draftNotes })
+      return
+    }
     if (selected && draftNotes !== selected.notes) onUpdateTradeJournal(selected.trade_id, { notes: draftNotes })
   }
   const saveSetup = () => {
@@ -132,8 +168,12 @@ export default function JournalPanel({
     if (!selected) return
     onUpdateTradeJournal(selected.trade_id, { grade: selected.grade === g ? null : g })
   }
+  const saveTags = (next: string[]) => {
+    if (openSelected) onUpdateOpenEntry?.({ tags: next })
+    else if (selected) onUpdateTradeJournal(selected.trade_id, { tags: next })
+  }
   const addTag = () => {
-    if (!selected) return
+    if (!selected && !openSelected) return
     const tag = tagInput.trim()
     if (!tag || draftTags.includes(tag)) {
       setTagInput('')
@@ -141,14 +181,14 @@ export default function JournalPanel({
     }
     const next = [...draftTags, tag]
     setDraftTags(next)
-    onUpdateTradeJournal(selected.trade_id, { tags: next })
+    saveTags(next)
     setTagInput('')
   }
   const removeTag = (tag: string) => {
-    if (!selected) return
+    if (!selected && !openSelected) return
     const next = draftTags.filter((t) => t !== tag)
     setDraftTags(next)
-    onUpdateTradeJournal(selected.trade_id, { tags: next })
+    saveTags(next)
   }
   const capture = () => {
     if (!selected) return
@@ -159,6 +199,72 @@ export default function JournalPanel({
   const removeScreenshot = (id: string) => {
     if (!selected) return
     onDeleteScreenshot(selected.trade_id, id)
+  }
+
+  const tagsEditor = (
+    <div>
+      <div className="micro-label mb-2">Tags</div>
+      <div className="mb-2 flex flex-wrap gap-2">
+        {draftTags.map((tag) => (
+          <span key={tag} className="flex items-center gap-1 rounded bg-surface-2 px-2 py-1 text-text">
+            {tag}
+            <button onClick={() => removeTag(tag)} aria-label={`Remove tag ${tag}`} className="text-text-muted hover:text-text">
+              &times;
+            </button>
+          </span>
+        ))}
+      </div>
+      <input
+        value={tagInput}
+        onChange={(e) => setTagInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            addTag()
+          }
+        }}
+        onBlur={addTag}
+        placeholder="Add a tag, press Enter"
+        className="propbt-input w-full"
+      />
+    </div>
+  )
+  const notesEditor = (placeholder: string) => (
+    <label className="flex flex-col gap-1">
+      <span className="micro-label">Notes</span>
+      <textarea
+        rows={4}
+        value={draftNotes}
+        onChange={(e) => setDraftNotes(e.target.value)}
+        onBlur={saveNotes}
+        placeholder={placeholder}
+        className="propbt-input w-full resize-none"
+      />
+    </label>
+  )
+  // The rules ticked in the Place Order dialog, read-only, against the session's
+  // full list so an unticked rule reads as skipped.
+  const checklistSummary = (ticked: string[]) => {
+    if (ticked.length === 0 && checklistRules.length === 0) return null
+    const rules = [...checklistRules, ...ticked.filter((r) => !checklistRules.includes(r))]
+    return (
+      <div>
+        <div className="micro-label mb-2">Checklist</div>
+        <ul className="flex flex-col gap-1">
+          {rules.map((rule) => (
+            <li key={rule} className={`flex items-start gap-2 ${ticked.includes(rule) ? 'text-text' : 'text-text-muted'}`}>
+              <span aria-hidden className="w-3 flex-none text-center">
+                {ticked.includes(rule) ? '✓' : '·'}
+              </span>
+              <span>
+                {rule}
+                <span className="sr-only">{ticked.includes(rule) ? ' (ticked)' : ' (not ticked)'}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
   }
 
   return (
@@ -270,13 +376,36 @@ export default function JournalPanel({
         <FilterChips />
         <span className="ml-auto flex-none whitespace-nowrap tabular-nums text-text-muted">
           {hasFilters ? `${filtered.length} of ${trades.length}` : `${trades.length} trades`}
+          {openEntry ? ' · 1 open' : ''}
         </span>
       </div>
 
       {/* Sized to its rows (capped at 40% of the drawer) so a few trades do
           not leave dead space above the detail; the detail takes the rest. */}
-      <div className={`min-h-0 flex-none overflow-auto ${filtered.length === 0 ? 'h-24' : 'max-h-[40%]'}`}>
-        {filtered.length === 0 ? (
+      <div className={`min-h-0 flex-none overflow-auto ${filtered.length === 0 && !openEntry ? 'h-24' : 'max-h-[40%]'}`}>
+        {openEntry && (
+          <div
+            onClick={() => setSelectedId(OPEN_ENTRY_ID)}
+            tabIndex={0}
+            role="button"
+            aria-selected={selectedId === OPEN_ENTRY_ID}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setSelectedId(OPEN_ENTRY_ID)
+              }
+            }}
+            className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-xs hover:bg-surface ${selectedId === OPEN_ENTRY_ID ? 'bg-surface-2' : ''}`}
+          >
+            <span className="whitespace-nowrap tabular-nums text-text-muted">{fmtEtShort(openEntry.entryTime)}</span>
+            <span className="text-text-muted">{openEntry.side}</span>
+            <span className="num ml-auto text-text-muted">
+              {openEntry.contracts} @ {fmtPrice(openEntry.entryPrice, openEntry.instrument)}
+            </span>
+            <span className="w-12 text-right text-text-muted">Open</span>
+          </div>
+        )}
+        {filtered.length === 0 && !openEntry ? (
           <EmptyState title="No trades yet" hint={hasFilters ? 'No trades match these filters.' : 'Closed trades auto-journal here.'} />
         ) : (
           filtered.map((t) => {
@@ -314,7 +443,29 @@ export default function JournalPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto border-t border-border">
-        {!selected ? (
+        {openSelected ? (
+          <div className="flex flex-col gap-3 p-3 text-xs" aria-label="Open trade entry">
+            <div className="text-text-muted">
+              {openSelected.side} {openSelected.contracts} @ <span className="tabular-nums text-text">{fmtPrice(openSelected.entryPrice, openSelected.instrument)}</span>
+              {openSelected.slPrice !== null && (
+                <>
+                  {' · SL '}
+                  <span className="tabular-nums text-text">{fmtPrice(openSelected.slPrice, openSelected.instrument)}</span>
+                </>
+              )}
+              {openSelected.tpPrice !== null && (
+                <>
+                  {' · TP '}
+                  <span className="tabular-nums text-text">{fmtPrice(openSelected.tpPrice, openSelected.instrument)}</span>
+                </>
+              )}
+            </div>
+            <p className="text-text-muted">Open trade. Saved with it when it closes; grade and screenshots unlock then.</p>
+            {tagsEditor}
+            {checklistSummary(openSelected.checklist)}
+            {notesEditor('Why this trade, what you are watching for…')}
+          </div>
+        ) : !selected ? (
           <EmptyState title="No trade selected" hint="Click a trade above to journal it." />
         ) : (
           <div className="flex flex-col gap-3 p-3 text-xs">
@@ -380,44 +531,11 @@ export default function JournalPanel({
               </div>
             </div>
 
-            <div>
-              <div className="micro-label mb-2">Tags</div>
-              <div className="mb-2 flex flex-wrap gap-2">
-                {draftTags.map((tag) => (
-                  <span key={tag} className="flex items-center gap-1 rounded bg-surface-2 px-2 py-1 text-text">
-                    {tag}
-                    <button onClick={() => removeTag(tag)} aria-label={`Remove tag ${tag}`} className="text-text-muted hover:text-text">
-                      &times;
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <input
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    addTag()
-                  }
-                }}
-                onBlur={addTag}
-                placeholder="Add a tag, press Enter"
-                className="propbt-input w-full"
-              />
-            </div>
+            {tagsEditor}
 
-            <label className="flex flex-col gap-1">
-              <span className="micro-label">Notes</span>
-              <textarea
-                rows={4}
-                value={draftNotes}
-                onChange={(e) => setDraftNotes(e.target.value)}
-                onBlur={saveNotes}
-                placeholder="What happened, what you saw, what you'd do differently…"
-                className="propbt-input w-full resize-none"
-              />
-            </label>
+            {checklistSummary(selected.checklist ?? [])}
+
+            {notesEditor("What happened, what you saw, what you'd do differently…")}
 
             <div>
               <div className="mb-2 flex items-center justify-between">

@@ -7,6 +7,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { StepGranularityLabel } from '../chart/sessionEnd'
 import type { KLCandleType } from '../chart/kl/ChartKL'
+import type { BalanceBasis } from '../chart/orderTicket'
 
 export const PANEL_MIN_HEIGHT = 96
 export const PANEL_DEFAULT_HEIGHT = 192
@@ -35,6 +36,10 @@ interface SessionPrefsState {
   setPanelHeight: (h: number) => void
   panelTab: TradePanelTab
   setPanelTab: (t: TradePanelTab) => void
+  // The Place Order dialog's balance basis (FXR_V2_SPEC.md 3.5): what a risk
+  // percentage is a percentage OF. Remembered between orders.
+  riskBasis: BalanceBasis
+  setRiskBasis: (b: BalanceBasis) => void
 }
 
 export const useSessionPrefsStore = create<SessionPrefsState>()(
@@ -54,6 +59,8 @@ export const useSessionPrefsStore = create<SessionPrefsState>()(
       setPanelHeight: (panelHeight) => set({ panelHeight }),
       panelTab: 'positions',
       setPanelTab: (panelTab) => set({ panelTab }),
+      riskBasis: 'current',
+      setRiskBasis: (riskBasis) => set({ riskBasis }),
     }),
     { name: 'propbt-viz:session-prefs' },
   ),

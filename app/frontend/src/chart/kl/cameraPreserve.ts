@@ -150,6 +150,43 @@ export function reanchorRestoreIndex(
   return targetRealTo - RIGHT_EDGE_INDEX_OFFSET
 }
 
+// ---- the first view of a session --------------------------------------------
+//
+// A session opens with the cursor bar in view and the right margin applied: the
+// newest bar sits `marginPx` short of the right edge at a zoom that shows
+// about `visibleBars` bars across the pane. It is placed in ONE instant step
+// (no animation): the first open used to fit with fitRange, whose 200ms animated
+// scrollToTimestamp pins the newest bar FLUSH to the edge (no margin), and the
+// cursor-tick reload that follows captured the camera mid-animation and restored
+// it from there -- so depending on timing the view ended up flush, or short of
+// the cursor, with no margin.
+
+export interface FirstViewInput {
+  paneWidth: number
+  marginPx: number
+  // Bars loaded (the replay-filtered list: its last bar is the cursor bar).
+  barCount: number
+  // How many bars the pane should span at the zoom chosen.
+  visibleBars: number
+}
+
+export interface FirstViewPlan {
+  // Pixels per bar, for setBarSpace.
+  barSpace: number
+  // Bars of empty room right of the newest bar (>= the margin in pixels).
+  marginBars: number
+  // The dataIndex to hand scrollToDataIndex (instantly) so the right edge sits
+  // marginBars past the newest bar.
+  scrollIndex: number
+}
+
+export function firstViewPlan({ paneWidth, marginPx, barCount, visibleBars }: FirstViewInput): FirstViewPlan | null {
+  if (!(paneWidth > 0) || barCount <= 0 || !(visibleBars > 0)) return null
+  const barSpace = Math.max(1, paneWidth / visibleBars)
+  const marginBars = marginPx > 0 ? Math.ceil(marginPx / barSpace) : 0
+  return { barSpace, marginBars, scrollIndex: barCount + marginBars - RIGHT_EDGE_INDEX_OFFSET }
+}
+
 // The most of a pane's width the right margin may take (FXR_V2_SPEC.md G2 polish).
 export const RIGHT_MARGIN_MAX_PANE_SHARE = 0.2
 

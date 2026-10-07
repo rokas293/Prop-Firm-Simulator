@@ -10,10 +10,11 @@ engine that validates a strategy against the Topstep $50k Combine rules
 - **Replay sessions.** Pick MNQ or MES, a timeframe and a start time (or a
   random one) and step or play through history. Future bars are never shown or
   fillable.
-- **Simulated broker.** Market buy/sell, a drag-to-place entry/SL/TP ticket,
-  right-click limit/stop orders, partial closes, break-even and trailing, with
-  auto position sizing and commissions. Fills are deterministic from the bars
-  up to the cursor.
+- **Simulated broker.** Market buy/sell, Long/Short Position tools on the chart
+  feeding a Place Order dialog (risk-based sizing, market/limit/stop, tags and a
+  checklist), right-click limit/stop orders, partial closes, break-even and
+  trailing, with commissions. Fills are deterministic from the bars up to the
+  cursor.
 - **Discipline tools.** Random start, an optional lock that stops the replay
   going back past a placed trade, and a bar magnifier that shows the 1-minute
   bars inside a revealed bar (never past the cursor).

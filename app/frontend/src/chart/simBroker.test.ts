@@ -5,7 +5,6 @@ import {
   closePosition,
   closePositionPartial,
   closePositionPartialAtMarket,
-  computeAutoSize,
   computeMaeMfe,
   fromPersistedPosition,
   fromPersistedWorkingOrder,
@@ -295,41 +294,6 @@ describe('openPositionAsTradeRecord', () => {
     expect(record.sl_points).toBe(10) // |5010-5000|
     expect(record.tp_points).toBe(20) // |5030-5010|
     expect(record.rr_planned).toBe(2) // 20/10
-  })
-})
-
-describe('computeAutoSize (F3 -- auto position sizing)', () => {
-  it('a practice session (no cap) gets the TRUE size, not a Topstep-clipped one', () => {
-    // $500 risk, 10pt SL on MES ($5/pt) = $50/contract -> 10 contracts. The
-    // 5-contract limit is a Topstep rule: it must not apply here (G2 correction).
-    expect(computeAutoSize(500, 5010, 5000, CONTRACT_SPECS.MES)).toBe(10)
-    expect(computeAutoSize(500, 5010, 5000, CONTRACT_SPECS.MES, null)).toBe(10)
-    expect(computeAutoSize(100000, 5001, 5000, CONTRACT_SPECS.MES, null)).toBe(20000)
-  })
-
-  it('a prop session passes its own cap and is clipped to it', () => {
-    expect(computeAutoSize(500, 5010, 5000, CONTRACT_SPECS.MES, 5)).toBe(5)
-  })
-
-  it('matches a hand calc: 1% of $50k over a 20pt MES stop', () => {
-    // riskUsd = 50000 * 0.01 = 500. slDistance = 20. riskPerContract = 100.
-    const riskUsd = 50000 * 0.01
-    expect(computeAutoSize(riskUsd, 5020, 5000, CONTRACT_SPECS.MES)).toBe(5)
-  })
-
-  it('floors to whole contracts, never rounds up past the risk budget', () => {
-    // riskPerContract = 15*5 = 75. 220/75 = 2.93 -> floors to 2, not 3.
-    expect(computeAutoSize(220, 5015, 5000, CONTRACT_SPECS.MES, 10)).toBe(2)
-  })
-
-  it('floors at 1 contract even when the budget technically covers less than one', () => {
-    expect(computeAutoSize(10, 5020, 5000, CONTRACT_SPECS.MES, 10)).toBe(1)
-    expect(computeAutoSize(10, 5020, 5000, CONTRACT_SPECS.MES)).toBe(1)
-  })
-
-  it('falls back to 1 with no risk basis or a zero-distance stop', () => {
-    expect(computeAutoSize(null, 5010, 5000, CONTRACT_SPECS.MES)).toBe(1)
-    expect(computeAutoSize(500, 5010, 5010, CONTRACT_SPECS.MES)).toBe(1)
   })
 })
 
@@ -817,11 +781,26 @@ describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder 
       tp_price: 4990,
       auto_breakeven: true,
       trailing_points: 8,
+      breakeven_r: null,
+      breakeven_points: null,
       trade_key: 'k9',
       initial_contracts: 2,
       ghost_sl: null,
       ghost_tp: null,
+      tags: [],
+      checklist: [],
+      journal_notes: '',
     })
+  })
+
+  it('round-trips the Place Order dialog journal (tags, ticked rules, draft notes) on a position', () => {
+    const journal = { tags: ['breakout'], checklist: ['Trend aligned'], notes: 'thesis' }
+    const withJournal = { ...position, journal }
+    const persisted = toPersistedPosition(withJournal)
+    expect(persisted.tags).toEqual(['breakout'])
+    expect(persisted.checklist).toEqual(['Trend aligned'])
+    expect(persisted.journal_notes).toBe('thesis')
+    expect(fromPersistedPosition(persisted, position.entryIndex)).toEqual(withJournal)
   })
 
   it('restores a v1 position (no key / initial size / ghosts) as one plain journal entry', () => {
@@ -863,10 +842,33 @@ describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder 
     trailingPoints: 5,
   }
 
-  it('round-trips a working order, EXCEPT placedIndex (re-supplied externally) and the F4 toggles (documented gap: not carried on the wire while still pending)', () => {
+  it('round-trips a working order, EXCEPT placedIndex (re-supplied externally)', () => {
     const persisted = toPersistedWorkingOrder(order)
     const restored = fromPersistedWorkingOrder(persisted, 9)
-    expect(restored).toEqual({ ...order, placedIndex: 9, autoBreakeven: false, trailingPoints: null })
+    expect(restored).toEqual({ ...order, placedIndex: 9, journalOnFill: false })
+  })
+
+  it('a working order keeps its auto break-even / trailing and its dialog journal across a reload (G3)', () => {
+    const journal = { tags: ['reversal'], checklist: ['Stop under swing low'], notes: 'wait for the retest' }
+    const persisted = toPersistedWorkingOrder({ ...order, journal, journalOnFill: true })
+    expect(persisted).toMatchObject({
+      auto_breakeven: true,
+      trailing_points: 5,
+      tags: ['reversal'],
+      checklist: ['Stop under swing low'],
+      journal_notes: 'wait for the retest',
+      journal_on_fill: true,
+    })
+    expect(fromPersistedWorkingOrder(persisted, 9)).toEqual({ ...order, placedIndex: 9, journal, journalOnFill: true })
+  })
+
+  it('restores a pre-G3 working order (no toggles, no journal) as plain defaults', () => {
+    const legacy = { id: 'w', side: 'long' as const, order_type: 'limit' as const, price: 5000, contracts: 1, sl_price: null, tp_price: null, risk_usd: null, placed_time: 5 }
+    const restored = fromPersistedWorkingOrder(legacy, 0)
+    expect(restored.autoBreakeven).toBe(false)
+    expect(restored.trailingPoints).toBeNull()
+    expect(restored.journal).toBeUndefined()
+    expect(restored.journalOnFill).toBe(false)
   })
 })
 
@@ -952,5 +954,139 @@ describe('partial close accounting (G2)', () => {
     expect(exit.initialContracts).toBe(3)
     expect(exit.exitPrice).toBe(4980)
     expect(exit.pnlUsd).toBeCloseTo((4980 - 5000) * 5 * 2 - 2 * COMM)
+  })
+})
+
+// FXR_V2_SPEC.md 3.5 (G3): what the Place Order dialog attached rides on the order,
+// then the position, then the exit that creates the journaled trade.
+describe('advanceReplay -- the dialog journal rides on a filled order (G3)', () => {
+  it('a working order that fills hands its tags / checklist / notes to the position, and the closing exit carries them', () => {
+    const journal = { tags: ['breakout'], checklist: ['Trend aligned'], notes: 'thesis' }
+    const order = baseOrder({ id: 'limit-1', side: 'long', orderType: 'limit', price: 4988, contracts: 1, journal, journalOnFill: true })
+    const filled = advanceReplay(BARS2, -1, 2, null, [order], CONTRACT_SPECS.MES, 1.3)
+    expect(filled.position?.journal).toEqual(journal)
+    const closed = closePosition(BARS2, filled.position!, 3, CONTRACT_SPECS.MES, 1.3)
+    expect(closed.journal).toEqual(journal)
+  })
+})
+
+// FXR_V2_SPEC.md 3.4 (G4): the break-even trigger is the position's own -- an R
+// multiple or a distance in points -- not always +1R.
+describe('advanceReplay -- configurable auto break-even trigger (G4)', () => {
+  // MES: $5 a point. 1 contract with $100 risk, so 1R = 20 points of profit.
+  const bar = (time: number, high: number, low: number, close: number): Bar => ({ time, open: close, high, low, close, volume: 1 })
+  const bars: Bar[] = [
+    bar(0, 5000, 5000, 5000),
+    bar(300, 5030, 4999, 5025), // up 30 points at the high
+    bar(600, 5042, 5020, 5040), // up 42
+    bar(900, 5052, 5030, 5050), // up 52
+  ]
+  const base: OpenPosition = {
+    side: 'long',
+    contracts: 1,
+    entryPrice: 5000,
+    entryTime: 0,
+    entryIndex: 0,
+    riskUsd: 100,
+    slPrice: 4980,
+    tpPrice: null,
+    autoBreakeven: true,
+    trailingPoints: null,
+    tradeKey: 'sc1',
+    initialContracts: 1,
+    ghostSl: null,
+    ghostTp: null,
+  }
+  const run = (pos: OpenPosition, from: number, to: number) => advanceReplay(bars, from, to, pos, [], CONTRACT_SPECS.MES, 0).position
+
+  it('R multiple: waits for 2R (40 points), not the default 1R', () => {
+    const pos = { ...base, breakevenR: 2 }
+    expect(run(pos, 0, 1)?.slPrice).toBe(4980) // 30 points = 1.5R: not yet
+    expect(run(pos, 0, 2)?.slPrice).toBe(5000) // 42 points = 2.1R: moved to entry
+  })
+
+  it('distance: triggers once the bar has been that many points in profit', () => {
+    const pos = { ...base, breakevenPoints: 25 }
+    expect(run({ ...base, breakevenPoints: 35 }, 0, 1)?.slPrice).toBe(4980) // only 30 points
+    expect(run(pos, 0, 1)?.slPrice).toBe(5000)
+  })
+
+  it('distance wins over an R multiple when both are set, and does not need a risk figure', () => {
+    expect(run({ ...base, breakevenR: 5, breakevenPoints: 10 }, 0, 1)?.slPrice).toBe(5000)
+    expect(run({ ...base, riskUsd: null, breakevenPoints: 10 }, 0, 1)?.slPrice).toBe(5000)
+  })
+
+  it('an R trigger needs the risk figure, as before (no risk, no trigger)', () => {
+    expect(run({ ...base, riskUsd: null, breakevenR: 1 }, 0, 3)?.slPrice).toBe(4980)
+  })
+
+  it('with neither set it is still the original +1R rule', () => {
+    expect(run(base, 0, 1)?.slPrice).toBe(5000) // 30 points >= 20
+    expect(run({ ...base, breakevenR: null, breakevenPoints: null }, 0, 1)?.slPrice).toBe(5000)
+  })
+
+  it('never loosens a stop that is already past the entry (a trailed or hand-placed lock-in)', () => {
+    const locked = { ...base, slPrice: 5010, breakevenR: 1 }
+    const above = [bar(0, 5000, 5000, 5000), bar(300, 5030, 5015, 5025)] // survives the 5010 stop
+    expect(advanceReplay(above, 0, 1, locked, [], CONTRACT_SPECS.MES, 0).position?.slPrice).toBe(5010)
+  })
+
+  it('does nothing when auto break-even is off', () => {
+    expect(run({ ...base, autoBreakeven: false, breakevenPoints: 1 }, 0, 3)?.slPrice).toBe(4980)
+  })
+
+  it('works for a short: the favorable extreme is the low', () => {
+    const shortBars: Bar[] = [bar(0, 5000, 5000, 5000), bar(300, 5001, 4970, 4975)]
+    const short: OpenPosition = { ...base, side: 'short', slPrice: 5020, breakevenPoints: 25 }
+    expect(advanceReplay(shortBars, 0, 1, short, [], CONTRACT_SPECS.MES, 0).position?.slPrice).toBe(5000)
+    const tooFar = { ...short, breakevenPoints: 35 }
+    expect(advanceReplay(shortBars, 0, 1, tooFar, [], CONTRACT_SPECS.MES, 0).position?.slPrice).toBe(5020)
+  })
+
+  it('a bar that hits the stop first closes the trade; break-even is never applied from a bar that did not survive', () => {
+    const stopBars: Bar[] = [bar(0, 5000, 5000, 5000), bar(300, 5030, 4970, 4975)] // hits 4980 AND reaches +30
+    const res = advanceReplay(stopBars, 0, 1, { ...base, breakevenPoints: 10 }, [], CONTRACT_SPECS.MES, 0)
+    expect(res.position).toBeNull()
+    expect(res.closedTrades[0].exitPrice).toBe(4980)
+  })
+
+  it('a working order hands its trigger to the position when it fills, and it survives a reload', () => {
+    const order: WorkingOrder = {
+      id: 'o1',
+      side: 'long',
+      orderType: 'limit',
+      price: 5000,
+      contracts: 1,
+      slPrice: 4980,
+      tpPrice: null,
+      riskUsd: 100,
+      placedTime: 0,
+      placedIndex: 0,
+      autoBreakeven: true,
+      trailingPoints: null,
+      breakevenR: 1.5,
+    }
+    const fillBars: Bar[] = [bar(0, 5010, 5010, 5010), bar(300, 5001, 4999, 5000)]
+    const filled = advanceReplay(fillBars, 0, 1, null, [order], CONTRACT_SPECS.MES, 0).position
+    expect(filled).toMatchObject({ autoBreakeven: true, breakevenR: 1.5 })
+    expect(filled?.breakevenPoints ?? null).toBeNull()
+
+    const persistedOrder = toPersistedWorkingOrder(order)
+    expect(persistedOrder).toMatchObject({ breakeven_r: 1.5, breakeven_points: null })
+    expect(fromPersistedWorkingOrder(persistedOrder, 0)).toMatchObject({ breakevenR: 1.5 })
+
+    const persistedPos = toPersistedPosition({ ...base, breakevenPoints: 7.5 })
+    expect(persistedPos).toMatchObject({ breakeven_r: null, breakeven_points: 7.5 })
+    expect(fromPersistedPosition(persistedPos, 3)).toMatchObject({ breakevenPoints: 7.5 })
+    expect(fromPersistedPosition(persistedPos, 3).breakevenR ?? null).toBeNull()
+  })
+
+  it('a position saved before G4 (no trigger fields) loads as the default rule', () => {
+    const legacy = toPersistedPosition(base)
+    delete (legacy as Partial<typeof legacy>).breakeven_r
+    delete (legacy as Partial<typeof legacy>).breakeven_points
+    const loaded = fromPersistedPosition(legacy, 0)
+    expect(loaded.breakevenR ?? null).toBeNull()
+    expect(loaded.breakevenPoints ?? null).toBeNull()
   })
 })

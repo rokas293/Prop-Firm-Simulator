@@ -188,3 +188,93 @@ describe('session hotkeys', () => {
     expect(isTypingTarget(null)).toBe(false)
   })
 })
+
+
+// --- G4: the full replay + order hotkey set --------------------------------
+
+// Real keydowns carry both key and code; the registry's letter combos match on key.
+describe('G4 hotkeys: the whole registry', () => {
+  const sessionDefs = () => SHORTCUTS.filter((s) => s.category === 'Session')
+
+  function realEvent(combo: Combo, extra: KeyboardEventInit = {}): KeyboardEvent {
+    return new KeyboardEvent('keydown', {
+      key: combo.key ?? combo.code ?? '',
+      code: combo.code ?? '',
+      shiftKey: combo.shift ?? false,
+      ...extra,
+    })
+  }
+
+  it('every session combo resolves to exactly its own action through the dispatcher the workspace uses', () => {
+    expect(sessionDefs().map((d) => d.id).sort()).toEqual([...SESSION_SHORTCUT_IDS].sort())
+    for (const def of sessionDefs()) {
+      for (const combo of def.combos) {
+        expect(sessionHotkeyAction(realEvent(combo)), `${def.id} (${def.label})`).toBe(def.id)
+      }
+    }
+  })
+
+  it('no session combo fires with Ctrl, Alt or Meta added (a browser/OS chord is never an order or a step)', () => {
+    for (const def of sessionDefs()) {
+      for (const combo of def.combos) {
+        for (const mod of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+          expect(sessionHotkeyAction(realEvent(combo, mod)), `${def.id} + ${Object.keys(mod)[0]}`).toBeNull()
+        }
+      }
+    }
+  })
+
+  it('every non-session shortcut is invisible to the session dispatcher (no key fires two actions)', () => {
+    for (const def of SHORTCUTS.filter((s) => s.category !== 'Session' && s.id !== 'measureDrag')) {
+      for (const combo of def.combos) {
+        const e = realEvent(combo, { ctrlKey: combo.ctrlOrMeta ?? false })
+        expect(sessionHotkeyAction(e), `${def.id} (${def.label})`).toBeNull()
+      }
+    }
+  })
+
+  it('next step: Shift+Space and "." step; Ctrl+Space (the Windows input-language toggle) is deliberately unbound', () => {
+    expect(sessionHotkeyAction(keyEvent({ key: ' ', shiftKey: true }))).toBe('sessionStep')
+    expect(sessionHotkeyAction(keyEvent({ key: '.' }))).toBe('sessionStep')
+    expect(sessionHotkeyAction(keyEvent({ key: ' ', ctrlKey: true }))).toBeNull()
+    expect(sessionHotkeyAction(keyEvent({ key: ' ', ctrlKey: true, shiftKey: true }))).toBeNull()
+    // Plain Space is still play/pause, not a step.
+    expect(sessionHotkeyAction(keyEvent({ key: ' ' }))).toBe('sessionPlayPause')
+  })
+
+  it('play/pause and speed keep their plain keys; Alt+digit (which would also hit the timeframe keys) is unbound', () => {
+    expect(sessionHotkeyAction(keyEvent({ key: ']', code: 'BracketRight' }))).toBe('sessionSpeedUp')
+    expect(sessionHotkeyAction(keyEvent({ key: '[', code: 'BracketLeft' }))).toBe('sessionSpeedDown')
+    for (const n of ['1', '2', '3', '4', '5']) {
+      expect(sessionHotkeyAction(keyEvent({ key: n, code: `Digit${n}`, altKey: true }))).toBeNull()
+    }
+  })
+
+  it('step size -/+ is Shift+[ and Shift+], matched on the physical key so any layout works', () => {
+    expect(sessionHotkeyAction(keyEvent({ key: '{', code: 'BracketLeft', shiftKey: true }))).toBe('sessionGranularityDown')
+    expect(sessionHotkeyAction(keyEvent({ key: '}', code: 'BracketRight', shiftKey: true }))).toBe('sessionGranularityUp')
+    // Unshifted they stay speed.
+    expect(sessionHotkeyAction(keyEvent({ key: '[', code: 'BracketLeft' }))).toBe('sessionSpeedDown')
+    expect(sessionHotkeyAction(keyEvent({ key: ']', code: 'BracketRight' }))).toBe('sessionSpeedUp')
+  })
+
+  it('new market / limit / stop are Shift+M / Shift+L / Shift+T; plain m / l / t never open an order form', () => {
+    expect(sessionHotkeyAction(keyEvent({ key: 'M', shiftKey: true }))).toBe('sessionNewMarket')
+    expect(sessionHotkeyAction(keyEvent({ key: 'L', shiftKey: true }))).toBe('sessionNewLimit')
+    expect(sessionHotkeyAction(keyEvent({ key: 'T', shiftKey: true }))).toBe('sessionNewStop')
+    for (const key of ['m', 'l', 't']) expect(sessionHotkeyAction(keyEvent({ key }))).toBeNull()
+    // FX Replay's Alt+M / Alt+B / Alt+N are not bound here.
+    for (const key of ['m', 'b', 'n']) expect(sessionHotkeyAction(keyEvent({ key, altKey: true }))).toBeNull()
+    // Shift+N still opens the unpreset dialog; Shift+B / Shift+S still buy and sell.
+    expect(sessionHotkeyAction(keyEvent({ key: 'N', shiftKey: true }))).toBe('sessionNewTrade')
+    expect(sessionHotkeyAction(keyEvent({ key: 'B', shiftKey: true }))).toBe('sessionBuy')
+    expect(sessionHotkeyAction(keyEvent({ key: 'S', shiftKey: true }))).toBe('sessionSell')
+  })
+
+  it('the existing plain drawing keys are untouched by the new Shift keys', () => {
+    expect(isShortcut(keyEvent({ key: 'm' }), 'draw-klMeasure')).toBe(true)
+    expect(isShortcut(keyEvent({ key: 'M', shiftKey: true }), 'draw-klMeasure')).toBe(false)
+    expect(isShortcut(keyEvent({ key: 't' }), 'draw-segment')).toBe(true)
+    expect(isShortcut(keyEvent({ key: 'T', shiftKey: true }), 'draw-segment')).toBe(false)
+  })
+})

@@ -208,6 +208,10 @@ export interface PersistedPosition {
   tp_price: number | null
   auto_breakeven: boolean
   trailing_points: number | null
+  // FXR_V2_SPEC.md 3.4 (G4): where auto break-even triggers -- a multiple of the
+  // risk, or a distance in price points. Both null = the original +1R.
+  breakeven_r?: number | null
+  breakeven_points?: number | null
   // FXR_V2_SPEC.md 3.6/3.2 (G2): journal identity + size at entry (every exit
   // journals under trade_key and merges into one trade), and the ghost SL/TP
   // levels still waiting to be placed. Optional: v1 positions lack them.
@@ -215,6 +219,11 @@ export interface PersistedPosition {
   initial_contracts?: number | null
   ghost_sl?: number | null
   ghost_tp?: number | null
+  // FXR_V2_SPEC.md 3.5 (G3): what the Place Order dialog attached. They ride on
+  // the position until its first exit is journaled, then land on the trade.
+  tags?: string[]
+  checklist?: string[]
+  journal_notes?: string
 }
 
 export interface PersistedWorkingOrder {
@@ -227,6 +236,16 @@ export interface PersistedWorkingOrder {
   tp_price: number | null
   risk_usd: number | null
   placed_time: number
+  // G3: the dialog's per-order choices, kept while the order is working and
+  // handed to the position when it fills. journal_on_fill = "Save & Journal".
+  auto_breakeven?: boolean
+  trailing_points?: number | null
+  breakeven_r?: number | null
+  breakeven_points?: number | null
+  tags?: string[]
+  checklist?: string[]
+  journal_notes?: string
+  journal_on_fill?: boolean
 }
 
 export interface PropStatus {
@@ -250,6 +269,11 @@ export interface BacktestSessionSummary {
   end_date: number | null
   // The Quick Buy/Sell quantity box, persisted per session.
   quick_quantity: number
+  // The session's strategy rules, tick-boxes in the Place Order dialog (G3; the
+  // editor is G6). Empty = none.
+  checklist: string[]
+  // G4: Scalper Mode's saved settings; null = never configured (the defaults).
+  scalper: ScalperConfig | null
   created_at: string
   updated_at: string
   cursor_time: number
@@ -274,10 +298,27 @@ export interface UpdateSessionNotesRequest {
   notes: string
 }
 
+// FXR_V2_SPEC.md 3.4 (G4): Scalper Mode's preset distances and armed state,
+// saved with the session (the wire form of chart/scalper.ts's ScalperSettings).
+export interface ScalperConfig {
+  armed: boolean
+  sl_on: boolean
+  sl_value: number
+  sl_unit: 'ticks' | 'percent' | 'usd'
+  tp_on: boolean
+  tp_value: number
+  tp_unit: 'ticks' | 'percent' | 'r'
+  be_on: boolean
+  be_mode: 'r' | 'ticks'
+  be_value: number
+}
+
 // Only the fields sent change (the backend applies exclude_unset).
 export interface UpdateSessionSettingsRequest {
   name?: string | null
   quick_quantity?: number
+  checklist?: string[]
+  scalper?: ScalperConfig | null
 }
 
 export interface CreateSessionRequest {
@@ -295,6 +336,7 @@ export interface CreateSessionRequest {
   commission_per_contract: number
   prop_ruleset?: string | null
   discipline_lock?: boolean
+  checklist?: string[]
 }
 
 // F4: every cursor update carries the FULL current broker state, never a
@@ -345,6 +387,8 @@ export interface ManualTrade extends TradeRecord {
   exits?: TradeExit[]
   notes: string
   tags: string[]
+  // The checklist rules that were ticked in the Place Order dialog (G3).
+  checklist?: string[]
   setup_name: string | null
   grade: 'A' | 'B' | 'C' | null
   screenshots: JournalScreenshot[]
@@ -395,6 +439,11 @@ export interface CreateManualTradeRequest {
   trade_key?: string | null
   initial_contracts?: number | null
   risk_usd?: number | null
+  // G3: the dialog's tags / ticked rules / journal draft, applied when this
+  // request creates the trade.
+  tags?: string[]
+  checklist?: string[]
+  notes?: string
 }
 
 export interface RecordTradeResponse {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cameraRestoreIndex, captureViewAnchor, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
+import { cameraRestoreIndex, captureViewAnchor, firstViewPlan, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
 
 // A faithful model of the two pieces of klinecharts v10.0.3 arithmetic the
 // camera restore rides on, transcribed from the library source so this test
@@ -440,5 +440,44 @@ describe('rightMarginForPane (proportional margin)', () => {
   it('falls back to the configured width when the pane has no size yet', () => {
     expect(rightMarginForPane(400, undefined)).toBe(400)
     expect(rightMarginForPane(400, 0)).toBe(400)
+  })
+})
+
+describe('firstViewPlan (a session opens with the cursor bar in view and the margin applied)', () => {
+  it('parks the newest bar the margin short of the right edge at the chosen zoom', () => {
+    const plan = firstViewPlan({ paneWidth: 1500, marginPx: 120, barCount: 3000, visibleBars: 120 })!
+    expect(plan.barSpace).toBeCloseTo(12.5)
+    expect(plan.marginBars).toBe(10) // ceil(120 / 12.5) = 9.6 -> 10
+    // scrollToDataIndex(i) leaves the right edge at i + 2: edge = bars + margin bars.
+    expect(plan.scrollIndex + 2).toBe(3000 + 10)
+  })
+
+  it('always has the newest bar in view: the right edge is at or past the bar count', () => {
+    for (const barCount of [1, 2, 60, 120, 3000]) {
+      for (const marginPx of [0, 96, 120, 300]) {
+        const plan = firstViewPlan({ paneWidth: 1400, marginPx, barCount, visibleBars: 120 })!
+        expect(plan.scrollIndex + 2).toBeGreaterThanOrEqual(barCount)
+        expect(plan.scrollIndex + 2 - barCount).toBe(plan.marginBars)
+      }
+    }
+  })
+
+  it('no margin configured = flush to the edge', () => {
+    const plan = firstViewPlan({ paneWidth: 1400, marginPx: 0, barCount: 500, visibleBars: 120 })!
+    expect(plan.marginBars).toBe(0)
+    expect(plan.scrollIndex + 2).toBe(500)
+  })
+
+  it('the margin in pixels is honoured whatever the zoom (never rounds down)', () => {
+    for (const visibleBars of [30, 120, 400]) {
+      const plan = firstViewPlan({ paneWidth: 1400, marginPx: 120, barCount: 1000, visibleBars })!
+      expect(plan.marginBars * plan.barSpace).toBeGreaterThanOrEqual(120)
+    }
+  })
+
+  it('has nothing to place before there are bars or a width', () => {
+    expect(firstViewPlan({ paneWidth: 1400, marginPx: 120, barCount: 0, visibleBars: 120 })).toBeNull()
+    expect(firstViewPlan({ paneWidth: 0, marginPx: 120, barCount: 100, visibleBars: 120 })).toBeNull()
+    expect(firstViewPlan({ paneWidth: 1400, marginPx: 120, barCount: 100, visibleBars: 0 })).toBeNull()
   })
 })

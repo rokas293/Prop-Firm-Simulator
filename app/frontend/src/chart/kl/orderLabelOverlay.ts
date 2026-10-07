@@ -8,8 +8,8 @@
 // Why a custom overlay and not DOM: canvas figures track pan/zoom/axis-scale
 // for free, and the label text is recomputed from the overlay's OWN live point
 // on every frame, so a drag shows live $/ticks/% with no React round trip.
-// The line is `klOrderLine`'s cousin (same legend-clearing start) -- see
-// orderLineOverlay.ts for why it doesn't span the legend corner.
+// The line starts clear of the candle legend (orderLineOverlay.ts says why it
+// doesn't span the legend corner).
 import { registerOverlay } from 'klinecharts'
 import { hexToRgba } from '../color'
 import { contrastRatio, mixHex } from '../../state/contrast'
@@ -62,10 +62,10 @@ export function ghostStroke(lineHex: string, bgHex: string): string {
 }
 const GHOST_TEXT_ALPHA = 0.65
 
-const FONT_FAMILY = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+export const FONT_FAMILY = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
 // 12px: the type scale's secondary/table size (11 is reserved for caps micro-labels).
-const FONT_SIZE = 12
-const LABEL_HEIGHT = 20 // 4px grid
+export const FONT_SIZE = 12
+export const LABEL_HEIGHT = 20 // 4px grid
 const PAD_X = 8
 const RIGHT_MARGIN = 8
 const CLOSE_WIDTH = 20
@@ -73,7 +73,7 @@ const GRIP_WIDTH = 16
 
 // The chart theme styles overlay text with a backdrop and padding; these labels
 // draw their own rectangles, so the text must bring none of that.
-const TEXT_RESET = {
+export const TEXT_RESET = {
   style: 'fill',
   backgroundColor: 'transparent',
   borderColor: 'transparent',
@@ -85,7 +85,7 @@ const TEXT_RESET = {
 }
 
 let measureCtx: CanvasRenderingContext2D | null = null
-function textWidth(text: string): number {
+export function textWidth(text: string): number {
   if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d')
   if (!measureCtx) return text.length * 7
   measureCtx.font = `500 ${FONT_SIZE}px ${FONT_FAMILY}`
@@ -168,6 +168,54 @@ export function stackOffsets(entries: StackEntry[]): Map<string, number> {
     }
     placed.push({ ...e, offset })
     out.set(e.id, offset)
+  }
+  return out
+}
+
+// ---- y-axis price tags ------------------------------------------------------
+// Each level has a tag on the price axis. With a tight bracket (a 4-tick stop is
+// a few pixels at normal zoom) the tags of the position, SL, TP and the market's
+// own last-price tag would sit on top of each other and hide their prices. So the
+// tags are laid out vertically: the last-price tag is drawn by klinecharts and
+// cannot move (an obstacle); the rest keep their true height when there is room
+// and otherwise take the NEAREST free slot at least one tag plus a gap away, in
+// role priority (position first, then placed levels, ghosts, working orders; ties
+// by id). Every overlay derives the same layout from its siblings, so no tag
+// needs to know about the others' drawing. A displaced tag keeps a thin bar at
+// its left edge spanning from its true price to where it sits.
+export const AXIS_TAG_SPACING = LABEL_HEIGHT + 4
+
+export interface AxisTagEntry {
+  id: string
+  role: string
+  // The level's true pixel height on the axis.
+  y: number
+}
+
+export function axisTagLayout(entries: AxisTagEntry[], obstacles: number[], axisHeight: number, spacing = AXIS_TAG_SPACING): Map<string, number> {
+  const half = LABEL_HEIGHT / 2
+  const lo = half
+  const hi = Math.max(lo, axisHeight - half)
+  const clamp = (y: number) => Math.min(hi, Math.max(lo, y))
+  const ordered = [...entries].sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || (a.id < b.id ? -1 : 1))
+  const taken = [...obstacles]
+  const out = new Map<string, number>()
+  for (const e of ordered) {
+    const want = clamp(e.y)
+    const candidates = [want, lo, hi, ...taken.flatMap((t) => [t - spacing, t + spacing])].map(clamp)
+    let best = want
+    let bestCost = Infinity
+    for (const c of candidates) {
+      if (taken.some((t) => Math.abs(t - c) < spacing - 1e-9)) continue
+      const cost = Math.abs(c - want)
+      if (cost < bestCost) {
+        best = c
+        bestCost = cost
+      }
+    }
+    // No free slot (more tags than the axis can hold): leave it at its own height.
+    out.set(e.id, bestCost === Infinity ? want : best)
+    taken.push(out.get(e.id) as number)
   }
   return out
 }
@@ -264,20 +312,45 @@ export function ensureOrderLabelOverlayRegistered(): void {
       return figures as never
     },
     // The y-axis price tag (R10/R11's coloured tag on the axis).
-    createYAxisFigures: ({ coordinates, bounding, overlay }) => {
+    createYAxisFigures: ({ chart, coordinates, bounding, overlay, yAxis }) => {
       const p = coordinates[0]
       const data = overlay.extendData as OrderLabelData | undefined
       const price = overlay.points[0]?.value
       if (!p || !data || typeof price !== 'number') return []
+      // Where this tag sits once the siblings and the market's own price tag are
+      // accounted for (see axisTagLayout); its true level stays at p.y.
+      let y = p.y
+      if (yAxis) {
+        const entries: AxisTagEntry[] = []
+        for (const o of chart.getOverlays({ groupId: overlay.groupId })) {
+          const d = o.extendData as OrderLabelData | undefined
+          const v = o.points[0]?.value
+          if (!d || typeof v !== 'number') continue
+          entries.push({ id: o.id, role: d.info.role, y: yAxis.convertToPixel(v) })
+        }
+        const dataList = chart.getDataList()
+        const last = dataList[dataList.length - 1]
+        const obstacles = last ? [yAxis.convertToPixel(last.close)] : []
+        y = axisTagLayout(entries, obstacles, bounding.height).get(overlay.id) ?? p.y
+      }
       // The tag shows the tick-snapped price (what a release would set), never
       // the raw pointer price; a ghost's tag is hollow like its label.
       const ghost = isGhostRole(data.info.role)
       const tagBorder = ghost && !data.hover ? data.palette.ghost : data.palette.line
-      return [
+      const figures: unknown[] = []
+      if (Math.abs(y - p.y) > 1) {
+        figures.push({
+          type: 'rect',
+          ignoreEvent: true,
+          attrs: { x: 0, y: Math.min(y, p.y), width: 2, height: Math.abs(y - p.y) },
+          styles: { style: 'fill', color: tagBorder },
+        })
+      }
+      figures.push(
         {
           type: 'rect',
           ignoreEvent: true,
-          attrs: { x: 0, y: p.y - LABEL_HEIGHT / 2, width: bounding.width, height: LABEL_HEIGHT },
+          attrs: { x: 0, y: y - LABEL_HEIGHT / 2, width: bounding.width, height: LABEL_HEIGHT },
           styles: ghost
             ? { style: 'stroke_fill', color: data.palette.surface, borderColor: tagBorder, borderSize: 1, borderRadius: 2 }
             : { style: 'fill', color: data.palette.line, borderRadius: 2 },
@@ -285,10 +358,11 @@ export function ensureOrderLabelOverlayRegistered(): void {
         {
           type: 'text',
           ignoreEvent: true,
-          attrs: { x: bounding.width / 2, y: p.y, text: data.formatPrice(roundToTick(price, data.info.spec.tickSize)), align: 'center', baseline: 'middle' },
+          attrs: { x: bounding.width / 2, y, text: data.formatPrice(roundToTick(price, data.info.spec.tickSize)), align: 'center', baseline: 'middle' },
           styles: { ...TEXT_RESET, color: ghost ? data.palette.line : data.palette.onRole, size: FONT_SIZE, family: FONT_FAMILY, weight: '500' },
         },
-      ] as never
+      )
+      return figures as never
     },
   })
 }

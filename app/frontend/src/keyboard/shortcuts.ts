@@ -96,6 +96,30 @@ const DRAWING_TOOL_SHORTCUTS: ShortcutDef[] = Object.entries(DRAWING_SHORTCUTS).
 // browser chord (Ctrl+Shift+C = inspect element) never doubles as an order.
 // Replay-flow keys (step, play/pause, speed) are plain, since they can't
 // place or change an order.
+//
+// FXR_V2_SPEC.md 5 / G4: FX Replay's map (Ctrl+Space next candle; Alt+B / Alt+N /
+// Alt+M new limit / stop / market order; Alt+, new order; Alt+1 play/pause;
+// Alt+2/3 speed; Alt+4/5 step size) was checked against Windows, Chrome and this
+// registry, and adapted where it clashes. Per action:
+//  - Next step: Ctrl+Space is the Windows input-language / IME toggle (and macOS's
+//    input-source switch), so the OS can swallow it. Shift+Space steps instead
+//    (Space plays, Shift+Space nudges: no Ctrl/Alt/Meta, nothing in Chrome binds
+//    it but page-scroll, which we cancel). The existing "." stays as a one-hand key.
+//  - Play/pause stays Space, speed stays [ and ]: Alt+1/2/3 would also fire the
+//    chart's 1/2/3 timeframe keys (their combos do not exclude Alt), Alt+digit is
+//    tab-switching in Chrome on Linux, and Option+digit types a glyph on macOS.
+//  - Step size -/+: Shift+[ and Shift+] ({ and }), the same keys as speed one
+//    modifier over, so "brackets are speed, braces are step size". FXR's Alt+4/5
+//    clash the same way as Alt+1/2/3 above.
+//  - New market / limit / stop order: Shift+M / Shift+L / Shift+T. FXR's Alt+M/B/N
+//    do not open a menu in Chrome on Windows, but they would also fire this app's
+//    plain M (measure), B (brush) and N (next trade) keys, Alt+letter is a menu
+//    mnemonic in Firefox, Option+letter types a glyph on macOS, and B for limit /
+//    N for stop is not guessable. The letters are mnemonic here and sit with
+//    Shift+N (the order dialog) in the Shift family: a stray key can open a form,
+//    never place an order.
+//  - Open the Place Order dialog: Shift+N, unchanged (FXR's Alt+, would be a
+//    plain-comma "step back" away from firing it).
 const TRADE_MODS = { shift: true, ctrlOrMeta: false, alt: false } as const
 const PLAIN_MODS = { shift: false, ctrlOrMeta: false, alt: false } as const
 
@@ -110,6 +134,11 @@ export const SESSION_SHORTCUT_IDS = [
   'sessionPlayPause',
   'sessionSpeedUp',
   'sessionSpeedDown',
+  'sessionGranularityUp',
+  'sessionGranularityDown',
+  'sessionNewMarket',
+  'sessionNewLimit',
+  'sessionNewStop',
 ] as const
 export type SessionHotkeyAction = (typeof SESSION_SHORTCUT_IDS)[number]
 
@@ -118,12 +147,23 @@ const SESSION_SHORTCUTS: ShortcutDef[] = [
   { id: 'sessionSell', combos: [{ key: 's', ...TRADE_MODS }], label: 'Shift+S', description: 'Sell at market (session replay)', category: 'Session' },
   { id: 'sessionClose', combos: [{ key: 'c', ...TRADE_MODS }], label: 'Shift+C', description: 'Close the open position', category: 'Session' },
   { id: 'sessionCloseHalf', combos: [{ key: 'h', ...TRADE_MODS }], label: 'Shift+H', description: 'Close half the open position', category: 'Session' },
-  { id: 'sessionNewTrade', combos: [{ key: 'n', ...TRADE_MODS }], label: 'Shift+N', description: 'New Trade: open the entry / SL / TP ticket', category: 'Session' },
-  { id: 'sessionStep', combos: [{ key: '.', ...PLAIN_MODS }], label: '.', description: 'Step the replay forward one bar', category: 'Session' },
+  { id: 'sessionNewTrade', combos: [{ key: 'n', ...TRADE_MODS }], label: 'Shift+N', description: 'Open the order dialog', category: 'Session' },
+  {
+    id: 'sessionStep',
+    combos: [{ key: '.', ...PLAIN_MODS }, { key: ' ', ...TRADE_MODS }],
+    label: '. / Shift+Space',
+    description: 'Step the replay forward one step',
+    category: 'Session',
+  },
   { id: 'sessionStepBack', combos: [{ key: ',', ...PLAIN_MODS }], label: ',', description: 'Step the replay back one bar (blocked by the discipline lock)', category: 'Session' },
   { id: 'sessionPlayPause', combos: [{ key: ' ', ...PLAIN_MODS }], label: 'Space', description: 'Play / pause the replay', category: 'Session' },
   { id: 'sessionSpeedUp', combos: [{ code: 'BracketRight', ...PLAIN_MODS }], label: ']', description: 'Replay speed up', category: 'Session' },
   { id: 'sessionSpeedDown', combos: [{ code: 'BracketLeft', ...PLAIN_MODS }], label: '[', description: 'Replay speed down', category: 'Session' },
+  { id: 'sessionGranularityUp', combos: [{ code: 'BracketRight', ...TRADE_MODS }], label: 'Shift+]', description: 'Step size up (1m, 5m, 15m, 1h)', category: 'Session' },
+  { id: 'sessionGranularityDown', combos: [{ code: 'BracketLeft', ...TRADE_MODS }], label: 'Shift+[', description: 'Step size down', category: 'Session' },
+  { id: 'sessionNewMarket', combos: [{ key: 'm', ...TRADE_MODS }], label: 'Shift+M', description: 'New market order: open the order dialog on Market', category: 'Session' },
+  { id: 'sessionNewLimit', combos: [{ key: 'l', ...TRADE_MODS }], label: 'Shift+L', description: 'New limit order: open the order dialog on Limit', category: 'Session' },
+  { id: 'sessionNewStop', combos: [{ key: 't', ...TRADE_MODS }], label: 'Shift+T', description: 'New stop order: open the order dialog on Stop', category: 'Session' },
 ]
 
 export function sessionHotkeyAction(e: KeyboardEvent): SessionHotkeyAction | null {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { contrastRatio } from '../../state/contrast'
 import { THEME_PRESETS, resolveBase } from '../../state/themeStore'
-import { GHOST_MIN_CONTRAST, ghostStroke, layoutLabel, stackOffsets } from './orderLabelOverlay'
+import { AXIS_TAG_SPACING, GHOST_MIN_CONTRAST, LABEL_HEIGHT, axisTagLayout, ghostStroke, layoutLabel, stackOffsets } from './orderLabelOverlay'
 
 describe('stackOffsets (labels that would cover each other sit side by side)', () => {
   const e = (id: string, role: string, y: number, width = 100) => ({ id, role, y, width })
@@ -95,5 +95,66 @@ describe('ghostStroke: the ghost border reads at 3:1 on the chart background, in
     const dark = resolveBase('dark')
     const g = ghostStroke(dark.warning, dark.bg)
     expect(contrastRatio(g, dark.bg)).toBeLessThan(GHOST_MIN_CONTRAST + 0.6)
+  })
+})
+
+
+describe('axisTagLayout (every price tag on the axis stays readable)', () => {
+  const e = (id: string, role: string, y: number) => ({ id, role, y })
+  const H = 600
+  const ys = (m: Map<string, number>) => [...m.values()]
+  const minGap = (values: number[]) => {
+    const v = [...values].sort((a, b) => a - b)
+    return v.slice(1).reduce((g, y, i) => Math.min(g, y - v[i]), Infinity)
+  }
+
+  it('leaves well-separated tags exactly at their true height', () => {
+    const m = axisTagLayout([e('pos', 'position', 300), e('sl', 'sl', 380), e('tp', 'tp', 200)], [100], H)
+    expect(m.get('pos')).toBe(300)
+    expect(m.get('sl')).toBe(380)
+    expect(m.get('tp')).toBe(200)
+  })
+
+  it('a 4-tick bracket (a few pixels at normal zoom): position, SL, TP and the last-price tag never overlap', () => {
+    // MNQ 4 ticks = 1 point, about 1.3px at this zoom: entry 300, SL 301.3, TP 298.7, market 300.8.
+    const m = axisTagLayout([e('sl', 'sl', 301.3), e('tp', 'tp', 298.7), e('pos', 'position', 300)], [300.8], H)
+    expect(minGap([...ys(m), 300.8])).toBeGreaterThanOrEqual(AXIS_TAG_SPACING - 1e-9)
+    // The tags still read in price order: TP above the position above the SL (higher price = smaller y).
+    expect(m.get('tp')!).toBeLessThan(m.get('pos')!)
+    expect(m.get('pos')!).toBeLessThan(m.get('sl')!)
+  })
+
+  it('the last-price tag is an obstacle: nothing sits on it, however close', () => {
+    const m = axisTagLayout([e('pos', 'position', 300)], [300], H)
+    expect(Math.abs(m.get('pos')! - 300)).toBeGreaterThanOrEqual(AXIS_TAG_SPACING)
+  })
+
+  it('higher priority keeps its true height: the position over a placed level over a ghost over an order', () => {
+    const m = axisTagLayout([e('o', 'order', 300), e('g', 'ghost-sl', 300), e('sl', 'sl', 300), e('pos', 'position', 300)], [], H)
+    expect(m.get('pos')).toBe(300)
+    expect(Math.abs(m.get('sl')! - 300)).toBe(AXIS_TAG_SPACING)
+    expect(Math.abs(m.get('g')! - 300)).toBeGreaterThanOrEqual(AXIS_TAG_SPACING)
+    expect(minGap(ys(m))).toBeGreaterThanOrEqual(AXIS_TAG_SPACING - 1e-9)
+  })
+
+  it('tags keep within the axis, top and bottom', () => {
+    const m = axisTagLayout([e('a', 'sl', -50), e('b', 'tp', H + 50), e('c', 'position', 2)], [], H)
+    for (const y of m.values()) {
+      expect(y).toBeGreaterThanOrEqual(LABEL_HEIGHT / 2)
+      expect(y).toBeLessThanOrEqual(H - LABEL_HEIGHT / 2)
+    }
+    expect(minGap(ys(m))).toBeGreaterThanOrEqual(AXIS_TAG_SPACING - 1e-9)
+  })
+
+  it('is independent of input order, so every overlay derives the same layout', () => {
+    const list = [e('a', 'sl', 310), e('b', 'position', 305), e('c', 'tp', 300), e('d', 'order', 307)]
+    const one = axisTagLayout(list, [304], H)
+    const two = axisTagLayout([...list].reverse(), [304], H)
+    for (const id of ['a', 'b', 'c', 'd']) expect(one.get(id)).toBe(two.get(id))
+  })
+
+  it('displaces as little as it can: a lone tag just off the obstacle moves one slot', () => {
+    const m = axisTagLayout([e('sl', 'sl', 310)], [300], H)
+    expect(m.get('sl')).toBe(300 + AXIS_TAG_SPACING)
   })
 })

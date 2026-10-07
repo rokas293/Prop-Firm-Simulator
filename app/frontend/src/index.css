@@ -468,6 +468,46 @@ input[type='checkbox']:disabled {
   cursor: not-allowed;
 }
 
+/* Radios match the checkboxes: no OS disc (it rendered near-black on the light
+   theme). Same 14px size, text-muted edge and 120ms motion; the accent dot. */
+input[type='radio'] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid var(--color-text-muted);
+  border-radius: 50%;
+  background: var(--color-surface-2);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+input[type='radio']::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-bg);
+  transform: scale(0);
+  transition: transform 120ms ease-out;
+}
+input[type='radio']:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+input[type='radio']:checked::after {
+  transform: scale(1);
+}
+input[type='radio']:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 input[type='number'] {
   appearance: textfield;
   -moz-appearance: textfield;
@@ -511,6 +551,25 @@ input[type='number']::-webkit-outer-spin-button {
 .propbt-input:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+/* A recessed field for use on a surface-2 panel (a popover): one step darker
+   than the panel so it reads as a field, with its own hover step. */
+.propbt-input--well {
+  background: var(--color-bg);
+}
+.propbt-input--well:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+.propbt-input[aria-invalid='true'] {
+  border-color: var(--color-negative);
+}
+/* An input with a unit inside it ($ before, % / ticks after): the unlayered
+   padding above would beat Tailwind's layered pl-/pr- utilities. */
+.propbt-input--prefix {
+  padding-left: 20px;
+}
+.propbt-input--suffix {
+  padding-right: 40px;
 }
 textarea.propbt-input {
   height: auto;

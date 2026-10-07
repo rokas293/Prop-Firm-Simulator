@@ -22,6 +22,8 @@ import {
 import { DRAWING_TOOLS, KL_CIRCLE, KL_MEASURE, KL_TRIANGLE, KL_ZONE, type DrawingGroup, type DrawingTool } from '../chart/kl/drawingOverlays'
 import type { ChartKLHandle } from '../chart/kl/ChartKL'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
+import { POSITION_TOOL_LONG, POSITION_TOOL_SHORT } from '../chart/kl/positionToolOverlay'
+import type { Side } from '../chart/simBroker'
 import { DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
 import { useKLDrawingStore } from '../state/klDrawingStore'
 import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
@@ -128,6 +130,19 @@ function FibonacciIcon() {
   )
 }
 
+// The Long / Short Position tools (FXR_V2_SPEC.md 3.5): the entry line with the
+// bigger (target) box on the profit side and the smaller (stop) box on the other.
+function PositionToolIcon({ side }: { side: Side }) {
+  const long = side === 'long'
+  return (
+    <svg {...SVG_PROPS}>
+      <rect x="4" y={long ? 4 : 12} width="16" height={long ? 8 : 8} />
+      <rect x="4" y={long ? 12 : 8} width="16" height="4" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+    </svg>
+  )
+}
+
 // Every DRAWING_TOOLS entry gets exactly one glyph -- lucide where a good
 // match exists, one of the custom icons above where it doesn't.
 function toolIcon(name: string): ReactNode {
@@ -228,6 +243,7 @@ export default function KLDrawingToolbar({
   klChartRef,
   drawings,
   armedTool,
+  positionTools,
 }: {
   klChartRef: RefObject<ChartKLHandle | null>
   drawings: PersistedOverlay[]
@@ -238,6 +254,9 @@ export default function KLDrawingToolbar({
   // place already wiring both the toolbar's clicks and the keyboard
   // shortcuts' calls into ChartKL's startDrawing/cancelActiveDrawing.
   armedTool: string | null
+  // The session workspace's Long / Short Position tools (the review chart has
+  // none): a click arms ChartKL's one-click placement.
+  positionTools?: { onStart: (side: Side) => void; disabled: boolean; disabledReason?: string }
 }) {
   const [openGroup, setOpenGroup] = useState<DrawingGroup | null>(null)
   const [manageOpen, setManageOpen] = useState(false)
@@ -336,6 +355,33 @@ export default function KLDrawingToolbar({
           overflow spec -- which would clip every flyout below, since they
           intentionally render past this rail's right edge. */}
       <div className="flex flex-1 flex-col items-center gap-1">
+        {positionTools && (
+          <div className="mb-2 flex flex-col items-center gap-1">
+            {(['long', 'short'] as const).map((side) => {
+              const label = side === 'long' ? 'Long position' : 'Short position'
+              const armed = armedTool === (side === 'long' ? POSITION_TOOL_LONG : POSITION_TOOL_SHORT)
+              return (
+                <div key={side} className="group relative">
+                  <button
+                    type="button"
+                    onClick={() => positionTools.onStart(side)}
+                    disabled={positionTools.disabled}
+                    aria-pressed={armed}
+                    aria-label={label}
+                    className={`flex h-8 w-8 items-center justify-center rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-muted ${
+                      armed ? 'bg-accent text-on-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+                    }`}
+                  >
+                    <PositionToolIcon side={side} />
+                  </button>
+                  <IconButtonTooltip
+                    text={positionTools.disabled && positionTools.disabledReason ? `${label}: ${positionTools.disabledReason}` : `${label}: click the chart to place it`}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        )}
         {GROUP_ORDER.map((group) => {
           const groupTools = DRAWING_TOOLS.filter((t) => t.group === group)
           const activeToolName = lastUsedByGroup[group]

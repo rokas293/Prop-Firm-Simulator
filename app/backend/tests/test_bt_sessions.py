@@ -218,10 +218,15 @@ def _position_payload(**overrides):
         "tp_price": 5030.0,
         "auto_breakeven": False,
         "trailing_points": None,
+        "breakeven_r": None,
+        "breakeven_points": None,
         "trade_key": None,
         "initial_contracts": None,
         "ghost_sl": None,
         "ghost_tp": None,
+        "tags": [],
+        "checklist": [],
+        "journal_notes": "",
     }
     body.update(overrides)
     return body
@@ -238,6 +243,14 @@ def _working_order_payload(**overrides):
         "tp_price": None,
         "risk_usd": 250.0,
         "placed_time": _valid_start_time() + 600,
+        "auto_breakeven": False,
+        "trailing_points": None,
+        "breakeven_r": None,
+        "breakeven_points": None,
+        "tags": [],
+        "checklist": [],
+        "journal_notes": "",
+        "journal_on_fill": False,
     }
     body.update(overrides)
     return body
@@ -310,6 +323,34 @@ def test_update_cursor_position_carries_auto_breakeven_and_trailing_toggles(bt_c
     reloaded = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
     assert reloaded["position"]["auto_breakeven"] is True
     assert reloaded["position"]["trailing_points"] == 8.0
+
+
+def test_update_cursor_carries_scalper_breakeven_trigger_on_position_and_order(bt_client):
+    """G4: the Scalper's break-even trigger (an R multiple or a distance in
+    points) is part of the trade and must survive a reload, or a reloaded
+    position would silently fall back to the default +1R."""
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    url = f"/api/bt-sessions/{created['id']}/cursor"
+    t = created["start_time"] + 300
+    bt_client.patch(url, json={"cursor_time": t, "position": _position_payload(
+        auto_breakeven=True, breakeven_r=1.5)})
+    got = bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"]
+    assert got["breakeven_r"] == 1.5 and got["breakeven_points"] is None
+
+    bt_client.patch(url, json={"cursor_time": t, "position": None, "working_orders": [
+        _working_order_payload(auto_breakeven=True, breakeven_points=3.5)]})
+    got = bt_client.get(f"/api/bt-sessions/{created['id']}").json()["working_orders"][0]
+    assert got["breakeven_points"] == 3.5 and got["breakeven_r"] is None
+
+
+def test_position_without_a_breakeven_trigger_loads_as_the_default(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    bt_client.patch(f"/api/bt-sessions/{created['id']}/cursor",
+                    json={"cursor_time": created["start_time"] + 300, "position": _position_payload(auto_breakeven=True)})
+    got = bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"]
+    assert got["breakeven_r"] is None and got["breakeven_points"] is None
 
 
 def test_archive_session(bt_client):
@@ -995,3 +1036,164 @@ def test_position_roundtrips_trade_key_initial_size_and_ghosts(bt_client):
     )
     assert r.json()["position"] == payload
     assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] == payload
+
+
+# --- FXR_V2_SPEC.md 3.5 (G3): the Place Order dialog's session checklist, and
+# the tags / ticked rules / journal draft that ride on an order and its position
+# until the trade is journaled.
+
+def test_checklist_defaults_empty_and_roundtrips_cleaned(bt_client):
+    _skip_if_no_mes_data()
+    assert _create(bt_client).json()["checklist"] == []
+    created = _create(bt_client, checklist=["  Trend aligned  ", "", "Trend aligned", "Stop under swing low"]).json()
+    assert created["checklist"] == ["Trend aligned", "Stop under swing low"]
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["checklist"] == created["checklist"]
+
+
+def test_checklist_is_bounded(bt_client):
+    _skip_if_no_mes_data()
+    assert _create(bt_client, checklist=["x" * 201]).status_code == 400
+    assert _create(bt_client, checklist=[f"rule {i}" for i in range(31)]).status_code == 400
+    assert _create(bt_client, checklist=[f"rule {i}" for i in range(30)]).status_code == 200
+
+
+def test_update_settings_replaces_the_checklist_and_leaves_the_rest(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client, quick_quantity=3, checklist=["a"]).json()
+    url = f"/api/bt-sessions/{created['id']}/settings"
+    r = bt_client.patch(url, json={"checklist": ["b", "c"]})
+    assert r.status_code == 200 and r.json()["checklist"] == ["b", "c"] and r.json()["quick_quantity"] == 3
+    # A patch that does not mention it leaves it alone; an empty list clears it.
+    assert bt_client.patch(url, json={"name": "n"}).json()["checklist"] == ["b", "c"]
+    assert bt_client.patch(url, json={"checklist": []}).json()["checklist"] == []
+
+
+def test_v1_session_without_a_checklist_loads_with_an_empty_one(bt_client, tmp_path):
+    import json
+    sid = "20250101T000000Z_nochecklist"
+    d = tmp_path / "bt_sessions" / sid
+    d.mkdir(parents=True)
+    (d / "session.json").write_text(
+        json.dumps({
+            "id": sid, "instrument": "MES", "base_timeframe": "5min", "start_time": 1741615800,
+            "created_at": "2025-03-10T14:30:00+00:00", "updated_at": "2025-03-10T15:00:00+00:00",
+            "cursor_time": 1741615800, "status": "active",
+            "account": {"id": "a", "starting_balance": 50000.0, "balance": 50000.0, "currency": "USD",
+                        "risk_per_trade_percent": 1.0, "risk_per_trade_usd": None, "commission_per_contract": 1.3},
+            "position": None, "working_orders": [],
+        }),
+        encoding="utf-8",
+    )
+    assert bt_client.get(f"/api/bt-sessions/{sid}").json()["checklist"] == []
+
+
+def test_working_order_roundtrips_dialog_choices(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    order = _working_order_payload(
+        auto_breakeven=True, tags=["breakout", "A+"], checklist=["Trend aligned"], journal_notes="waiting for the retest",
+        journal_on_fill=True,
+    )
+    bt_client.patch(
+        f"/api/bt-sessions/{created['id']}/cursor",
+        json={"cursor_time": created["start_time"] + 600, "working_orders": [order]},
+    )
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["working_orders"] == [order]
+
+
+def test_position_roundtrips_tags_checklist_and_journal_draft(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    payload = _position_payload(trade_key="k2", tags=["reversal"], checklist=["Stop under swing low"], journal_notes="thesis")
+    bt_client.patch(
+        f"/api/bt-sessions/{created['id']}/cursor",
+        json={"cursor_time": created["start_time"] + 600, "position": payload},
+    )
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] == payload
+
+
+def test_record_trade_stores_dialog_tags_checklist_and_notes_on_the_new_trade(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    base = f"/api/bt-sessions/{session['id']}/trades"
+    r = bt_client.post(base, json=_slice_body(tags=["breakout"], checklist=["Trend aligned"], notes="thesis: retest"))
+    assert r.status_code == 200
+    t = bt_client.get(base).json()[0]
+    assert t["tags"] == ["breakout"] and t["checklist"] == ["Trend aligned"] and t["notes"] == "thesis: retest"
+    # A later exit of the same position does not overwrite them.
+    bt_client.post(base, json=_slice_body(size_contracts=2, pnl_usd=198.0, risk_usd=200.0, tags=["other"], notes="late"))
+    t = bt_client.get(base).json()[0]
+    assert t["tags"] == ["breakout"] and t["notes"] == "thesis: retest"
+
+
+def test_fresh_trade_has_no_checklist(bt_client):
+    _skip_if_no_mes_data()
+    session = _create(bt_client).json()
+    base = f"/api/bt-sessions/{session['id']}/trades"
+    bt_client.post(base, json=_manual_trade_body())
+    assert bt_client.get(base).json()[0]["checklist"] == []
+
+
+# --- G4: Scalper Mode settings + armed state persist WITH the session -----------
+
+def _scalper(**overrides):
+    body = {"armed": True, "sl_on": True, "sl_value": 60, "sl_unit": "ticks", "tp_on": True, "tp_value": 3,
+            "tp_unit": "r", "be_on": True, "be_mode": "ticks", "be_value": 8}
+    body.update(overrides)
+    return body
+
+
+def test_a_new_session_has_no_scalper_config_until_one_is_saved(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    assert created["scalper"] is None
+
+
+def test_update_settings_persists_scalper_and_survives_reload(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    url = f"/api/bt-sessions/{created['id']}/settings"
+    r = bt_client.patch(url, json={"scalper": _scalper()})
+    assert r.status_code == 200 and r.json()["scalper"] == _scalper()
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["scalper"] == _scalper()
+    # Only what is sent changes: the quantity edit leaves Scalper alone, and vice versa.
+    bt_client.patch(url, json={"quick_quantity": 3})
+    got = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
+    assert got["scalper"] == _scalper() and got["quick_quantity"] == 3
+    bt_client.patch(url, json={"scalper": _scalper(armed=False)})
+    got = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
+    assert got["scalper"]["armed"] is False and got["quick_quantity"] == 3
+
+
+def test_scalper_is_per_session(bt_client):
+    _skip_if_no_mes_data()
+    a = _create(bt_client).json()
+    b = _create(bt_client).json()
+    bt_client.patch(f"/api/bt-sessions/{a['id']}/settings", json={"scalper": _scalper()})
+    assert bt_client.get(f"/api/bt-sessions/{b['id']}").json()["scalper"] is None
+
+
+def test_scalper_break_even_is_dropped_without_a_stop(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    r = bt_client.patch(f"/api/bt-sessions/{created['id']}/settings",
+                        json={"scalper": _scalper(sl_on=False, tp_unit="ticks", be_on=True)})
+    assert r.status_code == 200 and r.json()["scalper"]["be_on"] is False and r.json()["scalper"]["sl_on"] is False
+
+
+def test_scalper_rejects_impossible_values_and_units(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    url = f"/api/bt-sessions/{created['id']}/settings"
+    for bad in (_scalper(sl_value=0), _scalper(tp_value=-1), _scalper(be_value=0), _scalper(sl_unit="furlongs"),
+                _scalper(tp_unit="usd"), _scalper(be_mode="usd")):
+        assert bt_client.patch(url, json={"scalper": bad}).status_code == 422, bad
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["scalper"] is None
+
+
+def test_scalper_can_be_cleared_back_to_defaults(bt_client):
+    _skip_if_no_mes_data()
+    created = _create(bt_client).json()
+    url = f"/api/bt-sessions/{created['id']}/settings"
+    bt_client.patch(url, json={"scalper": _scalper()})
+    assert bt_client.patch(url, json={"scalper": None}).json()["scalper"] is None
