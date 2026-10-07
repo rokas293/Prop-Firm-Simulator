@@ -39,9 +39,26 @@ from propbt.config import load_prop_rules
 # app; ZN is deliberately not offered here).
 ALLOWED_INSTRUMENTS = ("MNQ", "MES")
 
-# Matches uiStore.ts's Timeframe union exactly -- the base timeframe a
-# session replays at must be one the chart can actually render.
-ALLOWED_TIMEFRAMES = ("1min", "5min", "15min", "1h")
+# Every timeframe a session may chart or step by (FXR_V2_SPEC.md section 5:
+# "any timeframe at or above 1m"). All are whole multiples of a minute that
+# divide the day on the epoch grid, so a candle's bucket is the same one
+# propbt.data.resample builds. Matches the frontend's chart/replayBars.ts.
+TIMEFRAME_SECONDS = {
+    "1min": 60,
+    "2min": 120,
+    "3min": 180,
+    "5min": 300,
+    "10min": 600,
+    "15min": 900,
+    "30min": 1800,
+    "1h": 3600,
+    "2h": 7200,
+    "4h": 14400,
+}
+ALLOWED_TIMEFRAMES = tuple(TIMEFRAME_SECONDS)
+
+# The replay always counts in 1-minute bars (the only data there is).
+ONE_MINUTE = 60
 
 # FXR_SPEC.md phase F6: the one prop ruleset propbt/config/prop_rules.yaml
 # defines today (Topstep $50k Combine).
@@ -128,9 +145,15 @@ def _validate_instrument(instrument: str) -> None:
         )
 
 
-def _validate_timeframe(tf: str) -> None:
+def _validate_timeframe(tf: str, field: str = "base_timeframe") -> None:
     if tf not in ALLOWED_TIMEFRAMES:
-        raise InvalidSessionRequest(f"base_timeframe must be one of {ALLOWED_TIMEFRAMES}, got {tf!r}")
+        raise InvalidSessionRequest(f"{field} must be one of {ALLOWED_TIMEFRAMES}, got {tf!r}")
+
+
+def bucket_last_minute(t: int, bucket_seconds: int) -> int:
+    """Open time of the LAST 1-minute bar of the `bucket_seconds` candle that
+    contains `t` -- the cursor at which that candle is fully revealed."""
+    return (t // bucket_seconds) * bucket_seconds + bucket_seconds - ONE_MINUTE
 
 
 def _resolve_assets(req: models.CreateSessionRequest) -> List[str]:
@@ -305,7 +328,26 @@ def _migrate(data: dict) -> dict:
     data.setdefault("end_date", None)
     data.setdefault("name", None)
     data.setdefault("checklist", [])
+    # G5: the chart timeframe and the step size are their own settings now; a
+    # session saved before them charted and stepped by its base timeframe.
+    data.setdefault("chart_timeframe", data["base_timeframe"])
+    data.setdefault("step_size", data["base_timeframe"])
+    # G5: the cursor counts in 1-minute bars. Before, it was the open time of
+    # the last revealed BASE bar, which was always revealed whole -- so the same
+    # state in the new count is that bar's last minute. This keeps an existing
+    # session showing exactly what it showed (same candles, same position in the
+    # replay). A 1m session needs no change. Saved once, then marked.
+    if "replay_version" not in data:
+        base_seconds = TIMEFRAME_SECONDS.get(data["base_timeframe"], ONE_MINUTE)
+        data["cursor_time"] = _clamp_to_end(bucket_last_minute(data["cursor_time"], base_seconds), data["end_date"])
+        if data.get("lock_floor_time") is not None:
+            data["lock_floor_time"] = _clamp_to_end(bucket_last_minute(data["lock_floor_time"], base_seconds), data["end_date"])
+        data["replay_version"] = 2
     return data
+
+
+def _clamp_to_end(t: int, end_date: Optional[int]) -> int:
+    return t if end_date is None else min(t, end_date)
 
 
 def _read(session_id: str) -> dict:
@@ -321,6 +363,10 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
     assets = _resolve_assets(req)
     instrument = assets[0]
     _validate_timeframe(req.base_timeframe)
+    chart_timeframe = req.chart_timeframe or req.base_timeframe
+    step_size = req.step_size or req.base_timeframe
+    _validate_timeframe(chart_timeframe, "chart_timeframe")
+    _validate_timeframe(step_size, "step_size")
     start_time = _resolve_start_time(instrument, req)
     account = _account_from_request(req)
     if req.end_date is not None:
@@ -339,6 +385,9 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         "instrument": instrument,
         "assets": assets,
         "base_timeframe": req.base_timeframe,
+        "chart_timeframe": chart_timeframe,
+        "step_size": step_size,
+        "replay_version": 2,
         "start_time": start_time,
         "end_date": req.end_date,
         "quick_quantity": req.quick_quantity,
@@ -471,8 +520,8 @@ def update_session_notes(session_id: str, req: models.UpdateSessionNotesRequest)
 def update_session_settings(session_id: str, req: models.UpdateSessionSettingsRequest) -> models.BacktestSessionDetail:
     """Per-session settings the workspace edits in place: the display name, the
     Quick Buy/Sell quantity (FXR_V2_SPEC.md section 3.1: "persists per
-    session"), the strategy checklist (3.5) and Scalper Mode (3.4). Only the
-    fields actually sent change."""
+    session"), the strategy checklist (3.5), Scalper Mode (3.4) and (G5) the chart
+    timeframe and the step size. Only the fields actually sent change."""
     data = _read(session_id)
     updates = req.model_dump(exclude_unset=True)
     if "quick_quantity" in updates:
@@ -488,6 +537,12 @@ def update_session_settings(session_id: str, req: models.UpdateSessionSettingsRe
     if "scalper" in updates:
         # Validated and normalised by models.ScalperConfig (already applied to `req`).
         data["scalper"] = req.scalper.model_dump() if req.scalper is not None else None
+    for field in ("chart_timeframe", "step_size"):
+        if field in updates:
+            if updates[field] is None:
+                raise InvalidSessionRequest(f"{field} cannot be cleared")
+            _validate_timeframe(updates[field], field)
+            data[field] = updates[field]
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)

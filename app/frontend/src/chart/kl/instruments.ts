@@ -54,14 +54,20 @@ export const INSTRUMENTS: InstrumentSpec[] = [
   },
 ]
 
-// Mirrors ChartPanel.tsx's TIMEFRAMES exactly -- the KL engine supports no
-// more and no less than the lightweight-charts engine does today, so the
-// two stay comparable during the migration's side-by-side period.
+// The timeframes the KL engine can draw: ChartPanel.tsx's four plus the other
+// whole-minute/hour candles a manual session may chart (G5, any timeframe at or
+// above 1m -- see chart/replayBars.ts SESSION_TIMEFRAMES).
 const TF_TO_PERIOD: Record<string, Period> = {
   '1min': { type: 'minute', span: 1 },
+  '2min': { type: 'minute', span: 2 },
+  '3min': { type: 'minute', span: 3 },
   '5min': { type: 'minute', span: 5 },
+  '10min': { type: 'minute', span: 10 },
   '15min': { type: 'minute', span: 15 },
+  '30min': { type: 'minute', span: 30 },
   '1h': { type: 'hour', span: 1 },
+  '2h': { type: 'hour', span: 2 },
+  '4h': { type: 'hour', span: 4 },
 }
 
 export function tfToPeriod(tf: string): Period | null {

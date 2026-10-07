@@ -120,6 +120,9 @@ export const api = {
   getSessions: (params: QueryParams) => request<SessionWindow[]>('/sessions', params),
   getDailyRisk: (runId: string) => request<DailyRiskPoint[]>(`/runs/${runId}/daily_risk`),
   getIndicators: (params: QueryParams) => request<IndicatorResponse>('/indicators', params),
+  // G5: the same indicators as a replay at `cursor` sees them -- computed by the
+  // backend from 1m bars at or before the cursor, the partial candle included.
+  getReplayIndicators: (params: QueryParams) => request<IndicatorResponse>('/indicators/replay', params),
   getAiStatus: () => request<AiStatusResponse>('/ai/status'),
   summarizeRun: (runId: string, scope: 'all' | 'is' | 'oos' = 'oos') =>
     postRequest<SummarizeResponse>(`/runs/${runId}/summarize`, { scope }),

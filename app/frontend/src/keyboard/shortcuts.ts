@@ -159,7 +159,7 @@ const SESSION_SHORTCUTS: ShortcutDef[] = [
   { id: 'sessionPlayPause', combos: [{ key: ' ', ...PLAIN_MODS }], label: 'Space', description: 'Play / pause the replay', category: 'Session' },
   { id: 'sessionSpeedUp', combos: [{ code: 'BracketRight', ...PLAIN_MODS }], label: ']', description: 'Replay speed up', category: 'Session' },
   { id: 'sessionSpeedDown', combos: [{ code: 'BracketLeft', ...PLAIN_MODS }], label: '[', description: 'Replay speed down', category: 'Session' },
-  { id: 'sessionGranularityUp', combos: [{ code: 'BracketRight', ...TRADE_MODS }], label: 'Shift+]', description: 'Step size up (1m, 5m, 15m, 1h)', category: 'Session' },
+  { id: 'sessionGranularityUp', combos: [{ code: 'BracketRight', ...TRADE_MODS }], label: 'Shift+]', description: 'Step size up (1m, 3m, 5m, 15m, 30m, 1h, 4h)', category: 'Session' },
   { id: 'sessionGranularityDown', combos: [{ code: 'BracketLeft', ...TRADE_MODS }], label: 'Shift+[', description: 'Step size down', category: 'Session' },
   { id: 'sessionNewMarket', combos: [{ key: 'm', ...TRADE_MODS }], label: 'Shift+M', description: 'New market order: open the order dialog on Market', category: 'Session' },
   { id: 'sessionNewLimit', combos: [{ key: 'l', ...TRADE_MODS }], label: 'Shift+L', description: 'New limit order: open the order dialog on Limit', category: 'Session' },

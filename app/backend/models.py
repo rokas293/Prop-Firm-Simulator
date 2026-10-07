@@ -234,6 +234,11 @@ class CreateSessionRequest(BaseModel):
     assets: Optional[List[str]] = None
     name: Optional[str] = None
     base_timeframe: str
+    # FXR_V2_SPEC.md section 5 (G5): the chart's timeframe and the replay's step
+    # size are independent. Both default to base_timeframe (what a v1 client
+    # sends), so a session made without them behaves as it always did.
+    chart_timeframe: Optional[str] = None
+    step_size: Optional[str] = None
     # Exactly one of start_time/random_start is used (random_start=True
     # ignores start_time and picks server-side, so the client never sees --
     # let alone influences -- which historical point it lands on).
@@ -367,6 +372,11 @@ class BacktestSessionSummary(BaseModel):
     instrument: str
     assets: List[str] = Field(default_factory=list)
     base_timeframe: str
+    # G5: the chart's timeframe and how far one replay step advances, each any
+    # allowed timeframe at or above 1m. A session saved before G5 carries
+    # neither; they load as base_timeframe (see bt_session_service._migrate).
+    chart_timeframe: Optional[str] = None
+    step_size: Optional[str] = None
     start_time: int
     # The cursor stops at this time (inclusive of the last bar at or before
     # it). None = no end (v1 sessions).
@@ -381,6 +391,8 @@ class BacktestSessionSummary(BaseModel):
     scalper: Optional[ScalperConfig] = None
     created_at: str
     updated_at: str
+    # The open time of the last 1-minute bar revealed (G5: the cursor always
+    # counts in 1m bars, whatever the chart timeframe or step size).
     cursor_time: int
     status: str  # "active" | "archived"
     account: SimAccountModel
@@ -414,6 +426,9 @@ class UpdateSessionSettingsRequest(BaseModel):
     quick_quantity: Optional[int] = None
     checklist: Optional[List[str]] = None
     scalper: Optional[ScalperConfig] = None
+    # G5: the chart's timeframe / the step size; each any allowed timeframe.
+    chart_timeframe: Optional[str] = None
+    step_size: Optional[str] = None
 
 
 class UpdateCursorRequest(BaseModel):

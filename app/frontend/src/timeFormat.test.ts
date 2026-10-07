@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { etDayEndUnix, etDayStartUnix, etDayTicks, etWallTimeToUnix, fmtEtDate, fmtEtDateTime, fmtEtDateTimeSec, fmtEtShort, fmtEtTick } from './timeFormat'
+import { etDayEndUnix, etDayStartUnix, etDayTicks, etWallTimeToUnix, fmtEtDate, fmtEtDateTime, fmtEtDateTimeSec, fmtEtInput, fmtEtShort, fmtEtTick } from './timeFormat'
 
 const utc = (iso: string) => Date.parse(iso) / 1000
 
@@ -102,5 +102,15 @@ describe('etDayTicks', () => {
     expect(ticks).toHaveLength(6)
     expect(ticks[0]).toBe(times[0])
     expect(ticks[5]).toBe(times[39])
+  })
+})
+
+describe('fmtEtInput', () => {
+  it('is the datetime-local value of an instant in ET, and the inverse of etWallTimeToUnix', () => {
+    expect(fmtEtInput(utc('2024-01-15T14:30:00Z'))).toBe('2024-01-15T09:30')
+    expect(fmtEtInput(utc('2024-07-15T13:30:00Z'))).toBe('2024-07-15T09:30') // EDT
+    for (const wall of ['2024-03-12T09:30', '2024-11-05T16:59', '2025-01-02T00:00']) {
+      expect(fmtEtInput(etWallTimeToUnix(wall)!)).toBe(wall)
+    }
   })
 })

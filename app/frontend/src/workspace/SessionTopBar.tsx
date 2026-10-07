@@ -21,7 +21,7 @@ import {
   Sun,
 } from 'lucide-react'
 import { SPEEDS } from '../panels/ReplayControls'
-import { STEP_GRANULARITIES, type StepGranularityLabel } from '../chart/sessionEnd'
+import { SESSION_TIMEFRAMES } from '../chart/replayBars'
 import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
 
 export const ICON_BUTTON =
@@ -72,6 +72,9 @@ export interface SessionMenuProps {
   onToggleMagnifier?: () => void
   // Set when starting the replay elsewhere would rewind it (prop sessions).
   replayStartBlockedReason?: string
+  // G5: glide the forming candle between steps during auto-play (cosmetic).
+  smoothCandles: boolean
+  onToggleSmoothCandles: () => void
   onOpenAppSettings: () => void
   onOpenShortcuts: () => void
 }
@@ -87,10 +90,10 @@ export interface PlaybackProps {
   // Prop sessions: step back stays visible but inert, and says why.
   stepBackBlockedReason?: string
   canStepForward: boolean
-  granularity: StepGranularityLabel
-  onGranularityChange: (g: StepGranularityLabel) => void
-  // Granularities this session's base bar can actually step by.
-  availableGranularities: ReadonlySet<StepGranularityLabel>
+  // How far one step advances: a timeframe id ('1min' ... '4h'), independent of the
+  // chart's own timeframe (G5).
+  stepSize: string
+  onStepSizeChange: (id: string) => void
   autoPlay: boolean
   onToggleAutoPlay: () => void
   // The cursor's wall time, ET -- shown quietly after the pill.
@@ -162,6 +165,7 @@ function SessionMenu({ menu }: { menu: SessionMenuProps }) {
             pressed: menu.pickingReplayStart,
             disabledReason: menu.replayStartBlockedReason,
           })}
+          {row('Smooth candles (auto-play)', menu.onToggleSmoothCandles, { pressed: menu.smoothCandles })}
           {menu.onToggleMagnifier &&
             row(menu.magnifierArmed ? 'Click a bar to magnify…' : 'Magnify a bar', menu.onToggleMagnifier, {
               pressed: menu.magnifierArmed,
@@ -213,16 +217,19 @@ function PlaybackPill({ pb }: { pb: PlaybackProps }) {
       <IconButton label={pb.isPlaying ? 'Pause' : 'Play'} onClick={pb.onTogglePlaying}>
         {pb.isPlaying ? <Pause size={16} aria-hidden /> : <Play size={16} aria-hidden />}
       </IconButton>
+      <span className="micro-label pl-1" aria-hidden>
+        Step
+      </span>
       <select
-        value={pb.granularity}
-        onChange={(e) => pb.onGranularityChange(e.target.value as StepGranularityLabel)}
-        aria-label="Step granularity"
-        title="How far one step advances. Finer than the session's base timeframe needs the 1-minute replay (a later phase)."
+        value={pb.stepSize}
+        onChange={(e) => pb.onStepSizeChange(e.target.value)}
+        aria-label="Step size"
+        title="Step size: how far one step advances (Shift+[ and Shift+]). The chart timeframe is separate."
         className="propbt-input w-14"
       >
-        {STEP_GRANULARITIES.map((g) => (
-          <option key={g.label} value={g.label} disabled={!pb.availableGranularities.has(g.label)}>
-            {g.label}
+        {SESSION_TIMEFRAMES.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.label}
           </option>
         ))}
       </select>
@@ -254,7 +261,8 @@ export default function SessionTopBar({
   actions,
 }: {
   name: string
-  // e.g. "5min · to Mar 14", muted, after the name (the name already carries the asset).
+  // e.g. "to Mar 14", muted, after the name (the name already carries the asset; the
+  // timeframes are on the chart toolbar and the pill). Empty = nothing shown.
   subtitle: string
   // null = no lock on this session; otherwise whether it has engaged.
   disciplineLock: { engaged: boolean } | null
@@ -272,7 +280,7 @@ export default function SessionTopBar({
         <span className="truncate text-sm text-text" title={name}>
           {name}
         </span>
-        <span className="ml-2 hidden whitespace-nowrap text-xs text-text-muted md:inline">{subtitle}</span>
+        {subtitle && <span className="ml-2 hidden whitespace-nowrap text-xs text-text-muted md:inline">{subtitle}</span>}
         {disciplineLock && (
           <span
             className="ml-1 hidden items-center gap-1 text-xs text-text-muted lg:flex"
@@ -292,7 +300,7 @@ export default function SessionTopBar({
       <div className="flex items-center gap-2">
         <PlaybackPill pb={playback} />
         {playback.cursorLabel && (
-          <span className="hidden whitespace-nowrap text-xs tabular-nums text-text-muted xl:inline">{playback.cursorLabel}</span>
+          <span className="hidden whitespace-nowrap text-xs tabular-nums text-text-muted lg:inline">{playback.cursorLabel}</span>
         )}
       </div>
 

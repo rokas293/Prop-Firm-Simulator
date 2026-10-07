@@ -18,7 +18,7 @@
 // Place Order dialog replaced F3's drag-to-place "New Trade" ticket.
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL, { type ChartKLHandle, type OrderLineSpec, type PositionToolSpec } from '../chart/kl/ChartKL'
-import type { SessionBand } from '../chart/kl/sessionOverlay'
+import { revealedSessionBands, type SessionBand } from '../chart/kl/sessionOverlay'
 import { positionCapMessage } from '../chart/positionCap'
 import { defaultToolLevels } from '../chart/positionTool'
 import { balanceFor, riskPctFromUsd, type OrderContext, type OrderKind, type OrderRequest, type PositionToolLevels } from '../chart/orderTicket'
@@ -78,16 +78,24 @@ import { useKLDrawingStore } from '../state/klDrawingStore'
 import { DRAWING_SHORTCUTS, isTypingTarget } from '../keyboard/shortcuts'
 import TradePanel, { type PositionRow, type WorkingOrderRow } from './TradePanel'
 import PropRulesPopover from './PropRulesPopover'
+import { isSessionEnded, lastAllowedIndex, sessionDisplayName } from '../chart/sessionEnd'
 import {
-  isSessionEnded,
-  lastAllowedIndex,
-  sessionDisplayName,
-  STEP_GRANULARITIES,
-  stepBarCount,
-  shiftGranularity,
-  steppedIndex,
-  type StepGranularityLabel,
-} from '../chart/sessionEnd'
+  HISTORY_BARS,
+  MAX_HISTORY_BARS,
+  SESSION_TIMEFRAMES,
+  bucketStart,
+  heldBaseBars,
+  historyBarsFor,
+  historyWindow,
+  lastIndexAtOrBefore,
+  nextStepIndex,
+  prevStepIndex,
+  shiftTimeframe,
+  timeframeSeconds,
+} from '../chart/replayBars'
+import { smoothDurationMs } from '../chart/smoothCandle'
+import { spliceTail } from '../chart/replayIndicators'
+import { useReplayIndicators } from './useReplayIndicators'
 import { clampPanelHeight, PANEL_DEFAULT_HEIGHT, useSessionPrefsStore } from '../state/sessionPrefsStore'
 import { dropLegacyScalper, readLegacyScalper, readScalper, useScalperStore } from '../state/scalperStore'
 import {
@@ -134,7 +142,7 @@ const JournalPanel = lazy(() => import('../panels/JournalPanel'))
 // ever remove bars), so the limit is never exceeded at the session's own
 // timeframe.
 const MAX_POINTS = 3000
-const BASE_TF_SECONDS: Record<string, number> = { '1min': 60, '5min': 300, '15min': 900, '1h': 3600 }
+const BASE_TF_SECONDS: Record<string, number> = Object.fromEntries(SESSION_TIMEFRAMES.map((t) => [t.id, t.seconds]))
 
 // Mid-replay re-anchor: when the cursor is within REANCHOR_TRIGGER_BARS of the
 // last loaded bar, the window is rebuilt with the cursor REANCHOR_LOOKAHEAD_BARS
@@ -143,6 +151,14 @@ const BASE_TF_SECONDS: Record<string, number> = { '1min': 60, '5min': 300, '15mi
 // next trigger is a long way off. LOOKAHEAD must stay > TRIGGER.
 const REANCHOR_TRIGGER_BARS = 20
 const REANCHOR_LOOKAHEAD_BARS = 200
+// The same, backwards (a rewind, G5): within REANCHOR_BACK_TRIGGER_BARS of the first
+// loaded 1-minute bar the window is rebuilt with the cursor REANCHOR_BACK_LOOKAHEAD_BARS
+// from its far end -- history and room ahead in equal measure. The trigger stays
+// above 4h of minutes (240) so the forming candle of the largest timeframe is always
+// fully inside the window.
+const SESSION_BANDS_MAX_DAYS = 45
+const REANCHOR_BACK_TRIGGER_BARS = 300
+const REANCHOR_BACK_LOOKAHEAD_BARS = 1500
 
 // Exported for direct unit testing (same pattern as client.ts's buildQuery)
 // -- this is the exact-cursor-restore logic the F1 verification scenario
@@ -177,6 +193,21 @@ export function shouldReanchor(
   if (barCount === 0 || lastBarTime === undefined) return false
   if (cursorIndex < barCount - 1 - triggerBars) return false
   return lastBarTime !== lastReanchoredAtBarTime
+}
+
+// Whether stepping BACK should re-anchor the fetch window: the cursor is within
+// `triggerBars` of the first loaded bar. `lastReanchoredAtFirstBarTime` is the first
+// bar a re-anchor was already requested for -- if the first loaded bar is still that
+// one, the data has run out at its start, so asking again would refetch forever.
+export function shouldReanchorBack(
+  cursorIndex: number,
+  firstBarTime: number | undefined,
+  lastReanchoredAtFirstBarTime: number | null,
+  triggerBars = REANCHOR_BACK_TRIGGER_BARS,
+): boolean {
+  if (firstBarTime === undefined) return false
+  if (cursorIndex >= triggerBars) return false
+  return firstBarTime !== lastReanchoredAtFirstBarTime
 }
 
 // The CAMERA's default view is deliberately much tighter than the FETCH
@@ -280,6 +311,19 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const drawingHistoryRef = useRef<DrawingHistory>(emptyHistory())
   const [, setHistoryVersion] = useState(0)
   const prefs = useSessionPrefsStore()
+  // FXR_V2_SPEC.md section 5 (G5): the chart's timeframe and the step size are the
+  // session's own, independent settings -- local state is what the UI reads (so a
+  // click never waits for the save), mirrored to the session file; re-seeded from the
+  // saved values when a session loads.
+  const [chartTf, setChartTf] = useState('5min')
+  const [stepSize, setStepSize] = useState('5min')
+  // The chart's HISTORY (the completed candles before the one forming) is cut at the
+  // cursor time it was last anchored on; a Go To to an older date asks for more.
+  const [historyAnchor, setHistoryAnchor] = useState<number | null>(null)
+  const [historyBars, setHistoryBars] = useState(HISTORY_BARS)
+  const [goTo, setGoTo] = useState<{ time: number; nonce: number } | null>(null)
+  // The chart view is parked on a past date by a Go To (shows the way back).
+  const [viewDetached, setViewDetached] = useState(false)
   // FXR_V2_SPEC.md 3.4 (G4): Scalper Mode -- preset SL/TP/break-even distances
   // for every Quick Buy/Sell and right-click order while armed. Remembered per
   // session: the session file is the source of truth (loaded below, saved on
@@ -440,6 +484,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // bars refetch (a re-anchored window has a different array, so the
   // INDEX from before is meaningless; the TIME is what's real).
   const cursorTimeRef = useRef<number | null>(null)
+  // What advanceTo (called from the play interval's closure) needs to read live.
+  const chartTfSecondsRef = useRef(300)
+  const startIndexRef = useRef(0)
+  const historyFromRef = useRef<number | null>(null)
+  const lastReanchoredBackAtFirstBarTimeRef = useRef<number | null>(null)
   // Mirrors cursorIndex/position/workingOrders for synchronous reads from
   // the play-interval's setInterval callback (a plain function, not a
   // React reducer -- see advanceTo's own comment for why that distinction
@@ -486,9 +535,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     scalperSeededForRef.current = session.id
     setMagnifyBarTime(null)
     setMagnifierArmed(false)
+    setChartTf(session.chart_timeframe ?? session.base_timeframe)
+    setStepSize(session.step_size ?? session.base_timeframe)
+    setHistoryAnchor(session.cursor_time)
+    setHistoryBars(HISTORY_BARS)
+    setGoTo(null)
+    initialFitAppliedRef.current = false
     setWindowAnchor(session.cursor_time)
     setWindowLookahead(null)
     lastReanchoredAtBarTimeRef.current = null
+    lastReanchoredBackAtFirstBarTimeRef.current = null
     reanchoredAnchorRef.current = null
     setIsPlaying(false)
     setPosition(null)
@@ -499,18 +555,31 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setOrderDialogOpen(false)
   }, [session])
 
+  // The replay's FEED: 1-minute bars around the cursor (G5). Every step, fill and
+  // forming candle is built from these, whatever the chart timeframe or step size;
+  // a re-anchor swaps the window as the cursor nears either end.
   const barsWindow = useMemo(
-    () => (windowAnchor !== null && session ? computeWindow(windowAnchor, session.base_timeframe, windowLookahead ?? undefined) : null),
-    [windowAnchor, windowLookahead, session?.base_timeframe],
+    () => (windowAnchor !== null && session ? computeWindow(windowAnchor, '1min', windowLookahead ?? undefined) : null),
+    [windowAnchor, windowLookahead, session?.id],
   )
 
   const { data: bars, isFetching: barsFetching } = useBars(
     session?.instrument ?? null,
-    session?.base_timeframe ?? '5min',
+    '1min',
     barsWindow?.from ?? null,
     barsWindow?.to ?? null,
     MAX_POINTS,
+    true,
   )
+
+  // The chart's history window for the current timeframe (see historyAnchor).
+  const chartTfSeconds = timeframeSeconds(chartTf)
+  chartTfSecondsRef.current = chartTfSeconds
+  const chartHistory = useMemo(
+    () => (historyAnchor !== null ? historyWindow(historyAnchor, chartTfSeconds, historyBars) : null),
+    [historyAnchor, chartTfSeconds, historyBars],
+  )
+  historyFromRef.current = chartHistory?.from ?? null
 
   // FXR_V2_SPEC.md section 4: the cursor stops at end_date -- the furthest bar
   // it may reach in the loaded window (chart/sessionEnd.ts). Read by the step,
@@ -574,6 +643,21 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const resynced = resyncCursorIndex(bars, cursorTimeRef.current)
     if (resynced !== cursorIndex) setCursorIndexState(resynced)
     cursorIndexRef.current = resynced
+    // The sim broker's indices are positions in the feed array, which a re-anchor
+    // replaces: re-resolve the open position's entry and each order's placement from
+    // their times, or MAE/MFE would scan the wrong bars.
+    const held = positionRef.current
+    if (held) {
+      const entryIndex = resyncCursorIndex(bars, held.entryTime)
+      if (entryIndex !== held.entryIndex) {
+        positionRef.current = { ...held, entryIndex }
+        setPosition(positionRef.current)
+      }
+    }
+    if (workingOrdersRef.current.some((o) => o.placedIndex !== resyncCursorIndex(bars, o.placedTime))) {
+      workingOrdersRef.current = workingOrdersRef.current.map((o) => ({ ...o, placedIndex: resyncCursorIndex(bars, o.placedTime) }))
+      setWorkingOrders(workingOrdersRef.current)
+    }
   }
 
   // Fit the camera to a tight window around the anchor -- see
@@ -596,9 +680,6 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // because the parent's bars query lands after ChartKL's own load and fires
   // a later range event for the same window.
   const reanchoredAnchorRef = useRef<number | null>(null)
-  useEffect(() => {
-    initialFitAppliedRef.current = false
-  }, [bars])
   const handleChartVisibleRangeChange = (range: { from: number; to: number } | null) => {
     // null means ChartKL's own data list is still empty (see its own
     // handleVisibleRangeChange) -- not yet the "real data is ready" signal.
@@ -687,7 +768,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       mfe_points: trade.mfePoints,
       mae_r: trade.maeR,
       mfe_r: trade.mfeR,
-      bars_held: trade.barsHeld,
+      // The replay counts in 1m bars; v1 journaled the session's own base bars, and
+      // a session's trades keep that unit whatever the chart timeframe is.
+      bars_held: bars ? heldBaseBars(bars, trade.entryTime, trade.exitTime, BASE_TF_SECONDS[session.base_timeframe] ?? 60) : trade.barsHeld,
       // One exit of a position (FXR_V2_SPEC.md 3.6): the server merges every
       // exit sharing this key into a single trade.
       trade_key: trade.tradeKey,
@@ -714,19 +797,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // once per step, not twice -- reading cursorIndexRef instead of an
   // updater's `prev` gets the same "always current" guarantee without
   // that risk.
-  // Step granularity (the pill's dropdown): one step advances this many base
-  // bars. Until the 1m forming-candle replay (G5) a granularity finer than the
-  // session's base timeframe is unavailable; a saved one that is falls back to
-  // the base. advanceReplay evaluates every bar passed over, so a multi-bar
-  // step fills and stops exactly as the same single steps would.
-  const baseBarSeconds = session ? (BASE_TF_SECONDS[session.base_timeframe] ?? 300) : 300
-  const availableGranularities = new Set<StepGranularityLabel>(
-    STEP_GRANULARITIES.filter((g) => stepBarCount(g.seconds, baseBarSeconds) !== null).map((g) => g.label),
-  )
-  const granularity: StepGranularityLabel = availableGranularities.has(prefs.stepGranularity)
-    ? prefs.stepGranularity
-    : (STEP_GRANULARITIES.find((g) => availableGranularities.has(g.label))?.label ?? '1m')
-  const stepCount = stepBarCount(STEP_GRANULARITIES.find((g) => g.label === granularity)?.seconds ?? baseBarSeconds, baseBarSeconds) ?? 1
+  // The step size (the pill's dropdown, saved on the session): one step advances to
+  // the end of a candle of this size (chart/replayBars.ts nextStepIndex). The chart
+  // timeframe is independent of it, and every fill is evaluated on every 1m bar the
+  // step passes over (advanceReplay), so how it is stepped never changes a result.
+  const stepSeconds = timeframeSeconds(stepSize)
 
   const advanceTo = async (newIndex: number) => {
     if (!session || !bars) return
@@ -734,6 +809,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (lastAllowedRef.current >= 0 && newIndex > lastAllowedRef.current) {
       newIndex = lastAllowedRef.current
       setIsPlaying(false)
+      if (newIndex === cursorIndexRef.current) return
+    }
+    // Never before the session's start (see minIndex).
+    if (newIndex < cursorIndexRef.current && newIndex < startIndexRef.current) {
+      newIndex = Math.min(cursorIndexRef.current, startIndexRef.current)
       if (newIndex === cursorIndexRef.current) return
     }
     // Prop sessions never rewind (the backend refuses it too).
@@ -804,6 +884,18 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       reanchoredAnchorRef.current = bars[newIndex].time
       setWindowAnchor(bars[newIndex].time)
       setWindowLookahead(REANCHOR_LOOKAHEAD_BARS)
+    } else if (shouldReanchorBack(newIndex, bars[0]?.time, lastReanchoredBackAtFirstBarTimeRef.current)) {
+      // A rewind nearing the first loaded bar: rebuild the window around the cursor.
+      lastReanchoredBackAtFirstBarTimeRef.current = bars[0].time
+      reanchoredAnchorRef.current = bars[newIndex].time
+      setWindowAnchor(bars[newIndex].time)
+      setWindowLookahead(REANCHOR_BACK_LOOKAHEAD_BARS)
+    }
+    // ...and the chart's history too, once a rewind has gone behind what it loaded.
+    const historyFrom = historyFromRef.current
+    if (t !== undefined && historyFrom !== null && bucketStart(t, chartTfSecondsRef.current) < historyFrom + 50 * chartTfSecondsRef.current) {
+      setHistoryAnchor(t)
+      setHistoryBars(HISTORY_BARS)
     }
   }
 
@@ -817,11 +909,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         setIsPlaying(false)
         return
       }
-      advanceTo(steppedIndex(prev, 1, stepCount, 0, lastAllowedRef.current))
+      advanceTo(nextStepIndex(bars, prev, stepSeconds, lastAllowedRef.current))
     }, 1000 / speed)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, bars, speed, stepCount])
+  }, [isPlaying, bars, speed, stepSeconds])
 
 
   // While the window swaps (bars briefly undefined) keep the logical cursor
@@ -829,11 +921,17 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // every bar of the incoming window (look-ahead).
   const cursorTime = bars ? (bars[cursorIndex]?.time ?? null) : cursorTimeRef.current
 
-  const { data: sessionsInView } = useSessions(
-    session?.instrument ?? null,
-    barsWindow?.from ?? null,
-    barsWindow?.to ?? null,
-  )
+  // What the chart is built from (null until the feed has loaded: it draws nothing).
+  const replayFeed = useMemo(() => (bars && bars.length > 0 ? { feed: bars, cursorIndex } : null), [bars, cursorIndex])
+
+  // Session shading wherever candles are shown: the chart's history reaches further back
+  // than the 1m feed, so the range spans both (capped, whole days so the query is stable).
+  const sessionsFrom = useMemo(() => {
+    if (!barsWindow) return null
+    const earliest = Math.max(Math.min(barsWindow.from, chartHistory?.from ?? barsWindow.from), barsWindow.to - SESSION_BANDS_MAX_DAYS * 86400)
+    return Math.floor(earliest / 86400) * 86400
+  }, [barsWindow?.from, barsWindow?.to, chartHistory?.from])
+  const { data: sessionsInView } = useSessions(session?.instrument ?? null, sessionsFrom, barsWindow?.to ?? null)
   const sessionBands: SessionBand[] = useMemo(
     () =>
       (sessionsInView ?? []).map((s) => ({
@@ -841,9 +939,19 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         end: s.end,
         session: s.session,
         fairValue: s.fair_value,
+        fairValueTime: s.fair_value_time,
       })),
     [sessionsInView],
   )
+  // What the CHART may show: only sessions the cursor has reached, and a fair value only
+  // once it is known (/api/sessions lists the window's future sessions too, fair values
+  // from prices the replay has not shown). Memoised on what is actually revealed, so the
+  // chart's session overlays are rebuilt when a session starts or a fair value appears --
+  // not on every step.
+  const revealedBands = revealedSessionBands(sessionBands, cursorTime ?? 0)
+  const revealedBandsKey = revealedBands.map((b) => `${b.session}${b.start}:${b.fairValue ?? ''}`).join('|')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const chartBands = useMemo(() => revealedBands, [revealedBandsKey, sessionBands])
 
   // FXR_SPEC.md section C, phase F5's trade-review jump: a camera-only pan
   // (fitRange), never a change to replay state (cursorIndex/position/
@@ -856,9 +964,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // indexes into `bars` by position, not time).
   const handleJumpToTrade = (trade: ManualTrade) => {
     if (!session || !bars || bars.length === 0) return
-    const fit = reviewFitWindow(trade.entry_time, trade.exit_time, session.base_timeframe)
-    const from = Math.max(fit.from, bars[0].time)
-    const to = Math.min(fit.to, bars[bars.length - 1].time)
+    const fit = reviewFitWindow(trade.entry_time, trade.exit_time, chartTf)
+    // Clamped to what the chart has loaded: its history up to the revealed cursor.
+    const from = Math.max(fit.from, chartHistory?.from ?? bars[0].time)
+    const to = Math.min(fit.to, cursorTimeRef.current ?? bars[bars.length - 1].time)
     if (from >= to) return
     klChartRef.current?.fitRange(from, to)
   }
@@ -901,21 +1010,34 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (indicatorPrefs.atr14) names.push('atr14')
     return names
   }, [indicatorPrefs.vwap, indicatorPrefs.ema20, indicatorPrefs.ema50, indicatorPrefs.atr14])
-  const { data: indicatorData } = useIndicators(
+  // G5: the history's indicators load once (every candle in it is complete); the
+  // candles built since -- the forming one included -- come from the backend as of
+  // the cursor on every step (useReplayIndicators). Nothing is computed in the
+  // browser: the two are only spliced where the tail starts.
+  const { data: indicatorHistory } = useIndicators(
     session?.instrument ?? null,
-    session?.base_timeframe ?? '5min',
-    barsWindow?.from ?? null,
-    barsWindow?.to ?? null,
+    chartTf,
+    chartHistory?.from ?? null,
+    chartHistory?.to ?? null,
     enabledIndicators,
   )
+  const indicatorTail = useReplayIndicators({
+    instrument: session?.instrument ?? null,
+    timeframe: chartTf,
+    tfSeconds: chartTfSeconds,
+    historyFrom: chartHistory?.from ?? null,
+    historyEnd: chartHistory?.to ?? null,
+    cursorTime,
+    which: enabledIndicators,
+  })
   const indicators = useMemo(
     () => ({
-      vwap: indicatorData?.vwap ?? [],
-      ema20: indicatorData?.ema20 ?? [],
-      ema50: indicatorData?.ema50 ?? [],
-      atr14: indicatorData?.atr14 ?? [],
+      vwap: spliceTail(indicatorHistory?.vwap ?? [], indicatorTail.vwap ?? []),
+      ema20: spliceTail(indicatorHistory?.ema20 ?? [], indicatorTail.ema20 ?? []),
+      ema50: spliceTail(indicatorHistory?.ema50 ?? [], indicatorTail.ema50 ?? []),
+      atr14: spliceTail(indicatorHistory?.atr14 ?? [], indicatorTail.atr14 ?? []),
     }),
-    [indicatorData],
+    [indicatorHistory, indicatorTail],
   )
 
   // True while nothing is working/open -- the shared gate for every action
@@ -1292,13 +1414,17 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // position has them (F3).
   const openPositionRecord: TradeRecord | null =
     position && session && bars && bars[cursorIndex]
-      ? openPositionAsTradeRecord({
-          position,
-          instrument: session.instrument,
-          cursorIndex,
-          markPrice: bars[cursorIndex].close,
-          cursorTime: bars[cursorIndex].time,
-        })
+      ? {
+          ...openPositionAsTradeRecord({
+            position,
+            instrument: session.instrument,
+            cursorIndex,
+            markPrice: bars[cursorIndex].close,
+            cursorTime: bars[cursorIndex].time,
+          }),
+          // Counted in the session's base timeframe, like every journaled trade.
+          bars_held: heldBaseBars(bars, position.entryTime, bars[cursorIndex].time, BASE_TF_SECONDS[session.base_timeframe] ?? 60),
+        }
       : null
 
   // A trade with contracts still open (a partial close) is drawn through the
@@ -1397,19 +1523,46 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return []
   }
 
-  const baseTfSeconds = session ? (BASE_TF_SECONDS[session.base_timeframe] ?? 300) : 300
+  // Moves the replay cursor to `time` (a rewind: "Set replay start"). Inside the loaded
+  // feed it is a plain move; before it, the feed is re-anchored on the target first.
+  // The prop and discipline-lock rules apply either way.
+  const jumpCursorToTime = (requestedTime: number) => {
+    if (!session || !bars) return
+    const time = Math.max(requestedTime, session.start_time)
+    const index = lastIndexAtOrBefore(bars, time)
+    if (index >= 0) {
+      handleCursorIndexChange(index)
+      return
+    }
+    if (session.account.prop_ruleset) {
+      setOrderNotice(PROP_REWIND_MESSAGE)
+      return
+    }
+    if (session.discipline_lock && lockFloorRef.current !== null && time < lockFloorRef.current) {
+      setOrderNotice(REWIND_BLOCKED_MESSAGE)
+      return
+    }
+    setIsPlaying(false)
+    cursorTimeRef.current = time
+    reanchoredAnchorRef.current = time
+    lastReanchoredBackAtFirstBarTimeRef.current = null
+    setWindowAnchor(time)
+    setWindowLookahead(REANCHOR_BACK_LOOKAHEAD_BARS)
+    setHistoryAnchor(time)
+    setHistoryBars(HISTORY_BARS)
+    persist(time)
+  }
   const handleCandleBarClick = (bar: { timestamp: number }) => {
+    const barTime = bar.timestamp / 1000
     if (magnifierArmed) {
-      const barTime = bar.timestamp / 1000
       // Only a bar the cursor has reached can be magnified (chart/magnifier.ts).
-      if (magnifierRange(barTime, baseTfSeconds, cursorTime) !== null) setMagnifyBarTime(barTime)
+      if (magnifierRange(barTime, chartTfSeconds, cursorTime) !== null) setMagnifyBarTime(barTime)
       setMagnifierArmed(false)
       return
     }
     if (!pickingReplayStart || !bars) return
-    const clickedTimeSec = bar.timestamp / 1000
-    const index = bars.findIndex((b) => b.time === clickedTimeSec)
-    if (index >= 0) handleCursorIndexChange(index)
+    // The replay restarts at the END of the clicked candle (never past the cursor).
+    jumpCursorToTime(Math.min(barTime + chartTfSeconds - 60, cursorTime ?? barTime))
     setPickingReplayStart(false)
   }
 
@@ -1469,16 +1622,19 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         }
       : null
 
-  // The discipline lock's floor: the pill's step-back stops here (the scrub
-  // slider that used to show it is gone; the lock itself is unchanged).
-  const minIndex = session?.discipline_lock && bars ? lockFloorIndex(bars, lockFloorRef.current) : 0
+  // The earliest the cursor may go: the discipline lock's floor, and never before the
+  // session's own start (the backend refuses to save a cursor before it, so a rewind
+  // past it would leave the screen and the saved session disagreeing).
+  const startIndex = bars && session ? Math.min(bars.length - 1, lastIndexAtOrBefore(bars, session.start_time - 1) + 1) : 0
+  startIndexRef.current = startIndex
+  const minIndex = Math.max(startIndex, session?.discipline_lock && bars ? lockFloorIndex(bars, lockFloorRef.current) : 0)
 
   // One pill step forward/back: `stepCount` base bars, clamped to the allowed
   // range (end_date forward, the lock floor back). advanceTo runs every fill
   // check across the bars passed over.
   const stepForward = () => {
     if (!bars || lastAllowedRef.current < 0 || cursorIndexRef.current >= lastAllowedRef.current) return
-    handleCursorIndexChange(steppedIndex(cursorIndexRef.current, 1, stepCount, 0, lastAllowedRef.current))
+    handleCursorIndexChange(nextStepIndex(bars, cursorIndexRef.current, stepSeconds, lastAllowedRef.current))
   }
   const stepBack = () => {
     if (!bars) return
@@ -1491,7 +1647,44 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       return
     }
     if (cursorIndexRef.current <= minIndex) return
-    handleCursorIndexChange(steppedIndex(cursorIndexRef.current, -1, stepCount, minIndex, bars.length - 1))
+    handleCursorIndexChange(prevStepIndex(bars, cursorIndexRef.current, stepSeconds, minIndex))
+  }
+
+  // The chart's timeframe: the cursor and the broker are untouched; the chart reloads
+  // its history for the new candle size, cut at the cursor, and keeps the camera in time
+  // (ChartKL's timeframe-switch view).
+  const saveSetting = (body: { chart_timeframe?: string; step_size?: string }) => {
+    if (session) updateSessionSettings.mutate({ sessionId: session.id, body })
+  }
+  const handleChartTimeframeChange = (tf: string) => {
+    if (tf === chartTf) return
+    setChartTf(tf)
+    setHistoryAnchor(cursorTimeRef.current)
+    setHistoryBars(HISTORY_BARS)
+    saveSetting({ chart_timeframe: tf })
+  }
+  const handleStepSizeChange = (tf: string) => {
+    if (tf === stepSize) return
+    setStepSize(tf)
+    saveSetting({ step_size: tf })
+  }
+
+  // A view-only Go To (G5): the chart is centred on a past date; the replay cursor, the
+  // broker and the saved session do not move. A date past the cursor is not revealed, so
+  // it lands on the cursor; one further back than the history cap allows lands on the
+  // earliest the chart can load, and says so.
+  const handleGoTo = (time: number) => {
+    if (!session || cursorTimeRef.current === null) return
+    const cursor = cursorTimeRef.current
+    if (time >= cursor) {
+      klChartRef.current?.scrollToLatest()
+      setToast('Go To shows what the replay has revealed: back at the cursor')
+      return
+    }
+    const need = historyBarsFor(historyAnchor ?? cursor, time, chartTfSeconds)
+    if (need.bars > historyBars) setHistoryBars(need.bars)
+    if (!need.reachable) setToast(`Go To reaches back about ${MAX_HISTORY_BARS.toLocaleString()} candles on this timeframe; showing the earliest it can load`)
+    setGoTo({ time, nonce: (goTo?.nonce ?? 0) + 1 })
   }
 
   const handleQuantityChange = (n: number) => {
@@ -1579,9 +1772,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     sessionNewMarket: () => openOrderDialog('market'),
     sessionNewLimit: () => openOrderDialog('limit'),
     sessionNewStop: () => openOrderDialog('stop'),
-    // Only sizes the session's base timeframe can step by (until G5).
-    sessionGranularityUp: () => prefs.setStepGranularity(shiftGranularity(granularity, 1, availableGranularities)),
-    sessionGranularityDown: () => prefs.setStepGranularity(shiftGranularity(granularity, -1, availableGranularities)),
+    sessionGranularityUp: () => handleStepSizeChange(shiftTimeframe(stepSize, 1)),
+    sessionGranularityDown: () => handleStepSizeChange(shiftTimeframe(stepSize, -1)),
     sessionStep: stepForward,
     sessionStepBack: stepBack,
     sessionPlayPause: () => setIsPlaying((v) => !v),
@@ -1603,7 +1795,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return () => window.clearTimeout(id)
   }, [toast])
 
-  const magnifyActive = magnifyBarTime !== null && magnifierRange(magnifyBarTime, baseTfSeconds, cursorTime) !== null
+  const magnifyActive = magnifyBarTime !== null && magnifierRange(magnifyBarTime, chartTfSeconds, cursorTime) !== null
 
   if (isLoading) {
     return <EmptyState title="Loading session…" />
@@ -1620,7 +1812,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     <div className="flex h-full w-full flex-col bg-bg">
       <SessionTopBar
         name={sessionDisplayName(session, fmtEtDate)}
-        subtitle={`${session.base_timeframe}${session.end_date !== null ? ` · to ${fmtEtDate(session.end_date)}` : ''}`}
+        subtitle={session.end_date !== null ? `to ${fmtEtDate(session.end_date)}` : ''}
         disciplineLock={session.discipline_lock ? { engaged: session.lock_floor_time !== null } : null}
         onBack={() => selectSession(null)}
         menu={{
@@ -1633,13 +1825,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           },
           magnifierArmed,
           onToggleMagnifier:
-            baseTfSeconds > 60
+            chartTfSeconds > 60
               ? () => {
                   setPickingReplayStart(false)
                   setMagnifierArmed((v) => !v)
                 }
               : undefined,
           replayStartBlockedReason: session.account.prop_ruleset ? PROP_REWIND_MESSAGE : undefined,
+          smoothCandles: prefs.smoothCandles,
+          onToggleSmoothCandles: () => prefs.setSmoothCandles(!prefs.smoothCandles),
           onOpenAppSettings: () => setSettingsOpen(true),
           onOpenShortcuts: () => setShortcutsOpen(true),
         }}
@@ -1653,9 +1847,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           canStepBack: !!bars && bars.length > 0 && cursorIndex > minIndex,
           stepBackBlockedReason: session.account.prop_ruleset ? PROP_REWIND_MESSAGE : undefined,
           canStepForward: !!bars && cursorIndex < lastAllowed,
-          granularity,
-          onGranularityChange: prefs.setStepGranularity,
-          availableGranularities,
+          stepSize,
+          onStepSizeChange: handleStepSizeChange,
           autoPlay: isPlaying,
           onToggleAutoPlay: () => setIsPlaying((v) => !v),
           cursorLabel: cursorBar ? fmtEtDateTime(cursorBar.time) : null,
@@ -1678,7 +1871,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       <SessionChartToolbar
         assets={session.assets}
         instrument={session.instrument}
-        baseTimeframe={session.base_timeframe}
+        chartTimeframe={chartTf}
+        onChartTimeframeChange={handleChartTimeframeChange}
+        goTo={{
+          // ET wall-clock bounds for the picker: nothing past the cursor.
+          max: cursorTime,
+          onGoTo: handleGoTo,
+          onBackToCursor: () => klChartRef.current?.scrollToLatest(),
+        }}
         indicatorCount={activeIndicatorCount}
         onOpenIndicators={() => setIndicatorDialogOpen(true)}
         candleType={prefs.candleType}
@@ -1714,13 +1914,18 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <ChartKL
             ref={klChartRef}
             instrument={session.instrument}
-            timeframe={session.base_timeframe}
-            from={barsWindow?.from ?? null}
-            to={barsWindow?.to ?? null}
+            timeframe={chartTf}
+            from={chartHistory?.from ?? null}
+            to={chartHistory?.to ?? null}
+            replay={replayFeed}
+            smoothCandles={prefs.smoothCandles && isPlaying}
+            smoothMs={smoothDurationMs(speed)}
+            goTo={goTo}
+            onDetachedChange={setViewDetached}
             trades={prefs.hideTrades ? [] : chartTrades}
             selectedTrade={prefs.hideTrades ? null : openPositionRecord}
             indicators={indicators}
-            sessionBands={sessionBands}
+            sessionBands={chartBands}
             prefs={indicatorPrefs}
             loading={barsFetching}
             preserveViewOnWindowChange
@@ -1757,6 +1962,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           {/* Transient messages float over the chart's upper edge (clear of the
               volume pane and time axis) so they never shift the chart's size: why an order
               was refused, the resolved Combine, and the session-complete state. */}
+          {viewDetached && (
+            <button
+              type="button"
+              onClick={() => klChartRef.current?.scrollToLatest()}
+              title="The chart is parked on a past date; the replay has not moved. Show the cursor again."
+              className="absolute bottom-10 right-20 z-10 h-7 rounded bg-surface-2 px-3 text-xs text-text-muted transition-colors hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Back to cursor
+            </button>
+          )}
           {hasNotices && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2 px-4">
               {sessionEnded && (
@@ -1851,8 +2066,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       {magnifyActive && magnifyBarTime !== null && (
         <MagnifierPanel
           instrument={session.instrument}
-          timeframe={session.base_timeframe}
-          tfSeconds={baseTfSeconds}
+          timeframe={chartTf}
+          tfSeconds={chartTfSeconds}
           barTime={magnifyBarTime}
           cursorTime={cursorTime}
           onClose={() => setMagnifyBarTime(null)}

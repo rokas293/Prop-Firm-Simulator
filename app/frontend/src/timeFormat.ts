@@ -45,6 +45,13 @@ export function fmtEtDateTime(unixSeconds: number): string {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${ET_LABEL}`
 }
 
+// "2024-03-10T09:30" -- the value a datetime-local input takes, read as ET (the inverse
+// of etWallTimeToUnix).
+export function fmtEtInput(unixSeconds: number): string {
+  const p = etParts(unixSeconds)
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`
+}
+
 // "2024-03-10 09:30:15 ET" -- the replay cursor, which steps in seconds-aware bars.
 export function fmtEtDateTimeSec(unixSeconds: number): string {
   const p = etParts(unixSeconds)

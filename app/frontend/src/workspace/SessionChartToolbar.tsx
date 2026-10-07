@@ -3,17 +3,12 @@
 // screenshot. One quiet 36px row of ghost controls (DESIGN_LANGUAGE.md section
 // 6); the existing IndicatorDialog and KLDrawingToolbar are reused as-is.
 import { useEffect, useRef, useState } from 'react'
-import { Camera, ChevronDown, Redo2, Undo2 } from 'lucide-react'
+import { CalendarSearch, Camera, ChevronDown, Redo2, Undo2 } from 'lucide-react'
 import type { KLCandleType } from '../chart/kl/ChartKL'
-import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
+import { SESSION_TIMEFRAMES } from '../chart/replayBars'
+import { POPOVER_FORM_PADDING, POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
+import { etWallTimeToUnix, fmtEtInput } from '../timeFormat'
 import { IconButton } from './SessionTopBar'
-
-const TIMEFRAMES = [
-  { id: '1min', label: '1m' },
-  { id: '5min', label: '5m' },
-  { id: '15min', label: '15m' },
-  { id: '1h', label: '1h' },
-] as const
 
 export const CHART_TYPES: { id: KLCandleType; label: string }[] = [
   { id: 'candle_solid', label: 'Candles' },
@@ -81,10 +76,109 @@ function ChartTypeMenu({ value, onChange }: { value: KLCandleType; onChange: (t:
   )
 }
 
+// A view-only Go To (FXR_V2_SPEC.md section 5, G5): pick an ET date and time and the chart
+// centres there. The replay cursor, the broker and the saved session do not move -- and
+// nothing past the cursor can be shown, so the picker stops at it.
+export interface GoToProps {
+  // The replay cursor (unix seconds); the picker's latest allowed time.
+  max: number | null
+  onGoTo: (time: number) => void
+  onBackToCursor: () => void
+}
+
+function GoToMenu({ goTo }: { goTo: GoToProps }) {
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        // Focus goes back to the control that opened it, not to the page.
+        ref.current?.querySelector<HTMLButtonElement>('button')?.focus()
+      }
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const unix = value ? etWallTimeToUnix(value) : null
+  const submit = () => {
+    if (unix === null) return
+    goTo.onGoTo(unix)
+    setOpen(false)
+  }
+  return (
+    <div ref={ref} className="relative">
+      <IconButton
+        label="Go to a date"
+        onClick={() => {
+          if (!open && !value && goTo.max !== null) setValue(fmtEtInput(goTo.max))
+          setOpen((v) => !v)
+        }}
+        pressed={open}
+        expanded={open}
+      >
+        <CalendarSearch size={16} aria-hidden />
+      </IconButton>
+      {open && (
+        <div role="dialog" aria-label="Go to a date" className={`${POPOVER_SHELL} ${POPOVER_FORM_PADDING} absolute right-0 top-9 z-30 w-64`}>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.04em] text-text-muted" htmlFor="goto-input">
+            Go to (ET)
+          </label>
+          <input
+            id="goto-input"
+            autoFocus
+            type="datetime-local"
+            value={value}
+            max={goTo.max !== null ? fmtEtInput(goTo.max) : undefined}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit()
+            }}
+            className="propbt-input propbt-input--well w-full"
+          />
+          <p className="mt-2 text-text-muted">View only. The replay stays where it is.</p>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                goTo.onBackToCursor()
+                setOpen(false)
+              }}
+              className="h-7 rounded px-2 text-text-muted transition-colors hover:bg-surface-2-hover hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Back to cursor
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={unix === null}
+              className="h-7 rounded bg-accent px-3 text-on-accent transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:brightness-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100"
+            >
+              Go
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function SessionChartToolbar({
   assets,
   instrument,
-  baseTimeframe,
+  chartTimeframe,
+  onChartTimeframeChange,
+  goTo,
   indicatorCount,
   onOpenIndicators,
   candleType,
@@ -97,7 +191,10 @@ export default function SessionChartToolbar({
 }: {
   assets: string[]
   instrument: string
-  baseTimeframe: string
+  // The chart's own timeframe (G5): independent of the step size, any of them can be chosen.
+  chartTimeframe: string
+  onChartTimeframeChange: (id: string) => void
+  goTo: GoToProps
   indicatorCount: number
   onOpenIndicators: () => void
   candleType: KLCandleType
@@ -131,22 +228,18 @@ export default function SessionChartToolbar({
 
       <div className="mx-2" aria-hidden />
 
-      {/* The replay runs at the session's base timeframe; viewing a coarser one
-          needs the forming candle built from 1m data (phase G5). */}
+      {/* The chart's timeframe, any of them at any time: the candles above 1m are built
+          from the revealed 1-minute bars, so switching never moves the replay cursor. */}
       <div className="flex items-center gap-1" role="group" aria-label="Timeframe">
-        {TIMEFRAMES.map((tf) => (
+        {SESSION_TIMEFRAMES.map((tf) => (
           <button
             key={tf.id}
             type="button"
-            aria-pressed={tf.id === baseTimeframe}
-            disabled={tf.id !== baseTimeframe}
-            title={
-              tf.id === baseTimeframe
-                ? `${tf.label}: this session's replay timeframe`
-                : `${tf.label}: switching the chart timeframe arrives with the 1-minute replay`
-            }
-            className={`h-7 rounded px-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed ${
-              tf.id === baseTimeframe ? 'bg-surface-2 text-text' : 'text-text-muted opacity-40'
+            aria-pressed={tf.id === chartTimeframe}
+            onClick={() => onChartTimeframeChange(tf.id)}
+            title={tf.id === chartTimeframe ? `${tf.label} chart` : `Switch the chart to ${tf.label} (the replay does not move)`}
+            className={`h-7 rounded px-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+              tf.id === chartTimeframe ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2/50 hover:text-text'
             }`}
           >
             {tf.label}
@@ -171,7 +264,8 @@ export default function SessionChartToolbar({
         <Redo2 size={16} aria-hidden />
       </IconButton>
 
-      <div className="ml-auto flex items-center">
+      <div className="ml-auto flex items-center gap-1">
+        <GoToMenu goTo={goTo} />
         <IconButton label="Download a screenshot of the chart" onClick={onScreenshot}>
           <Camera size={16} aria-hidden />
         </IconButton>

@@ -119,6 +119,15 @@ A session ends when the cursor reaches its end date. The session then shows a co
 
 Data limit: we only have 1-minute bars, so seconds timeframes and tick replay are out of scope.
 
+**G5 implementation notes** (conventions later phases build on):
+- **The cursor counts in 1m bars.** `cursor_time` is the open time of the last 1-minute bar revealed (that bar is revealed whole; market orders fill at its close). Chart timeframe and step size never change what it means. A v1 session's cursor was a *base-bar* open, so loading one moves it to that bar's last minute (`bucket_last_minute`, applied once, marked by `replay_version: 2`; the lock floor moves the same way): it shows exactly the candles it showed. Its `chart_timeframe` and `step_size` default to its `base_timeframe`, so stepping is unchanged until the step size is lowered. A new session's cursor starts at `start_time` itself.
+- **Feed vs history.** The replay holds a *feed* of 1m bars around the cursor (`/api/bars` at 1min, re-anchored as the cursor nears either end of the window). The sim broker, every step and the forming candle read only the feed, only at or before the cursor (`chart/replayBars.ts`). The chart's *history* is the completed candles before the one forming at load (`/api/bars` at the chart timeframe, ending the second before that candle opens); everything after it is built from the feed and pushed through klinecharts' `subscribeBar` callback, so a step updates the newest candle in place.
+- **A step ends on the step-size grid.** From the end of a candle a step is exactly one more candle of the step size; from mid-candle it completes that candle first; gaps (halt, weekend) are stepped over. Backward is the end of the candle before the one the cursor is in. A rewind never goes before the session's `start_time`.
+- **Fills** are checked on every 1m bar a step passes over (`advanceReplay`), so how the replay is stepped never changes a result, and a same-hour SL+TP case resolves by the real minute order. Two levels inside one *minute* stay ambiguous: the stop, as in the engine. A position/order only meets bars after the one it was entered/placed on (so a rewound replay can't fill from before it existed).
+- **Indicators on the forming candle** come from `GET /api/indicators/replay` (propbt's own functions over 1m bars `<= cursor`, resampled, so the newest candle is the partial one); the history's come from `/api/indicators`. The frontend only splices them (`chart/replayIndicators.ts`).
+- **Go To** is camera-only: it never changes the cursor, the broker or the saved session, shows nothing past the cursor, and suspends follow-latest until "Back to cursor".
+- **Session shading / fair value on the replay chart** show only sessions that have started and a fair value only once it is known (`/api/sessions` also lists the window's future sessions).
+
 ## 6. Analytics page and prop rules
 
 The **Analytics page** is a full page opened from the bottom bar, scoped to one session or all sessions. It reuses the v1 dashboard work, reorganised to match FX Replay:

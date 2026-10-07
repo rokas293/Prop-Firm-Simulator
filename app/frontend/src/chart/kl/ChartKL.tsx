@@ -41,7 +41,17 @@ import {
   ensureSessionBandOverlayRegistered,
   type SessionBand,
 } from './sessionOverlay'
-import { cameraRestoreIndex, captureViewAnchor, firstViewPlan, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
+import {
+  cameraRestoreIndex,
+  captureTimeframeAnchor,
+  captureViewAnchor,
+  firstViewPlan,
+  reanchorRestoreIndex,
+  rightMarginForPane,
+  timeframeSwitchView,
+} from './cameraPreserve'
+import { bucketStart, formingBar, lastIndexAtOrBefore, revealedBars, visibleBars } from '../replayBars'
+import { smoothFrame } from '../smoothCandle'
 import {
   HANDLE_INDEX,
   KL_POSITION_TOOL,
@@ -90,6 +100,9 @@ export interface ChartKLHandle {
   // across the pane, the right margin applied -- placed instantly, never animated.
   showLatest: (visibleBars: number) => void
   scrollToTrade: (time: number) => void
+  // G5: park the newest (cursor) bar at the right edge again, margin applied --
+  // the way back from a Go To / a scrolled-back view. Camera only.
+  scrollToLatest: () => void
   // Phase A2's drawing toolbar levers.
   startDrawing: (toolName: string) => void
   cancelActiveDrawing: () => void
@@ -256,6 +269,34 @@ interface ChartKLProps {
   // The candle series style (the session toolbar's chart-type menu). Pure
   // presentation of the same OHLC bars -- never changes data or the cursor.
   candleType?: KLCandleType
+  // FXR_V2_SPEC.md section 5 (G5): a manual-session REPLAY chart. `timeframe`/
+  // `from`/`to` then fetch only the HISTORY (completed candles before the one
+  // forming at load); everything from there on is built from `replay.feed` -- the
+  // 1-minute bars, of which only those at or before `cursorIndex` are ever read
+  // (chart/replayBars.ts). A step updates the forming candle IN PLACE and appends
+  // a new one at a boundary, instead of reloading every bar.
+  //   undefined = not a replay chart (the automated-run review): `cursorTime` clips
+  //               the fetched bars as before;
+  //   null      = a replay chart whose feed has not loaded: nothing is drawn.
+  replay?: ReplayFeed | null
+  // Glide the forming candle between steps (cosmetic; see chart/smoothCandle.ts).
+  // The caller turns it on only while auto-playing.
+  smoothCandles?: boolean
+  smoothMs?: number
+  // A view-only Go To (G5): centre the chart on `time` (never moves the replay
+  // cursor). A new `nonce` is a new request; `time` is clamped by the caller to
+  // the revealed range.
+  goTo?: { time: number; nonce: number } | null
+  // Fires when the view becomes parked away from the replay cursor by a Go To (true) or
+  // returns to it (false), so the caller can offer the way back.
+  onDetachedChange?: (detached: boolean) => void
+}
+
+// The 1-minute bars a replay chart is built from, and how far the cursor is
+// through them (the cursor bar is the last one revealed).
+export interface ReplayFeed {
+  feed: Bar[]
+  cursorIndex: number
 }
 
 export interface OrderLineSpec {
@@ -504,6 +545,11 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     rightMarginPx,
     preserveViewOnWindowChange = false,
     candleType = 'candle_solid',
+    replay,
+    smoothCandles = false,
+    smoothMs = 0,
+    goTo = null,
+    onDetachedChange,
   },
   ref,
 ) {
@@ -573,6 +619,54 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const loadedBarsRef = useRef<Bar[]>([])
   const cursorTimeRef = useRef(cursorTime)
   cursorTimeRef.current = cursorTime
+  // G5 replay state (see the `replay` prop). `tailRef` = the candles built from the
+  // feed since the history was fetched (the forming one last); `appliedCursorTimeRef`
+  // = the cursor the chart currently shows (null = nothing built yet);
+  // `liveCallbackRef` = klinecharts' subscribeBar callback, the in-place update path.
+  const replayRef = useRef(replay)
+  replayRef.current = replay
+  const tfSecondsRef = useRef(60)
+  tfSecondsRef.current = tfToSeconds(timeframe) ?? 60
+  const tailRef = useRef<Bar[]>([])
+  const appliedCursorTimeRef = useRef<number | null>(null)
+  const liveCallbackRef = useRef<((data: KLineData) => void) | null>(null)
+  const smoothRef = useRef({ enabled: smoothCandles, ms: smoothMs })
+  smoothRef.current = { enabled: smoothCandles, ms: smoothMs }
+  // The forming candle as drawn mid-glide, and the animation frame driving it.
+  const animRef = useRef<{ raf: number | null; shown: Bar | null }>({ raf: null, shown: null })
+  const pendingGoToRef = useRef<number | null>(null)
+  // A view-only Go To leaves the camera on a past date; "follow latest bar" must not
+  // drag it back on the next step. Cleared by going back to the cursor, a reset of the
+  // view, or the newest bar coming into view again by the user's own scrolling.
+  const detachedRef = useRef(false)
+  const onDetachedChangeRef = useRef(onDetachedChange)
+  onDetachedChangeRef.current = onDetachedChange
+  const setDetached = (value: boolean) => {
+    if (detachedRef.current === value) return
+    detachedRef.current = value
+    onDetachedChangeRef.current?.(value)
+  }
+  const followingNow = () => followLatestBarRef.current && !detachedRef.current
+  // The candle a time belongs to on THIS chart: markers and lines placed at a
+  // 1-minute time sit on the candle that contains it (klinecharts would otherwise
+  // pick the nearest bar, which can be the next one).
+  const snapToChart = (t: number) => (replayRef.current === undefined || tfSecondsRef.current <= 60 ? t : bucketStart(t, tfSecondsRef.current))
+  const anchorSec = () => snapToChart(cursorTimeRef.current ?? 0)
+  // Trades as the replay cursor sees them (filterTradesForReplay: nothing before it
+  // entered, an open one clipped), with entry/exit placed on the candles that hold them.
+  const viewsForChart = (list: TradeRecord[]): ReplayTradeView[] => {
+    const views = filterTradesForReplay(list, cursorTimeRef.current)
+    if (replayRef.current === undefined || tfSecondsRef.current <= 60) return views
+    return views.map((v) => ({
+      ...v,
+      trade: {
+        ...v.trade,
+        entry_time: snapToChart(v.trade.entry_time),
+        exit_time: v.showExit ? snapToChart(v.trade.exit_time) : v.trade.exit_time,
+      },
+      openSpanEnd: snapToChart(v.openSpanEnd),
+    }))
+  }
   const followLatestBarRef = useRef(followLatestBar)
   followLatestBarRef.current = followLatestBar
   // The one overlay currently mid-placement (createOverlay was called but
@@ -682,11 +776,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       // as of the cursor and clips a still-open trade's exit -- in normal
       // mode (cursorTime null) it's a no-op that returns every trade with
       // showExit:true, so this is the same code path either way.
-      const cursor = cursorTimeRef.current
-      const views = filterTradesForReplay(tradesRef.current, cursor)
-      const selectedView = selectedTradeRef.current
-        ? (filterTradesForReplay([selectedTradeRef.current], cursor)[0] ?? null)
-        : null
+      const views = viewsForChart(tradesRef.current)
+      const selectedView = selectedTradeRef.current ? (viewsForChart([selectedTradeRef.current])[0] ?? null) : null
       const entryExit = buildEntryExitOverlays(views, selectedTradeRef.current?.trade_id ?? null, colorsRef.current)
       // trade_id 0 is the open-position sentinel (openPositionAsTradeRecord's
       // own comment) -- while the F4 draggable editor below is active for it,
@@ -1043,6 +1134,94 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     }
   }
 
+  // ---- G5 replay chart: in-place updates, glide, Go To ---------------------------
+  //
+  // The chart's data list is the history candles, then the candles built from the
+  // replay feed (chart/replayBars.ts). A step reaches klinecharts through its
+  // subscribeBar callback: the forming candle is replaced in place, or a new one
+  // appended -- no reload, no overlay/indicator/drawing rebuild. Only a change of
+  // series or window, or a rewind past the forming candle, reslices (resetData).
+  const syncDiagnostics = () => {
+    const host = containerRef.current
+    const chart = chartRef.current
+    if (!host || !chart) return
+    const list = chart.getDataList()
+    const last = list[list.length - 1]
+    host.dataset.barCount = String(list.length)
+    if (last) host.dataset.lastBar = [last.timestamp / 1000, last.open, last.high, last.low, last.close].join('|')
+    const shown = loadedBarsRef.current[loadedBarsRef.current.length - 1]
+    if (shown) host.dataset.revealedBar = [shown.time, shown.open, shown.high, shown.low, shown.close].join('|')
+    if (appliedCursorTimeRef.current !== null) host.dataset.replayCursor = String(appliedCursorTimeRef.current)
+    host.dataset.glide = animRef.current.raf !== null ? 'on' : 'off'
+  }
+  const cancelGlide = () => {
+    const a = animRef.current
+    if (a.raf !== null) cancelAnimationFrame(a.raf)
+    a.raf = null
+  }
+  // The revealed candle goes into the caches everything else reads (the loaded bars
+  // the overlays and tools use, and the tail kept across a reslice) -- always the
+  // EXACT revealed state, whatever is being drawn mid-glide.
+  const commitBar = (bar: Bar) => {
+    const loaded = loadedBarsRef.current
+    if (loaded.length && loaded[loaded.length - 1].time === bar.time) loaded[loaded.length - 1] = bar
+    else loaded.push(bar)
+    const tail = tailRef.current
+    if (tail.length && tail[tail.length - 1].time === bar.time) tail[tail.length - 1] = bar
+    else tail.push(bar)
+  }
+  const drawBar = (bar: Bar) => {
+    liveCallbackRef.current?.(toKLineData(bar))
+    syncDiagnostics()
+  }
+  const barFromChart = (time: number): Bar | null => {
+    const list = chartRef.current?.getDataList() ?? []
+    const last = list[list.length - 1]
+    if (!last || last.timestamp !== time * 1000) return null
+    return { time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume ?? 0 }
+  }
+  const canGlide = () => {
+    const { enabled, ms } = smoothRef.current
+    if (!enabled || ms <= 0 || document.visibilityState !== 'visible') return false
+    return !(typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  }
+  // Draws `target` (already committed) by gliding the forming candle from what is on
+  // screen to it. Every frame is built only from those two revealed states
+  // (smoothCandle.ts), and the last frame IS the target.
+  const glideTo = (target: Bar) => {
+    const a = animRef.current
+    if (a.raf !== null) cancelAnimationFrame(a.raf)
+    const from = barFromChart(target.time)
+    const started = performance.now()
+    const duration = Math.max(1, smoothRef.current.ms)
+    const tick = (now: number) => {
+      const progress = (now - started) / duration
+      a.raf = progress < 1 ? requestAnimationFrame(tick) : null
+      drawBar(smoothFrame(from, target, progress))
+    }
+    a.raf = requestAnimationFrame(tick)
+  }
+  // Centres the chart on a time once the candles holding it are loaded (a Go To that
+  // needs older history waits for that window to land -- respond() retries).
+  const tryGoTo = () => {
+    const t = pendingGoToRef.current
+    const chart = chartRef.current
+    const bars = loadedBarsRef.current
+    if (t === null || !chart || bars.length === 0) return
+    const req = requestRef.current
+    const windowLoaded = req.from != null && req.from <= t && lastFetchKeyRef.current === `${req.instrument}|${req.timeframe}|${req.from}|${req.to}`
+    if (bars[0].time > t && !windowLoaded) return
+    pendingGoToRef.current = null
+    const idx = Math.max(0, lastIndexAtOrBefore(bars, t))
+    const range = chart.getVisibleRange()
+    const half = Math.floor((range.realTo - range.realFrom) / 2)
+    // scrollToDataIndex(R - 2) puts the exclusive right edge at R (cameraPreserve.ts).
+    chart.scrollToDataIndex(Math.min(idx + half - 1, bars.length + rightMarginBars(chart) - 2), 0)
+    setDetached(true)
+  }
+  const tryGoToRef = useRef(tryGoTo)
+  tryGoToRef.current = tryGoTo
+
   // Mount/unmount the underlying klinecharts instance exactly once. Kept
   // separate from the reactive effect below (and NOT gated behind
   // `instrument`/`from`/`to` being ready) so the container div always
@@ -1078,38 +1257,89 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     // handed in, feeds the chart, and reruns everything downstream of
     // "what's visible" -- shared by both the real-fetch path and the
     // cursor-reslice path below, so they can never drift apart.
+    //
+    // A replay chart (G5) is handed only the HISTORY; the candles from there to the
+    // cursor come from the feed (chart/replayBars.ts visibleBars), so nothing past
+    // the cursor is ever in the data list.
     const respond = (bars: Bar[], callback: (data: KLineData[], more: { forward: boolean; backward: boolean }) => void) => {
-      const visible = filterBarsForReplay(bars, cursorTimeRef.current)
+      const r = replayRef.current
+      const tfSec = tfSecondsRef.current
+      // Captured BEFORE the data list is swapped: where the viewport's right edge
+      // sits, in time (see cameraPreserve.ts's re-anchor section).
+      const prevSeriesKey = loadedSeriesKeyRef.current
+      const seriesKey = `${requestRef.current.instrument}|${requestRef.current.timeframe}`
+      const sameSeries = prevSeriesKey === seriesKey
+      loadedSeriesKeyRef.current = seriesKey
+      cancelGlide()
+      let visible: Bar[]
+      if (r === undefined) {
+        visible = filterBarsForReplay(bars, cursorTimeRef.current)
+      } else if (!r || !r.feed[r.cursorIndex]) {
+        visible = []
+        tailRef.current = []
+        appliedCursorTimeRef.current = null
+      } else {
+        if (!sameSeries) tailRef.current = []
+        visible = visibleBars(bars, tailRef.current, r.feed, r.cursorIndex, tfSec)
+        // The candles after the fetched history are the tail (the forming one last).
+        const lastHist = lastIndexAtOrBefore(bars, visible[visible.length - 1].time - 1)
+        const lastHistTime = lastHist >= 0 ? bars[lastHist].time : -Infinity
+        tailRef.current = visible.filter((b) => b.time > lastHistTime)
+        appliedCursorTimeRef.current = r.feed[r.cursorIndex].time
+      }
       loadedBarsRef.current = visible
       setMeasureBarsContext(visible)
       setHasLoadedOnce(true)
-      // Captured BEFORE the data list is swapped: where the viewport's right
-      // edge sits, in time (see cameraPreserve.ts's re-anchor section).
-      const seriesKey = `${requestRef.current.instrument}|${requestRef.current.timeframe}`
-      const sameSeries = loadedSeriesKeyRef.current === seriesKey
-      loadedSeriesKeyRef.current = seriesKey
+      const oldData = chart.getDataList()
+      const oldRange = chart.getVisibleRange()
       const viewAnchor =
         preserveViewOnWindowChangeRef.current && sameSeries
           ? captureViewAnchor(
-              chart.getDataList().map((d) => d.timestamp),
-              chart.getVisibleRange().realTo,
+              oldData.map((d) => d.timestamp),
+              oldRange.realTo,
+            )
+          : null
+      // A timeframe switch (same instrument, a different candle size) keeps the
+      // camera in TIME: the same right edge and stretch of time across the pane.
+      const timeframeAnchor =
+        r !== undefined && prevSeriesKey !== null && !sameSeries && prevSeriesKey.split('|')[0] === seriesKey.split('|')[0]
+          ? captureTimeframeAnchor(
+              oldData.map((d) => d.timestamp / 1000),
+              oldRange.realFrom,
+              oldRange.realTo,
             )
           : null
       callback(visible.map(toKLineData), { forward: false, backward: false })
-      // Each init load resets klinecharts' scroll, so this runs for every
-      // load (a re-anchor can respond more than once), before the overlays
-      // below are placed against the visible range.
-      const restoreIndex = reanchorRestoreIndex(
-        viewAnchor,
-        visible.map((b) => b.time * 1000),
-        followLatestBarRef.current,
-        rightMarginBars(chart),
-      )
-      if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
+      if (timeframeAnchor) {
+        const view = timeframeSwitchView({
+          anchor: timeframeAnchor,
+          afterTimes: visible.map((b) => b.time),
+          newTimeframeSeconds: tfSec,
+          paneWidth: containerRef.current?.clientWidth ?? chart.getSize()?.width ?? 0,
+          marginPx: effectiveRightMarginPx(chart),
+        })
+        if (view) {
+          chart.setBarSpace(view.barSpace)
+          chart.scrollToDataIndex(view.scrollIndex, 0)
+        }
+      } else {
+        // Each init load resets klinecharts' scroll, so this runs for every
+        // load (a re-anchor can respond more than once), before the overlays
+        // below are placed against the visible range.
+        const restoreIndex = reanchorRestoreIndex(
+          viewAnchor,
+          visible.map((b) => b.time * 1000),
+          followingNow(),
+          rightMarginBars(chart),
+        )
+        if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
+      }
       rebuildOverlaysRef.current()
       restoreDrawingsRef.current()
       rebuildIndicatorsRef.current()
       rebuildSessionOverlaysRef.current()
+      syncDiagnostics()
+      tryGoToRef.current()
     }
 
     chart.setDataLoader({
@@ -1127,7 +1357,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         // Only a genuine window change (different key) triggers a real
         // fetch; anything else replays from the cached full set.
         const key = `${req.instrument}|${req.timeframe}|${req.from}|${req.to}`
-        if (lastFetchKeyRef.current === key && fullBarsRef.current.length > 0) {
+        if (lastFetchKeyRef.current === key) {
           respond(fullBarsRef.current, callback)
           return
         }
@@ -1141,6 +1371,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         // the re-measured numbers).
         fetchBarsInWorker({ instrument: req.instrument, tf: req.timeframe, from: req.from, to: req.to, max_points: 5000 })
           .then((bars) => {
+            // A replay chart: an answer for a window/timeframe that has since been
+            // replaced is dropped (the replacement's own load is already under way).
+            if (replayRef.current !== undefined) {
+              const now = requestRef.current
+              if (now.instrument !== req.instrument || now.timeframe !== req.timeframe || now.from !== req.from || now.to !== req.to) return
+            }
             fullBarsRef.current = bars
             lastFetchKeyRef.current = key
             respond(bars, callback)
@@ -1154,6 +1390,14 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
             setHasLoadedOnce(true)
             callback([], { forward: false, backward: false })
           })
+      },
+      // The in-place update path: klinecharts hands back a callback that replaces
+      // the newest candle (same timestamp) or appends one (later timestamp).
+      subscribeBar: ({ callback }) => {
+        liveCallbackRef.current = callback
+      },
+      unsubscribeBar: () => {
+        liveCallbackRef.current = null
       },
     })
 
@@ -1174,6 +1418,14 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         host.dataset.barCount = String(chart.getDataList().length)
         host.dataset.viewRealTo = String(vr.realTo)
         host.dataset.viewRealFrom = String(vr.realFrom)
+        // The same edges as TIMES (the first and last visible bar), for checks that
+        // the camera holds across a timeframe switch, where indices mean nothing.
+        const list = chart.getDataList()
+        if (list.length > 0) {
+          const at = (i: number) => list[Math.max(0, Math.min(list.length - 1, i))].timestamp / 1000
+          host.dataset.viewFromTime = String(at(Math.floor(vr.realFrom)))
+          host.dataset.viewToTime = String(at(Math.ceil(vr.realTo) - 1))
+        }
       }
       const onChange = onVisibleRangeChangeRef.current
       if (!onChange) return
@@ -1230,8 +1482,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           prev ? { anchor: prev.anchor, current: { x: crosshair.x!, y: crosshair.y! }, result: computeMeasure(measureAnchorRef.current!, current, loadedBarsRef.current) } : prev,
         )
       }
-      const cursor = cursorTimeRef.current
-      const views = filterTradesForReplay(tradesRef.current, cursor)
+      const views = viewsForChart(tradesRef.current)
       const trade = findBracketAt(views, point.timestamp / 1000, point.value)
       setTooltip(trade ? { x: crosshair.x, y: crosshair.y, text: formatBracketTooltip(trade) } : null)
     }
@@ -1464,6 +1715,11 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       loadedBarsRef.current = []
       fullBarsRef.current = []
       lastFetchKeyRef.current = null
+      // The replay state belongs to the chart instance that just went away.
+      appliedCursorTimeRef.current = null
+      tailRef.current = []
+      liveCallbackRef.current = null
+      loadedSeriesKeyRef.current = null
     }
   }, [])
 
@@ -1520,7 +1776,24 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
 
   // Indicator data/toggle changed but the window didn't -- redraw against
   // the bars already loaded, same as the trades effect above.
+  //
+  // G5: in a replay the data changes every step (the forming candle's point), and
+  // destroying and recreating every indicator for that would be the very reload the
+  // in-place update avoids. So there, a data-only change refreshes the context the
+  // indicators read and re-applies the newest candle (klinecharts recalculates on
+  // every data update); the structure is rebuilt only when prefs change.
+  const rebuiltForPrefsRef = useRef<IndicatorPrefs | null>(null)
   useEffect(() => {
+    const chart = chartRef.current
+    const structureUnchanged = rebuiltForPrefsRef.current === prefs
+    if (replayRef.current !== undefined && structureUnchanged && chart && loadedBarsRef.current.length > 0) {
+      setIndicatorContext(indicatorsRef.current)
+      const last = chart.getDataList()
+      const newest = last[last.length - 1]
+      if (newest) liveCallbackRef.current?.(newest)
+      return
+    }
+    rebuiltForPrefsRef.current = prefs
     rebuildIndicatorsRef.current()
   }, [indicators, prefs])
 
@@ -1548,8 +1821,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // respond() (the mount effect's DataLoader) runs synchronously for a
   // replay tick (same window, cache hit), so the data list already
   // reflects the new cursor by the time resetData() returns.
-  useEffect(() => {
-    withReadyChart(chartRef.current, fullBarsRef.current.length > 0, (chart) => {
+  const reslice = (hasData = fullBarsRef.current.length > 0) => {
+    withReadyChart(chartRef.current, hasData, (chart) => {
       const beforeRange = chart.getVisibleRange()
       const beforeFirstBarTime = chart.getDataList()[0]?.timestamp ?? null
       chart.resetData()
@@ -1559,12 +1832,108 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         beforeFirstBarTime,
         afterFirstBarTime: afterList[0]?.timestamp ?? null,
         afterBarCount: afterList.length,
-        followLatestBar: followLatestBarRef.current,
+        followLatestBar: followingNow(),
         rightMarginBars: rightMarginBars(chart),
       })
       if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
     })
+  }
+  useEffect(() => {
+    // A replay chart (G5) is driven by `replay` below, not by the cursor time.
+    if (replayRef.current !== undefined) return
+    reslice()
   }, [cursorTime])
+
+  // G5: the replay cursor moved. Forward within the loaded series this is an
+  // in-place update of the candles the new minutes touch (the forming one grows, a
+  // boundary appends a new one) -- O(step), no reload. Anything else (the chart's
+  // series or window is still loading, a rewind past the forming candle, a jump)
+  // reslices from the history and the feed.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !replay) return
+    const cursorBar = replay.feed[replay.cursorIndex]
+    if (!cursorBar) return
+    const req = requestRef.current
+    const loadedSeries = loadedSeriesKeyRef.current === `${req.instrument}|${req.timeframe}`
+    const loadedWindow = lastFetchKeyRef.current === `${req.instrument}|${req.timeframe}|${req.from}|${req.to}`
+    // The history fetch for the current series/window is still in flight: its own
+    // arrival builds the chart from the latest cursor, so there is nothing to do yet.
+    if (!loadedSeries || !loadedWindow) return
+    const applied = appliedCursorTimeRef.current
+    if (applied === null || loadedBarsRef.current.length === 0 || !liveCallbackRef.current) {
+      reslice(true)
+      return
+    }
+    if (cursorBar.time === applied) return
+    const tfSec = tfSecondsRef.current
+    if (cursorBar.time > applied) {
+      const fromIndex = lastIndexAtOrBefore(replay.feed, applied)
+      if (fromIndex < 0) {
+        reslice(true)
+        return
+      }
+      const bars = revealedBars(replay.feed, fromIndex, replay.cursorIndex, tfSec)
+      if (bars.length === 0) return
+      const beforeRange = chart.getVisibleRange()
+      const beforeFirstBarTime = chart.getDataList()[0]?.timestamp ?? null
+      // The user scrolled back to the newest candle themselves: following resumes.
+      if (detachedRef.current && beforeRange.realTo >= chart.getDataList().length) setDetached(false)
+      // The candles the step finished are drawn exactly; only the newest may glide.
+      const glide = canGlide()
+      bars.forEach((bar, i) => {
+        commitBar(bar)
+        if (glide && i === bars.length - 1) glideTo(bar)
+        else drawBar(bar)
+      })
+      appliedCursorTimeRef.current = cursorBar.time
+      const afterList = chart.getDataList()
+      const restoreIndex = cameraRestoreIndex({
+        beforeRealTo: beforeRange.realTo,
+        beforeFirstBarTime,
+        afterFirstBarTime: afterList[0]?.timestamp ?? null,
+        afterBarCount: afterList.length,
+        followLatestBar: followingNow(),
+        rightMarginBars: rightMarginBars(chart),
+      })
+      if (restoreIndex !== null) chart.scrollToDataIndex(restoreIndex, 0)
+      syncDiagnostics()
+      return
+    }
+    // Backwards. Within the candle already forming it is still an in-place update
+    // (the same candle, fewer minutes); across a candle boundary, a reslice.
+    const forming = formingBar(replay.feed, replay.cursorIndex, tfSec)
+    const newest = loadedBarsRef.current[loadedBarsRef.current.length - 1]
+    if (newest && newest.time === forming.time) {
+      cancelGlide()
+      appliedCursorTimeRef.current = cursorBar.time
+      commitBar(forming)
+      drawBar(forming)
+      return
+    }
+    reslice(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replay?.feed, replay?.cursorIndex])
+
+  // A glide must not outlive the chart or the option: settle on the exact candle.
+  useEffect(() => {
+    if (smoothCandles) return
+    const a = animRef.current
+    if (a.raf === null) return
+    cancelGlide()
+    const newest = loadedBarsRef.current[loadedBarsRef.current.length - 1]
+    if (newest) drawBar(newest)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [smoothCandles])
+  useEffect(() => cancelGlide, [])
+
+  // A view-only Go To (G5): centre on the time. The replay cursor is untouched.
+  useEffect(() => {
+    if (!goTo) return
+    pendingGoToRef.current = goTo.time
+    tryGoToRef.current()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goTo?.nonce])
 
   // The right margin itself: klinecharts places the newest bar this many pixels
   // from the right edge on every init load (first load, Reset view, window swap).
@@ -1658,7 +2027,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     const chart = chartRef.current
     if (!chart) return
     const specs = orderLines ?? []
-    const anchorMs = (cursorTimeRef.current ?? 0) * 1000
+    const anchorMs = anchorSec() * 1000
     const existing = new Set(chart.getOverlays({ groupId: ORDER_LINE_GROUP_ID }).map((o) => o.id))
     const next = new Set(specs.map((l) => l.id))
     for (const id of existing) {
@@ -1754,14 +2123,14 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           if (!orderLinesRef.current.find((l) => l.id === id)?.draggable) {
             // Not draggable (position / working order): put it straight back.
             const home = orderLinePricesRef.current.get(id)
-            if (home !== undefined) chart.overrideOverlay({ id, points: [{ timestamp: (cursorTimeRef.current ?? 0) * 1000, value: home }] })
+            if (home !== undefined) chart.overrideOverlay({ id, points: [{ timestamp: anchorSec() * 1000, value: home }] })
             return
           }
           // The dragged line snaps to the tick grid as it moves.
           const tick = orderLinesRef.current.find((l) => l.id === id)?.info.spec.tickSize
           const snapped = tick ? roundToTick(price, tick) : price
           if (snapped !== price) {
-            chart.overrideOverlay({ id, points: [{ timestamp: (cursorTimeRef.current ?? 0) * 1000, value: snapped }] })
+            chart.overrideOverlay({ id, points: [{ timestamp: anchorSec() * 1000, value: snapped }] })
           }
           onOrderLineDragRef.current?.(id, snapped, 'move')
         },
@@ -1844,7 +2213,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     instrument: instrument ?? '',
     palette: positionToolPalette(),
     hover,
-    anchorMs: toolAnchorRef.current ?? (cursorTimeRef.current ?? 0) * 1000,
+    anchorMs: toolAnchorRef.current ?? anchorSec() * 1000,
   })
   const setPositionToolHover = (hover: boolean) => {
     positionToolHoverRef.current = hover
@@ -1888,7 +2257,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       }
       // Whatever was grabbed, every point goes back on the anchor at the
       // authoritative prices: the drag is vertical and the tool never slides.
-      const anchor = toolAnchorRef.current ?? (cursorTimeRef.current ?? 0) * 1000
+      const anchor = toolAnchorRef.current ?? anchorSec() * 1000
       chart.overrideOverlay({ id: POSITION_TOOL_ID, points: toolPoints(toolLevelsRef.current ?? current, anchor) })
     },
     onPressedMoveEnd: () => {
@@ -1917,7 +2286,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       if (!chart || !tool) return
       const cursor = cursorTimeRef.current
       const latest = loadedBarsRef.current[loadedBarsRef.current.length - 1]
-      const anchor = (cursor ?? latest?.time ?? 0) * 1000
+      const anchor = snapToChart(cursor ?? latest?.time ?? 0) * 1000
       toolAnchorRef.current = anchor
       toolLevelsRef.current = tool.levels
       chart.overrideOverlay({ id: POSITION_TOOL_ID, points: toolPoints(tool.levels, anchor) })
@@ -1959,7 +2328,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     // The anchor never sits past the cursor: stepping the replay BACK (practice
     // sessions) re-anchors the tool on the cursor bar rather than leaving it on a
     // bar that is no longer revealed.
-    const cursorMs = (cursorTimeRef.current ?? 0) * 1000
+    const cursorMs = anchorSec() * 1000
     const anchor = cursorTimeRef.current !== null && toolAnchorRef.current !== null ? Math.min(toolAnchorRef.current, cursorMs) : (toolAnchorRef.current ?? cursorMs)
     toolAnchorRef.current = anchor
     if (!existing) {
@@ -2003,6 +2372,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
 
   // Empty-area context menu actions (REPLICA_ROADMAP.md Batch 1).
   const resetView = () => {
+    setDetached(false)
     const bars = loadedBarsRef.current
     if (bars.length === 0) return
     const chartNow = chartRef.current
@@ -2165,6 +2535,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     () => ({
       fitRange: fitRangeImpl,
       showLatest: (visibleBars) => {
+        setDetached(false)
         withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
           const plan = firstViewPlan({
             paneWidth: containerRef.current?.clientWidth ?? chart.getSize()?.width ?? 0,
@@ -2175,6 +2546,13 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           if (!plan) return
           chart.setBarSpace(plan.barSpace)
           chart.scrollToDataIndex(plan.scrollIndex, 0)
+        })
+      },
+      scrollToLatest: () => {
+        setDetached(false)
+        withReadyChart(chartRef.current, loadedBarsRef.current.length > 0, (chart) => {
+          // The newest bar `margin` short of the right edge, as showLatest places it.
+          chart.scrollToDataIndex(chart.getDataList().length - 2 + rightMarginBars(chart), 200)
         })
       },
       scrollToTrade: (time) => {

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { cameraRestoreIndex, captureViewAnchor, firstViewPlan, reanchorRestoreIndex, rightMarginForPane } from './cameraPreserve'
+import {
+  TF_SWITCH_MAX_BARS,
+  TF_SWITCH_MIN_BARS,
+  cameraRestoreIndex,
+  captureTimeframeAnchor,
+  captureViewAnchor,
+  firstViewPlan,
+  reanchorRestoreIndex,
+  rightMarginForPane,
+  timeframeSwitchView,
+} from './cameraPreserve'
 
 // A faithful model of the two pieces of klinecharts v10.0.3 arithmetic the
 // camera restore rides on, transcribed from the library source so this test
@@ -479,5 +489,65 @@ describe('firstViewPlan (a session opens with the cursor bar in view and the mar
     expect(firstViewPlan({ paneWidth: 1400, marginPx: 120, barCount: 0, visibleBars: 120 })).toBeNull()
     expect(firstViewPlan({ paneWidth: 0, marginPx: 120, barCount: 100, visibleBars: 120 })).toBeNull()
     expect(firstViewPlan({ paneWidth: 1400, marginPx: 120, barCount: 100, visibleBars: 0 })).toBeNull()
+  })
+})
+
+describe('switching the chart timeframe keeps the camera (G5)', () => {
+  const hours = (n: number) => Array.from({ length: n }, (_, i) => i * 3600)
+  const fiveMin = (n: number) => Array.from({ length: n }, (_, i) => i * 300)
+
+  it('captures where the right edge is, how much time is across the pane, and whether it was parked on the newest bar', () => {
+    const times = fiveMin(200)
+    // 60 bars visible, the edge past the newest bar (a little empty room right of it).
+    expect(captureTimeframeAnchor(times, 140, 205)).toEqual({ rightEdgeTime: times[199], following: true, spanSeconds: 59 * 300 })
+    // Scrolled back: the edge is on bar 99, not the newest.
+    expect(captureTimeframeAnchor(times, 40, 100)).toEqual({ rightEdgeTime: times[99], following: false, spanSeconds: 59 * 300 })
+    expect(captureTimeframeAnchor([], 0, 10)).toBeNull()
+  })
+
+  it('a parked view stays parked on the newest bar, at a readable zoom', () => {
+    const anchor = { rightEdgeTime: 199 * 300, following: true, spanSeconds: 120 * 300 } // 10 hours of 5m
+    const to1h = timeframeSwitchView({ anchor, afterTimes: hours(300), newTimeframeSeconds: 3600, paneWidth: 1000, marginPx: 0 })!
+    // 10 hours of 1h bars would be 11 -- below the readable minimum, so it widens to 30.
+    expect(to1h.visibleBars).toBe(TF_SWITCH_MIN_BARS)
+    expect(to1h.scrollIndex).toBe(300 - 2) // the newest bar flush at the right edge, as before
+    const to1m = timeframeSwitchView({ anchor, afterTimes: Array.from({ length: 2000 }, (_, i) => i * 60), newTimeframeSeconds: 60, paneWidth: 1000, marginPx: 0 })!
+    expect(to1m.visibleBars).toBe(TF_SWITCH_MAX_BARS) // 601 wanted, held to the readable maximum
+  })
+
+  it('within the readable range the same stretch of time is across the pane on either side', () => {
+    // 2 days of 15m bars on screen (192 bars) -> 4h bars would be 13, too few; 5m would be 577, too many.
+    const anchor = { rightEdgeTime: 0, following: true, spanSeconds: 48 * 3600 }
+    const to1h = timeframeSwitchView({ anchor, afterTimes: hours(500), newTimeframeSeconds: 3600, paneWidth: 1200, marginPx: 0 })!
+    expect(to1h.visibleBars).toBe(49) // 48h of 1h bars, +1 for both ends
+    expect(to1h.barSpace).toBeCloseTo(1200 / 49, 6) // the pane over the bars across it
+    const to30m = timeframeSwitchView({ anchor, afterTimes: Array.from({ length: 500 }, (_, i) => i * 1800), newTimeframeSeconds: 1800, paneWidth: 1200, marginPx: 0 })!
+    expect(to30m.visibleBars).toBe(97)
+  })
+
+  it('a view scrolled back keeps the same MOMENT at its right edge, whatever the new bars are', () => {
+    const anchor = { rightEdgeTime: 7200, following: false, spanSeconds: 60 * 300 }
+    const afterTimes = hours(24)
+    const view = timeframeSwitchView({ anchor, afterTimes, newTimeframeSeconds: 3600, paneWidth: 900, marginPx: 0 })!
+    // scrollIndex lands the right edge (exclusive realTo = scrollIndex + 2) one past the bar holding 7200s.
+    expect(afterTimes[view.scrollIndex + 2 - 1]).toBe(7200)
+    // an edge between two new bars lands on the earlier one -- never one after it
+    const between = timeframeSwitchView({ anchor: { ...anchor, rightEdgeTime: 7200 + 1800 }, afterTimes, newTimeframeSeconds: 3600, paneWidth: 900, marginPx: 0 })!
+    expect(afterTimes[between.scrollIndex + 2 - 1]).toBe(7200)
+  })
+
+  it('keeps the empty room at the right edge when it was parked (in pixels, at the new zoom)', () => {
+    const anchor = { rightEdgeTime: 0, following: true, spanSeconds: 100 * 300 }
+    const times = hours(100)
+    const v = timeframeSwitchView({ anchor, afterTimes: times, newTimeframeSeconds: 3600, paneWidth: 1000, marginPx: 200 })!
+    const marginBars = Math.ceil(200 / v.barSpace)
+    expect(v.scrollIndex + 2).toBe(times.length + marginBars)
+    expect(marginBars * v.barSpace).toBeGreaterThanOrEqual(200)
+  })
+
+  it('does nothing without bars or a pane to measure', () => {
+    const anchor = { rightEdgeTime: 0, following: true, spanSeconds: 100 }
+    expect(timeframeSwitchView({ anchor, afterTimes: [], newTimeframeSeconds: 60, paneWidth: 800, marginPx: 0 })).toBeNull()
+    expect(timeframeSwitchView({ anchor, afterTimes: [0], newTimeframeSeconds: 60, paneWidth: 0, marginPx: 0 })).toBeNull()
   })
 })

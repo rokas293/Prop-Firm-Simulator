@@ -5,6 +5,7 @@ import {
   buildFairValueOverlay,
   buildSessionBandOverlay,
   ensureSessionBandOverlayRegistered,
+  revealedSessionBands,
   sessionColor,
   type SessionBand,
 } from './sessionOverlay'
@@ -64,5 +65,44 @@ describe('ensureSessionBandOverlayRegistered', () => {
       ensureSessionBandOverlayRegistered()
       ensureSessionBandOverlayRegistered()
     }).not.toThrow()
+  })
+})
+
+describe('revealedSessionBands (no look-ahead on the replay chart)', () => {
+  const asia: SessionBand = { start: 100, end: 400, session: 'asia', fairValue: 20000, fairValueTime: 160 }
+  const london: SessionBand = { start: 400, end: 700, session: 'london', fairValue: 20100, fairValueTime: 460 }
+  const ny: SessionBand = { start: 700, end: 1000, session: 'ny', fairValue: 20200, fairValueTime: 760 }
+  const all = [asia, london, ny]
+
+  it('hides a session that has not started, with its fair value', () => {
+    expect(revealedSessionBands(all, 50)).toEqual([])
+    expect(revealedSessionBands(all, 399).map((b) => b.session)).toEqual(['asia'])
+    expect(revealedSessionBands(all, 400).map((b) => b.session)).toEqual(['asia', 'london'])
+  })
+
+  it('shows a started session without its fair value until the cursor reaches the time it was determined', () => {
+    expect(revealedSessionBands(all, 150)[0].fairValue).toBeNull()
+    expect(revealedSessionBands(all, 160)[0].fairValue).toBe(20000)
+    expect(revealedSessionBands(all, 450)[1].fairValue).toBeNull()
+  })
+
+  it('treats a fair value with no known time as unknown until the session ends', () => {
+    const undated: SessionBand = { start: 100, end: 400, session: 'asia', fairValue: 1 }
+    expect(revealedSessionBands([undated], 399)[0].fairValue).toBeNull()
+    expect(revealedSessionBands([undated], 400)[0].fairValue).toBe(1)
+  })
+
+  it('leaves a session without a fair value alone and never invents one', () => {
+    const none: SessionBand = { start: 100, end: 400, session: 'asia', fairValue: null }
+    expect(revealedSessionBands([none], 200)).toEqual([none])
+  })
+
+  it('no input at any cursor ever exposes a fair value from the future (randomised)', () => {
+    for (let cursor = 0; cursor < 1100; cursor += 7) {
+      for (const b of revealedSessionBands(all, cursor)) {
+        expect(b.start).toBeLessThanOrEqual(cursor)
+        if (b.fairValue !== null) expect(b.fairValueTime!).toBeLessThanOrEqual(cursor)
+      }
+    }
   })
 })

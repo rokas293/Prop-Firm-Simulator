@@ -418,7 +418,10 @@ export function orderTriggered(order: WorkingOrder, bar: Bar): boolean {
 // Both an SL and a TP touched within the SAME bar can't be resolved from
 // OHLC alone (the true intrabar path isn't known) -- conservatively assume
 // the worse outcome (the stop), matching propbt/engine/broker.py's own
-// _check_stop_take.
+// _check_stop_take. The replay feeds this ONE-MINUTE bars whatever the chart's
+// timeframe or the step size (FXR_V2_SPEC.md section 5, G5), so that ambiguity
+// only remains inside a single minute; two levels touched in different minutes
+// of the same hour resolve by which minute came first.
 function slTpHit(position: OpenPosition, bar: Bar): ExitType | null {
   const hitSl =
     position.slPrice !== null &&
@@ -558,6 +561,11 @@ export interface AdvanceReplayResult {
   filledOrderIds: string[]
 }
 
+// `bars` is the 1-minute feed (G5), so "every bar passed over" is every MINUTE
+// passed over, even when one step spans an hour: orders, SL/TP, break-even and
+// trailing are all evaluated at 1m resolution. Nothing here reads a bar after
+// `toIndexInclusive` -- the property the tests check by poisoning them.
+//
 // Walks bars[fromIndexExclusive+1 .. toIndexInclusive] STRICTLY in order,
 // checking working orders and the open position's SL/TP against each bar's
 // own OHLC in turn -- FXR_SPEC.md section 3's explicit rule ("as replay
@@ -587,7 +595,12 @@ export function advanceReplay(
   for (let i = fromIndexExclusive + 1; i <= toIndexInclusive; i++) {
     const bar = bars[i]
 
-    if (pos) {
+    // A position only meets bars AFTER the one it was entered on, and an order
+    // only bars after the one it was placed on. Moving the cursor back and
+    // forward again re-walks bars already behind a trade; without this a rewound
+    // replay would fill an order, or stop a position, on price action from
+    // before it existed.
+    if (pos && bar.time > pos.entryTime) {
       const hit = slTpHit(pos, bar)
       if (hit) {
         const exitPrice = hit === 'stop_loss' ? (pos.slPrice as number) : (pos.tpPrice as number)
@@ -603,7 +616,7 @@ export function advanceReplay(
     }
 
     if (!pos && orders.length > 0) {
-      const idx = orders.findIndex((o) => orderTriggered(o, bar))
+      const idx = orders.findIndex((o) => bar.time > o.placedTime && orderTriggered(o, bar))
       if (idx >= 0) {
         const order = orders[idx]
         pos = {

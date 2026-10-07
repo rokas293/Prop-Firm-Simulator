@@ -28,6 +28,25 @@ export interface SessionBand {
   end: number
   session: string
   fairValue: number | null
+  // When the fair value became known (/api/sessions fair_value_time). Absent = unknown,
+  // treated as not before the session ends.
+  fairValueTime?: number | null
+}
+
+// What a REPLAY at `cursorTime` may show (VIZ_SPEC section 0: no look-ahead): a session
+// that has not started yet is not drawn at all, and a fair value -- a price read off the
+// session's own bars -- only once the cursor has reached the time it was determined.
+// (/api/sessions returns every session in the window, future ones included, with their
+// fair values: drawing those would hand the replay tomorrow's levels.) A running session's
+// shading still runs to its scheduled end -- that is the calendar, not data.
+export function revealedSessionBands(bands: readonly SessionBand[], cursorTime: number): SessionBand[] {
+  const out: SessionBand[] = []
+  for (const b of bands) {
+    if (b.start > cursorTime) continue
+    const knownAt = b.fairValueTime ?? b.end
+    out.push(b.fairValue !== null && knownAt > cursorTime ? { ...b, fairValue: null } : b)
+  }
+  return out
 }
 
 // Session identity colors come from themeStore.ts's SESSION_COLORS (Part C1

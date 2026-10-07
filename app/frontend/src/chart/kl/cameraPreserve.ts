@@ -195,3 +195,85 @@ export function rightMarginForPane(configuredPx: number, paneWidth: number | und
   if (!paneWidth || paneWidth <= 0) return configuredPx
   return Math.round(Math.min(configuredPx, paneWidth * RIGHT_MARGIN_MAX_PANE_SHARE))
 }
+
+// ---- switching the chart timeframe ------------------------------------------
+//
+// FXR_V2_SPEC.md section 5 (G5): the replay cursor does not move when the chart
+// timeframe changes, and neither does the camera -- the same stretch of TIME stays
+// in view with the same right edge. Bars are not comparable across timeframes (an
+// index on a 5m chart is a different moment on a 1h one), so the view is carried
+// in time: which moment sat at the right edge (or "parked on the newest bar"),
+// and how much time was across the pane. The zoom follows from that, held to a
+// readable range so a 1h chart that was showing an hour of 1m bars doesn't become
+// one fat candle, nor a 1m chart a thousand slivers.
+
+export const TF_SWITCH_MIN_BARS = 30
+export const TF_SWITCH_MAX_BARS = 500
+
+export interface TimeframeAnchor {
+  // Time (unix seconds) of the bar at the viewport's right edge (the newest bar
+  // when the edge is past it).
+  rightEdgeTime: number
+  // True when the edge was on/after the newest bar: the view was parked on the
+  // latest data (following), not scrolled back into history.
+  following: boolean
+  // Time between the first and last visible bar.
+  spanSeconds: number
+}
+
+// `times` are the loaded bars' times in seconds; `realFrom`/`realTo` klinecharts'
+// visible range (realTo exclusive, may sit past the last bar).
+export function captureTimeframeAnchor(times: readonly number[], realFrom: number, realTo: number): TimeframeAnchor | null {
+  if (times.length === 0) return null
+  const last = times.length - 1
+  const edge = Math.max(0, Math.min(last, Math.ceil(realTo) - 1))
+  const first = Math.max(0, Math.min(edge, Math.floor(realFrom)))
+  return { rightEdgeTime: times[edge], following: realTo >= times.length, spanSeconds: Math.max(0, times[edge] - times[first]) }
+}
+
+export interface TimeframeSwitchInput {
+  anchor: TimeframeAnchor
+  // The new chart's bar times (seconds), the forming candle last.
+  afterTimes: readonly number[]
+  newTimeframeSeconds: number
+  paneWidth: number
+  // Pixels of empty room kept right of the newest bar (0 = flush).
+  marginPx: number
+}
+
+export interface TimeframeSwitchView {
+  // Pixels per bar, for setBarSpace.
+  barSpace: number
+  // The dataIndex to hand scrollToDataIndex.
+  scrollIndex: number
+  // How many bars the pane will span (for tests and diagnostics).
+  visibleBars: number
+}
+
+export function timeframeSwitchView({ anchor, afterTimes, newTimeframeSeconds, paneWidth, marginPx }: TimeframeSwitchInput): TimeframeSwitchView | null {
+  if (afterTimes.length === 0 || !(paneWidth > 0) || !(newTimeframeSeconds > 0)) return null
+  const wanted = Math.round(anchor.spanSeconds / newTimeframeSeconds) + 1
+  const visibleBars = Math.max(TF_SWITCH_MIN_BARS, Math.min(TF_SWITCH_MAX_BARS, wanted))
+  const barSpace = Math.max(1, paneWidth / visibleBars)
+  const marginBars = marginPx > 0 ? Math.ceil(marginPx / barSpace) : 0
+  let targetRealTo: number
+  if (anchor.following) {
+    targetRealTo = afterTimes.length + marginBars
+  } else {
+    // The last bar at or before the moment that was at the edge.
+    let lo = 0
+    let hi = afterTimes.length - 1
+    let found = 0
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (afterTimes[mid] <= anchor.rightEdgeTime) {
+        found = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    targetRealTo = found + 1
+  }
+  return { barSpace, scrollIndex: targetRealTo - RIGHT_EDGE_INDEX_OFFSET, visibleBars }
+}

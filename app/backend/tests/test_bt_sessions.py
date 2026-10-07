@@ -72,8 +72,10 @@ def test_create_session_rejects_instrument_outside_mnq_mes(bt_client):
 
 def test_create_session_rejects_bad_timeframe(bt_client):
     _skip_if_no_mes_data()
-    r = _create(bt_client, base_timeframe="30min")
-    assert r.status_code == 400
+    # 30min is a real timeframe since G5; a timeframe below 1m or off the grid is not.
+    for bad in ("7min", "30s", "1D"):
+        assert _create(bt_client, base_timeframe=bad).status_code == 400
+    assert _create(bt_client, base_timeframe="30min").status_code == 200
 
 
 def test_create_session_rejects_start_time_outside_data_range(bt_client):
@@ -913,7 +915,10 @@ def test_v1_session_json_is_migrated_without_data_loss(bt_client, tmp_path):
     assert "default_contracts" not in got["account"]
     assert got["account"]["balance"] == 50123.5 and got["account"]["prop_ruleset"] == "topstep_50k"
     assert got["position"]["entry_price"] == 20000.25 and got["position"]["auto_breakeven"] is True
-    assert got["discipline_lock"] is True and got["lock_floor_time"] == 1741617000
+    # G5: the cursor and the lock floor count in 1m bars now -- a v1 5min
+    # session's "bar open" is that bar's last minute (+4m), so it shows what it did.
+    assert got["discipline_lock"] is True and got["lock_floor_time"] == 1741617000 + 240
+    assert got["cursor_time"] == 1741619400 + 240
     assert got["notes"] == "keep an eye on the open"
     # It also appears in the list, and a later write persists the v2 shape.
     assert any(s["id"] == sid and s["quick_quantity"] == 3 for s in bt_client.get("/api/bt-sessions").json())
@@ -1197,3 +1202,110 @@ def test_scalper_can_be_cleared_back_to_defaults(bt_client):
     url = f"/api/bt-sessions/{created['id']}/settings"
     bt_client.patch(url, json={"scalper": _scalper()})
     assert bt_client.patch(url, json={"scalper": None}).json()["scalper"] is None
+
+
+# --- FXR_V2_SPEC.md section 5 (G5): the chart timeframe and the step size are
+# their own settings; the cursor counts in 1m bars; v1 sessions keep behaving.
+
+def test_a_new_session_charts_and_steps_by_its_base_timeframe_by_default(bt_client):
+    _skip_if_no_mes_data()
+    data = _create(bt_client).json()
+    assert data["chart_timeframe"] == "5min" and data["step_size"] == "5min"
+    assert data["cursor_time"] == data["start_time"]
+
+
+def test_a_session_can_be_created_with_its_own_chart_timeframe_and_step_size(bt_client):
+    _skip_if_no_mes_data()
+    data = _create(bt_client, base_timeframe="5min", chart_timeframe="1h", step_size="1min").json()
+    assert data["chart_timeframe"] == "1h" and data["step_size"] == "1min" and data["base_timeframe"] == "5min"
+
+
+@pytest.mark.parametrize("field", ["chart_timeframe", "step_size"])
+def test_create_rejects_a_timeframe_below_1m_or_unknown(bt_client, field):
+    _skip_if_no_mes_data()
+    for bad in ("30s", "7min", "1D", "bogus"):
+        assert _create(bt_client, **{field: bad}).status_code == 400
+
+
+def test_update_settings_persists_chart_timeframe_and_step_size_and_survives_reload(bt_client):
+    _skip_if_no_mes_data()
+    sid = _create(bt_client).json()["id"]
+    r = bt_client.patch(f"/api/bt-sessions/{sid}/settings", json={"chart_timeframe": "1h", "step_size": "1min"})
+    assert r.status_code == 200
+    got = bt_client.get(f"/api/bt-sessions/{sid}").json()
+    assert got["chart_timeframe"] == "1h" and got["step_size"] == "1min" and got["base_timeframe"] == "5min"
+    # Only what is sent changes.
+    bt_client.patch(f"/api/bt-sessions/{sid}/settings", json={"step_size": "15min"})
+    got = bt_client.get(f"/api/bt-sessions/{sid}").json()
+    assert got["chart_timeframe"] == "1h" and got["step_size"] == "15min"
+
+
+def test_update_settings_rejects_a_bad_or_cleared_timeframe(bt_client):
+    _skip_if_no_mes_data()
+    sid = _create(bt_client).json()["id"]
+    assert bt_client.patch(f"/api/bt-sessions/{sid}/settings", json={"step_size": "30s"}).status_code == 400
+    assert bt_client.patch(f"/api/bt-sessions/{sid}/settings", json={"chart_timeframe": None}).status_code == 400
+
+
+def _write_v1_session(tmp_path, sid, base_timeframe, cursor_time, **extra):
+    import json
+    d = tmp_path / "bt_sessions" / sid
+    d.mkdir(parents=True)
+    body = {
+        "id": sid, "instrument": "MES", "base_timeframe": base_timeframe, "start_time": 1741615800,
+        "created_at": "2025-03-10T14:30:00+00:00", "updated_at": "2025-03-10T15:00:00+00:00",
+        "cursor_time": cursor_time, "status": "active",
+        "account": {"id": "a", "starting_balance": 50000.0, "balance": 50000.0, "currency": "USD",
+                    "risk_per_trade_percent": 1.0, "risk_per_trade_usd": None, "commission_per_contract": 1.3},
+        "position": None, "working_orders": [],
+    }
+    body.update(extra)
+    (d / "session.json").write_text(json.dumps(body), encoding="utf-8")
+    return d
+
+
+@pytest.mark.parametrize(
+    "base,old_cursor,new_cursor",
+    [
+        ("1min", 1741619400, 1741619400),  # a 1m session already counted in 1m bars
+        ("5min", 1741619400, 1741619400 + 4 * 60),
+        ("15min", 1741618800, 1741618800 + 14 * 60),
+        ("1h", 1741618800, 1741618800 + 59 * 60),
+    ],
+)
+def test_v1_session_defaults_to_its_old_base_timeframe_and_shows_the_same_state(bt_client, tmp_path, base, old_cursor, new_cursor):
+    """The replay used to reveal whole BASE bars with the cursor at the last one's
+    open time. In 1m terms that state is the bar's last minute -- so the migrated
+    cursor reveals exactly the candles it did, and the step size is the old
+    granularity (one base bar), so stepping behaves the same until it is lowered."""
+    sid = f"20250101T000000Z_v1{base}"
+    _write_v1_session(tmp_path, sid, base, old_cursor)
+    got = bt_client.get(f"/api/bt-sessions/{sid}").json()
+    assert got["step_size"] == base and got["chart_timeframe"] == base
+    assert got["cursor_time"] == new_cursor
+
+
+def test_the_cursor_migration_happens_once_not_on_every_read_or_write(bt_client, tmp_path):
+    sid = "20250101T000000Z_once"
+    d = _write_v1_session(tmp_path, sid, "5min", 1741619400)
+    first = bt_client.get(f"/api/bt-sessions/{sid}").json()["cursor_time"]
+    bt_client.patch(f"/api/bt-sessions/{sid}/notes", json={"notes": "persists the v2 shape"})
+    assert bt_client.get(f"/api/bt-sessions/{sid}").json()["cursor_time"] == first == 1741619400 + 240
+    import json
+    assert json.loads((d / "session.json").read_text(encoding="utf-8"))["replay_version"] == 2
+    bt_client.get(f"/api/bt-sessions/{sid}")
+    assert bt_client.get("/api/bt-sessions").json()[0]["cursor_time"] == first
+
+
+def test_the_migrated_cursor_never_passes_the_end_date(bt_client, tmp_path):
+    sid = "20250101T000000Z_end"
+    _write_v1_session(tmp_path, sid, "1h", 1741618800, end_date=1741618800 + 600)
+    assert bt_client.get(f"/api/bt-sessions/{sid}").json()["cursor_time"] == 1741618800 + 600
+
+
+def test_a_v1_session_can_still_be_stepped_and_saved_after_migration(bt_client, tmp_path):
+    sid = "20250101T000000Z_step"
+    _write_v1_session(tmp_path, sid, "5min", 1741619400)
+    cursor = bt_client.get(f"/api/bt-sessions/{sid}").json()["cursor_time"]
+    r = bt_client.patch(f"/api/bt-sessions/{sid}/cursor", json={"cursor_time": cursor + 300, "working_orders": []})
+    assert r.status_code == 200 and r.json()["cursor_time"] == cursor + 300

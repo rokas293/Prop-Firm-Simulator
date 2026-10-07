@@ -60,18 +60,25 @@ export function useTrades(runId: string | null, filters?: TradeQueryParams) {
 // (POLISH_ROADMAP Phase P4) -- see workers/barsWorkerClient.ts. react-query
 // still owns caching/dedup/loading state exactly as before; only where the
 // bytes get fetched and parsed changes.
+//
+// `keepPrevious` (G5, the replay feed): while a re-anchored window loads, keep handing
+// back the last window's bars (same instrument only) instead of nothing, so the replay
+// neither blanks nor loses its cursor mid-swap. A new array arriving is how callers
+// notice the swap.
 export function useBars(
   instrument: string | null,
   tf: string,
   from: number | null,
   to: number | null,
   maxPoints = 2000,
+  keepPrevious = false,
 ) {
   return useQuery({
     queryKey: ['bars', instrument, tf, from, to, maxPoints],
     queryFn: () =>
       fetchBarsInWorker({ instrument: instrument as string, tf, from: from as number, to: to as number, max_points: maxPoints }),
     enabled: instrument !== null && from !== null && to !== null,
+    placeholderData: keepPrevious ? (previous, previousQuery) => (previousQuery?.queryKey[1] === instrument ? previous : undefined) : undefined,
   })
 }
 

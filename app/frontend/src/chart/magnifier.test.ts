@@ -8,8 +8,13 @@ const oneMin = (time: number): Bar => ({ time, open: 1, high: 1, low: 1, close: 
 const DAY = Array.from({ length: 1440 }, (_, i) => oneMin(i * 60))
 
 describe('magnifierRange', () => {
-  it('spans exactly the 1-minute bars inside the bar', () => {
-    expect(magnifierRange(600, FIVE_MIN, 600)).toEqual({ from: 600, to: 840 })
+  it('spans exactly the 1-minute bars inside a completed bar', () => {
+    expect(magnifierRange(600, FIVE_MIN, 900)).toEqual({ from: 600, to: 840 })
+    expect(magnifierRange(600, FIVE_MIN, 840)).toEqual({ from: 600, to: 840 })
+  })
+  it('stops at the cursor minute inside the bar still forming (G5: the cursor counts in 1m bars)', () => {
+    expect(magnifierRange(600, FIVE_MIN, 600)).toEqual({ from: 600, to: 600 })
+    expect(magnifierRange(600, FIVE_MIN, 720)).toEqual({ from: 600, to: 720 })
   })
   it('refuses a bar the cursor has not reached', () => {
     expect(magnifierRange(900, FIVE_MIN, 600)).toBeNull()
@@ -21,11 +26,10 @@ describe('magnifierRange', () => {
 })
 
 describe('magnifier can never reveal future bars', () => {
-  it('for every cursor position and every bar, requests and returns nothing past the cursor bar', () => {
+  it('for every cursor minute and every bar, requests and returns nothing past the cursor', () => {
     for (const tf of [300, 900, 3600]) {
-      for (let cursorTime = 0; cursorTime < 6 * 3600; cursorTime += tf) {
-        const cursorBarEnd = cursorTime + tf
-        for (let barTime = 0; barTime < 8 * 3600; barTime += tf) {
+      for (let cursorTime = 0; cursorTime < 2 * 3600; cursorTime += 60) {
+        for (let barTime = 0; barTime < 3 * 3600; barTime += tf) {
           const range = magnifierRange(barTime, tf, cursorTime)
           if (barTime > cursorTime) {
             expect(range).toBeNull()
@@ -33,10 +37,10 @@ describe('magnifier can never reveal future bars', () => {
             continue
           }
           expect(range).not.toBeNull()
-          expect(range!.to).toBeLessThan(cursorBarEnd)
+          expect(range!.to).toBeLessThanOrEqual(cursorTime)
           for (const b of clampMagnifierBars(DAY, barTime, tf, cursorTime)) {
             expect(b.time).toBeGreaterThanOrEqual(barTime)
-            expect(b.time).toBeLessThan(cursorBarEnd)
+            expect(b.time).toBeLessThanOrEqual(cursorTime)
           }
         }
       }
@@ -44,10 +48,12 @@ describe('magnifier can never reveal future bars', () => {
   })
 
   it('drops future bars even if the data source hands them back (whole dataset in, only the bar out)', () => {
-    const shown = clampMagnifierBars(DAY, 600, FIVE_MIN, 600)
+    const shown = clampMagnifierBars(DAY, 600, FIVE_MIN, 840)
     expect(shown.map((b) => b.time)).toEqual([600, 660, 720, 780, 840])
     // Nothing from the next 5-minute bar (900) or beyond.
     expect(shown.some((b) => b.time >= 900)).toBe(false)
+    // Mid-bar: only the minutes the cursor has reached.
+    expect(clampMagnifierBars(DAY, 600, FIVE_MIN, 720).map((b) => b.time)).toEqual([600, 660, 720])
   })
 
   it('shows an earlier revealed bar in full while the cursor is further on', () => {

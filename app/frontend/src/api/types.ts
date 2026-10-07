@@ -264,6 +264,11 @@ export interface BacktestSessionSummary {
   instrument: string
   assets: string[]
   base_timeframe: string
+  // G5: the chart's timeframe and how far one replay step advances, each any
+  // timeframe at or above 1m. Absent on a session saved before G5 (the backend
+  // fills them from base_timeframe on load, but a missing one reads the same).
+  chart_timeframe?: string | null
+  step_size?: string | null
   start_time: number
   // Unix seconds the cursor may not pass; null = runs to the end of the data.
   end_date: number | null
@@ -276,6 +281,8 @@ export interface BacktestSessionSummary {
   scalper: ScalperConfig | null
   created_at: string
   updated_at: string
+  // The open time of the last 1-minute bar revealed (G5: always counted in 1m
+  // bars, whatever the chart timeframe or the step size).
   cursor_time: number
   status: 'active' | 'archived'
   account: SimAccount
@@ -319,6 +326,8 @@ export interface UpdateSessionSettingsRequest {
   quick_quantity?: number
   checklist?: string[]
   scalper?: ScalperConfig | null
+  chart_timeframe?: string
+  step_size?: string
 }
 
 export interface CreateSessionRequest {
@@ -326,6 +335,9 @@ export interface CreateSessionRequest {
   assets?: string[] | null
   name?: string | null
   base_timeframe: string
+  // G5: default to base_timeframe.
+  chart_timeframe?: string
+  step_size?: string
   start_time?: number | null
   end_date?: number | null
   random_start?: boolean

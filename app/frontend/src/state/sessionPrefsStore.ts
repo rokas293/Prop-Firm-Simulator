@@ -1,11 +1,11 @@
 // FXR_V2_SPEC.md section 2 (G1): per-viewer preferences of the session
-// workspace shell -- the playback pill's auto-play and step granularity, the
+// workspace shell -- the smooth-candles option (G5; the step size and chart
+// timeframe are per SESSION now and live on it), the
 // bottom bar's hide-trades / hide-balances eyes, and the trade panel's open
 // state and height. Persisted to localStorage like the other view-state
 // stores; none of it is session data (that lives on the backend).
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { StepGranularityLabel } from '../chart/sessionEnd'
 import type { KLCandleType } from '../chart/kl/ChartKL'
 import type { BalanceBasis } from '../chart/orderTicket'
 
@@ -22,8 +22,9 @@ export function clampPanelHeight(height: number, viewportHeight: number): number
 }
 
 interface SessionPrefsState {
-  stepGranularity: StepGranularityLabel
-  setStepGranularity: (g: StepGranularityLabel) => void
+  // G5: glide the forming candle between steps during auto-play. Cosmetic only.
+  smoothCandles: boolean
+  setSmoothCandles: (v: boolean) => void
   candleType: KLCandleType
   setCandleType: (t: KLCandleType) => void
   hideTrades: boolean
@@ -45,8 +46,8 @@ interface SessionPrefsState {
 export const useSessionPrefsStore = create<SessionPrefsState>()(
   persist(
     (set) => ({
-      stepGranularity: '1m',
-      setStepGranularity: (stepGranularity) => set({ stepGranularity }),
+      smoothCandles: false,
+      setSmoothCandles: (smoothCandles) => set({ smoothCandles }),
       candleType: 'candle_solid',
       setCandleType: (candleType) => set({ candleType }),
       hideTrades: false,

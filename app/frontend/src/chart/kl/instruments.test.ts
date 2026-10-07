@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { INSTRUMENTS, findInstrument, pricePrecisionFromTick, tfToPeriod } from './instruments'
+import { INSTRUMENTS, findInstrument, pricePrecisionFromTick, tfToPeriod, tfToSeconds } from './instruments'
+import { SESSION_TIMEFRAMES } from '../replayBars'
 
 describe('kl instruments', () => {
   it('finds a known instrument and returns undefined for an unknown one', () => {
@@ -14,8 +15,17 @@ describe('kl instruments', () => {
     expect(tfToPeriod('1h')).toEqual({ type: 'hour', span: 1 })
   })
 
+  it('maps every session timeframe (G5: any timeframe at or above 1m) and agrees with its seconds', () => {
+    for (const tf of SESSION_TIMEFRAMES) {
+      expect(tfToPeriod(tf.id), tf.id).not.toBeNull()
+      expect(tfToSeconds(tf.id), tf.id).toBe(tf.seconds)
+    }
+    expect(tfToPeriod('4h')).toEqual({ type: 'hour', span: 4 })
+  })
+
   it('returns null for an unsupported timeframe', () => {
-    expect(tfToPeriod('4h')).toBeNull()
+    expect(tfToPeriod('7min')).toBeNull()
+    expect(tfToPeriod('30s')).toBeNull()
   })
 
   it('derives exact decimal precision from each instrument tick', () => {

@@ -43,7 +43,9 @@ def _write_session(session_id: str, instrument: str = "MES", prop_ruleset=None, 
     bts._write(session_id, {
         "id": session_id, "instrument": instrument, "base_timeframe": "5min",
         "start_time": _ts("13:00"), "created_at": now, "updated_at": now,
-        "cursor_time": _ts("15:00"), "status": "active",
+        # replay_version 2: the cursor already counts in 1m bars (a file without it is a v1
+        # session and its cursor is migrated -- that has its own tests in test_bt_sessions.py).
+        "cursor_time": _ts("15:00"), "status": "active", "replay_version": 2,
         "account": {
             "id": "acct-" + session_id, "starting_balance": 50000.0, "balance": balance, "currency": "USD",
             "risk_per_trade_percent": 1.0, "risk_per_trade_usd": None, "default_contracts": 1,

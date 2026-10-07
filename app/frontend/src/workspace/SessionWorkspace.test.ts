@@ -4,6 +4,7 @@ import {
   defaultFitWindow,
   resyncCursorIndex,
   shouldReanchor,
+  shouldReanchorBack,
   reviewFitWindow,
   sessionForTime,
   shouldRefitOnLoad,
@@ -74,6 +75,42 @@ describe('shouldReanchor', () => {
 
   it('never fires with no bars', () => {
     expect(shouldReanchor(0, 0, undefined, null)).toBe(false)
+  })
+})
+
+describe('shouldReanchorBack (a rewind nearing the start of the loaded feed, G5)', () => {
+  it('fires only within the trigger distance of the first loaded bar', () => {
+    expect(shouldReanchorBack(1000, 5000, null)).toBe(false)
+    expect(shouldReanchorBack(299, 5000, null)).toBe(true)
+    expect(shouldReanchorBack(300, 5000, null)).toBe(false)
+    expect(shouldReanchorBack(40, 5000, null, 50)).toBe(true)
+  })
+
+  it('stays above 4h of minutes, so the forming candle of the largest timeframe is always loaded', () => {
+    expect(shouldReanchorBack(240, 5000, null)).toBe(true)
+  })
+
+  it('does not ask again for the same first bar (the data ran out at its start, or a fetch is in flight)', () => {
+    expect(shouldReanchorBack(10, 5000, 5000)).toBe(false)
+    expect(shouldReanchorBack(10, 4000, 5000)).toBe(true)
+  })
+
+  it('never fires with nothing loaded', () => {
+    expect(shouldReanchorBack(0, undefined, null)).toBe(false)
+  })
+})
+
+describe('computeWindow for the 1-minute feed', () => {
+  it('holds the feed to at most 3000 1m bars and keeps 4h+ of minutes behind the cursor on open', () => {
+    const w = computeWindow(1_000_000, '1min')
+    expect((w.to - w.from) / 60 + 1).toBeLessThanOrEqual(3000)
+    expect((1_000_000 - w.from) / 60).toBeGreaterThan(240)
+  })
+
+  it('a back re-anchor leaves room on both sides of the cursor', () => {
+    const w = computeWindow(1_000_000, '1min', 1500)
+    expect((w.to - 1_000_000) / 60).toBe(1500)
+    expect((1_000_000 - w.from) / 60).toBeGreaterThan(1400)
   })
 })
 
