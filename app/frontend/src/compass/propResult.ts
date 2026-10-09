@@ -5,7 +5,7 @@
 // balance (VIZ_SPEC section 0: the frontend renders, the engine decides).
 import type { StatsResult } from '../api/types'
 import { fmtUsd } from '../format'
-import { fmtEtDateTime } from '../timeFormat'
+import { fmtEtLongDateTime } from '../timeFormat'
 
 export interface PropNarrative {
   status: 'passed' | 'failed' | 'incomplete'
@@ -39,7 +39,7 @@ export function describePropResult(r: StatsResult, totalTrades: number): PropNar
 
   const where =
     r.resolved_trade_id != null && r.trades_to_result != null && r.resolved_time != null
-      ? `trade #${r.resolved_trade_id} (${r.trades_to_result} of ${totalTrades}) at ${fmtEtDateTime(r.resolved_time)}`
+      ? `trade #${r.resolved_trade_id} (${r.trades_to_result} of ${totalTrades}) at ${fmtEtLongDateTime(r.resolved_time)}`
       : null
 
   let headline: string
@@ -68,7 +68,11 @@ export function describePropResult(r: StatsResult, totalTrades: number): PropNar
     )
   } else {
     headline = 'Profit target not yet reached'
-    details.push(`Balance ${fmtUsd(r.final_balance)} over ${plural(r.trading_days, 'trading day')}.`)
+    details.push(
+      r.trading_days > 0
+        ? `Balance ${fmtUsd(r.final_balance)} over ${plural(r.trading_days, 'trading day')}.`
+        : `Balance ${fmtUsd(r.final_balance)}; no trading days yet.`,
+    )
   }
 
   if (r.daily_loss_lock_days != null && r.daily_loss_lock_days > 0) {

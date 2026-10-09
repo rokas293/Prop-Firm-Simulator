@@ -14,6 +14,13 @@
   day below the 50% line).
 - Trading day boundary: 18:00 ET -> 17:00 ET next day (see sessions.py);
   this is what stamps the EOD balance and resets the daily loss limit.
+
+The rules above are the Topstep preset. A custom rule set (G6) changes them via
+PropRulesConfig: `mll_type` is "eod_trailing" (the above), "static" (the floor
+stays at start_balance - offset) or "intraday_trailing" (the floor follows the
+live-equity high-water mark minus the offset, bar by bar). A trailing floor
+freezes once it would reach `mll_freeze_floor` when that is set. A None daily
+loss limit / consistency pct switches that rule off.
 """
 from __future__ import annotations
 
@@ -102,6 +109,10 @@ class PropRulesTracker:
             self.day_start_balance = self._last_balance
             self.daily_locked = False
 
+        # --- intraday trailing floor: follows the live-equity high-water mark ---
+        if self.config.mll_type == "intraday_trailing":
+            self._trail_floor(equity)
+
         # --- intraday MLL breach: checked against LIVE equity, every bar ---
         if equity <= self.mll_floor:
             self.failed = True
@@ -112,7 +123,11 @@ class PropRulesTracker:
 
         # --- daily loss limit: locks the day, does not fail the Combine ---
         newly_daily_locked = False
-        if not self.daily_locked and (equity - self.day_start_balance) <= -self.config.daily_loss_limit:
+        if (
+            self.config.daily_loss_limit is not None
+            and not self.daily_locked
+            and (equity - self.day_start_balance) <= -self.config.daily_loss_limit
+        ):
             self.daily_locked = True
             newly_daily_locked = True
 
@@ -122,7 +137,11 @@ class PropRulesTracker:
         if total_profit >= self.config.profit_target:
             current_day_pnl = balance - self.day_start_balance
             best_day_pnl = max([current_day_pnl, *self.daily_pnls.values()])
-            consistency_ok = best_day_pnl <= total_profit * self.config.consistency_max_pct
+            consistency_ok = (
+                True
+                if self.config.consistency_max_pct is None
+                else best_day_pnl <= total_profit * self.config.consistency_max_pct
+            )
 
             self.target_hit = True
             if self.target_hit_ts is None:
@@ -159,9 +178,10 @@ class PropRulesTracker:
         daily_pnl = eod_balance - self.day_start_balance
         self.daily_pnls[trading_day] = daily_pnl
 
-        if not self.mll_frozen:
+        if self.config.mll_type == "eod_trailing" and not self.mll_frozen:
             self.mll_floor = max(self.mll_floor, eod_balance - self.config.mll_initial_offset)
-            if eod_balance >= self.config.mll_freeze_trigger_balance:
+            trigger = self.config.mll_freeze_trigger_balance
+            if trigger is not None and eod_balance >= trigger:
                 self.mll_frozen = True
                 self.mll_floor = self.config.mll_freeze_floor
 
@@ -174,6 +194,17 @@ class PropRulesTracker:
             mll_floor_after=self.mll_floor,
             mll_frozen_after=self.mll_frozen,
         ))
+
+    def _trail_floor(self, equity: float) -> None:
+        """Intraday trailing: the floor rises with the highest live equity seen,
+        never falls, and (when the rule set has one) stops at the freeze floor."""
+        if self.mll_frozen:
+            return
+        self.mll_floor = max(self.mll_floor, equity - self.config.mll_initial_offset)
+        trigger = self.config.mll_freeze_trigger_balance
+        if trigger is not None and equity >= trigger:
+            self.mll_frozen = True
+            self.mll_floor = self.config.mll_freeze_floor
 
     def _status(self, *, newly_failed: bool, newly_daily_locked: bool, newly_passed: bool) -> BarRuleStatus:
         return BarRuleStatus(

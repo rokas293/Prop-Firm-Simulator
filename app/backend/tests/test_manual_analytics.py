@@ -507,7 +507,7 @@ def test_partial_on_day1_and_final_on_day2_give_each_day_its_own_eod_balance_and
     cfg_replay = pytest.importorskip("app.backend.services.manual_analytics")
     df = cfg_replay.load_trades_frame("bt:split")
     assert len(df) == 1                                   # statistics still count one trade
-    replay = cfg_replay.replay_prop_rules(df, "MES")
+    replay = cfg_replay.replay_prop_rules(df, "MES", cfg_replay.session_engine_config(bts.get_session("split")))
     logs = replay.combine.day_logs
     assert [l.trading_day.isoformat() for l in logs] == [DAY1, DAY2]
     assert [l.start_balance for l in logs] == [50000.0, 49400.0]

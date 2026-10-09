@@ -7,6 +7,7 @@ import type {
   CreateManualTradeRequest,
   CreateSessionRequest,
   DailyRiskPoint,
+  HomeOverview,
   EquityPoint,
   IndicatorResponse,
   ManualTrade,
@@ -16,6 +17,7 @@ import type {
   RecordTradeResponse,
   RunMeta,
   RunSummary,
+  SessionSetupOptions,
   SessionWindow,
   StatsResponse,
   SummarizeResponse,
@@ -131,6 +133,9 @@ export const api = {
   listBtSessions: (includeArchived = false) =>
     request<BacktestSessionSummary[]>('/bt-sessions', { include_archived: includeArchived ? 'true' : undefined }),
   getBtSession: (sessionId: string) => request<BacktestSessionDetail>(`/bt-sessions/${sessionId}`),
+  // G6: the New session form's data ranges / presets, and the home page's numbers.
+  getSessionSetupOptions: () => request<SessionSetupOptions>('/bt-sessions/setup-options'),
+  getHomeOverview: () => request<HomeOverview>('/bt-sessions/home'),
   createBtSession: (body: CreateSessionRequest) => sendJson<BacktestSessionDetail, CreateSessionRequest>('/bt-sessions', 'POST', body),
   // F4: also carries the FULL current position/working-orders snapshot
   // (see UpdateSessionStateRequest's own comment) -- position/workingOrders

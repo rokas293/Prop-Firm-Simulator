@@ -34,8 +34,9 @@ import pandas as pd
 
 from app.backend import models
 from app.backend.services import bt_session_service as bts
+from app.backend.services import prop_presets
 from app.backend.services.bundle_reader import RunNotFound, filter_trades_frame
-from propbt.config import load_contracts, load_prop_rules, load_sessions
+from propbt.config import PropRulesConfig, load_contracts, load_sessions
 from propbt.data.sessions import trading_day as trading_day_of
 from propbt.engine.prop_rules import CombineResult, PropRulesTracker
 from propbt.reporting import run_bundle as rb
@@ -178,7 +179,14 @@ def _unix(ts: pd.Timestamp) -> int:
     return int(ts.value // 1_000_000_000)
 
 
-def replay_prop_rules(df: pd.DataFrame, instrument: str) -> PropReplay:
+def session_engine_config(session: models.BacktestSessionDetail) -> PropRulesConfig:
+    """The tracker config a prop session is judged by: its own saved rules (the
+    Topstep preset, or a custom rule set) turned into propbt's PropRulesConfig."""
+    acct = session.account
+    return prop_presets.engine_config(acct.prop_rules, acct.starting_balance, acct.commissions)
+
+
+def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -> PropReplay:
     """Feeds a session's manual trades through the SAME PropRulesTracker the
     automated backtest uses (propbt/engine/prop_rules.py) -- no rule is
     re-implemented here.
@@ -189,7 +197,11 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str) -> PropReplay:
     minus its MAE in dollars -- the live-equity low the engine's per-bar
     check would have seen) and once more at exit with the realized balance.
     Because MAE is the trade's lowest equity, this reaches the same MLL-breach
-    verdict a per-bar replay would. What it cannot recover is *when inside
+    verdict a per-bar replay would. An INTRADAY-trailing floor also rises with
+    the trade's best point (its MFE), which is observed first: the journal does
+    not record whether the high or the low came first inside a trade, so it
+    assumes the high did -- the stricter order, which can only fail a session
+    a per-bar replay would have passed, never the reverse. What it cannot recover is *when inside
     the trade* the low happened, so an intratrade breach is stamped at the
     trade's exit time. Limitations (documented, not hidden): the MAE low
     excludes commission, and a partial-close slice's MAE ignores the
@@ -202,7 +214,6 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str) -> PropReplay:
     trails/freezes the MLL), and the daily-loss limit sees each exit's loss on
     the day it happened.
     """
-    cfg = load_prop_rules()
     spec = load_contracts()[instrument]
     tracker = PropRulesTracker(cfg)
     replay = PropReplay(combine=None)  # type: ignore[arg-type]
@@ -218,7 +229,9 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str) -> PropReplay:
             "open_pnl": eq - bal,
             "equity": eq,
             "mll_floor": tracker.mll_floor,
-            "daily_loss_floor": tracker.day_start_balance - cfg.daily_loss_limit,
+            "daily_loss_floor": (
+                float("nan") if cfg.daily_loss_limit is None else tracker.day_start_balance - cfg.daily_loss_limit
+            ),
             "target_level": target_level,
             "trading_day": day.isoformat() if day else None,
             "day_start_balance": tracker.day_start_balance,
@@ -238,8 +251,15 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str) -> PropReplay:
 
         resolved = False
         open_contracts = int(t.size_contracts)
+        first_leg = True
         for leg in _legs(t):
             leg_day = trading_day_of(leg.ts, sessions_cfg)
+            if first_leg and cfg.mll_type == "intraday_trailing" and float(t.mfe_points) > 0:
+                # The trade's high: lifts the trailing floor before the low is seen.
+                mfe_usd = float(t.mfe_points) * spec.point_value * open_contracts
+                observe(leg.ts, leg_day, balance, balance + mfe_usd)
+                replay.rows.pop()
+            first_leg = False
             mae_usd = leg.mae_points * spec.point_value * open_contracts
             st = observe(leg.ts, leg_day, balance, balance - mae_usd)
             resolved = st.failed
@@ -272,7 +292,7 @@ def _session_replay(run_id: str) -> Tuple[Optional[models.BacktestSessionDetail]
     df = _build_frame(run_id, sessions)
     scope = parse_scope(run_id)
     if scope.kind == "session" and sessions and sessions[0].account.prop_ruleset:
-        return sessions[0], df, replay_prop_rules(df, sessions[0].instrument)
+        return sessions[0], df, replay_prop_rules(df, sessions[0].instrument, session_engine_config(sessions[0]))
     return (sessions[0] if scope.kind == "session" and sessions else None), df, None
 
 

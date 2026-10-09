@@ -386,6 +386,11 @@ def get_monte_carlo(
     if len(df) == 0:
         raise ValueError("no trades to simulate in this scope")
     budget = drawdown_budget_usd if drawdown_budget_usd is not None else load_prop_rules().mll_initial_offset
+    if drawdown_budget_usd is None and ma.is_manual_run_id(run_id):
+        # One custom prop session: its own max loss is the distance that matters.
+        in_scope = ma._sessions_in_scope(run_id)
+        if len(in_scope) == 1 and in_scope[0].account.prop_rules is not None:
+            budget = in_scope[0].account.prop_rules.max_loss
     pnls = df.sort_values("exit_time", kind="stable")["pnl_usd"].astype(float).tolist()
     mc = run_trade_sequence_monte_carlo(pnls, n_sims=n_sims, method=method, seed=seed, drawdown_budget_usd=budget)  # type: ignore[arg-type]
     return models.MonteCarloResponse(

@@ -10,7 +10,7 @@ describe('positionCapMessage', () => {
   it('rejects the first contract over the cap with a message naming the size and the limit', () => {
     const msg = positionCapMessage(6, 5, 'Market order')
     expect(msg).toContain('Market order of 6 contracts')
-    expect(msg).toContain('5-contract Topstep position limit')
+    expect(msg).toContain('5-contract position limit')
   })
 
   it('never caps an account with no limit (practice session, or a missing field)', () => {

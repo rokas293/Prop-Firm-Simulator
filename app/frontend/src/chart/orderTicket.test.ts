@@ -366,7 +366,7 @@ describe('Topstep position cap', () => {
     expect(issues).toHaveLength(1)
     expect(issues[0].field).toBe('contracts')
     expect(issues[0].message).toContain('7 contracts')
-    expect(issues[0].message).toContain('5-contract Topstep position limit')
+    expect(issues[0].message).toContain('5-contract position limit')
     const built = buildOrder(f, ctx)
     expect(built.ok).toBe(false)
     // The cap itself is allowed.

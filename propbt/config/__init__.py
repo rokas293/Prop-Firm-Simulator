@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import yaml
 
@@ -82,17 +82,31 @@ def load_sessions(path: str = "sessions.yaml") -> SessionsConfig:
     )
 
 
+MLL_TYPES = ("static", "eod_trailing", "intraday_trailing")
+
+
 @dataclass(frozen=True)
 class PropRulesConfig:
+    """What PropRulesTracker enforces. prop_rules.yaml (Topstep $50k) fills every
+    field; a custom rule set (FXR_V2_SPEC.md section 4, G6) may leave the optional
+    ones None, meaning "this rule is not part of the account":
+      - daily_loss_limit None: no daily lock,
+      - consistency_max_pct None: no consistency rule (target alone passes),
+      - max_open_contracts None: no position cap (enforced by the caller, not the tracker),
+      - mll_freeze_trigger_balance / mll_freeze_floor None: the trailing floor never freezes.
+    mll_type picks how the floor moves: "static" never, "eod_trailing" on the end-of-day
+    balance (Topstep), "intraday_trailing" on the live equity high-water mark.
+    """
     start_balance: float
     profit_target: float
     mll_initial_offset: float
-    mll_freeze_trigger_balance: float
-    mll_freeze_floor: float
-    daily_loss_limit: float
-    consistency_max_pct: float
-    max_open_contracts: int
+    mll_freeze_trigger_balance: Optional[float]
+    mll_freeze_floor: Optional[float]
+    daily_loss_limit: Optional[float]
+    consistency_max_pct: Optional[float]
+    max_open_contracts: Optional[int]
     commissions: Dict[str, float]
+    mll_type: str = "eod_trailing"
 
 
 def load_prop_rules(path: str = "prop_rules.yaml") -> PropRulesConfig:

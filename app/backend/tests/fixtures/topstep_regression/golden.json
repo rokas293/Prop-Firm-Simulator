@@ -1,0 +1,1337 @@
+{
+ "real_20261003T194423Z_bb6559b5": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1700006400,
+    "min_distance_to_mll_usd": 1976.1499999999942,
+    "trades": 3,
+    "trading_day": "2023-11-15"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700002800000,
+    "trading_day": "2023-11-15"
+   },
+   {
+    "balance": 49998.7,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 49998.7,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700004000000,
+    "trading_day": "2023-11-15"
+   },
+   {
+    "balance": 49992.4,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 49992.4,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700005200000,
+    "trading_day": "2023-11-15"
+   },
+   {
+    "balance": 49977.35,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 49977.35,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700006400000,
+    "trading_day": "2023-11-15"
+   }
+  ],
+  "overall": {
+   "expectancy_r": -0.015101634501351316,
+   "expectancy_usd": -7.55,
+   "max_drawdown_usd": -21.349999999999998,
+   "net_pnl_usd": -22.65,
+   "net_r": -0.045304903504053945,
+   "profit_factor": 0.0,
+   "trades": 3,
+   "win_rate": 0.0
+  },
+  "result": {
+   "consistency_passed": null,
+   "daily_loss_lock_days": 0,
+   "equity_at_result": null,
+   "fail_reason": null,
+   "final_balance": 49977.34999999999,
+   "mll_floor_at_result": null,
+   "resolved_time": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "target_hit": false,
+   "trades_to_result": null,
+   "trading_days": 1
+  },
+  "status": {
+   "fail_reason": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "trades_to_result": null
+  }
+ },
+ "real_20261003T194522Z_2f4a7ebf": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1700006400,
+    "min_distance_to_mll_usd": 1976.1499999999942,
+    "trades": 3,
+    "trading_day": "2023-11-15"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700002800000,
+    "trading_day": "2023-11-15"
+   },
+   {
+    "balance": 49998.7,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 49998.7,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700004000000,
+    "trading_day": "2023-11-15"
+   },
+   {
+    "balance": 49992.4,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 49992.4,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700005200000,
+    "trading_day": "2023-11-15"
+   },
+   {
+    "balance": 49977.35,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 49977.35,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1700006400000,
+    "trading_day": "2023-11-15"
+   }
+  ],
+  "overall": {
+   "expectancy_r": -0.015101634501351316,
+   "expectancy_usd": -7.55,
+   "max_drawdown_usd": -21.349999999999998,
+   "net_pnl_usd": -22.65,
+   "net_r": -0.045304903504053945,
+   "profit_factor": 0.0,
+   "trades": 3,
+   "win_rate": 0.0
+  },
+  "result": {
+   "consistency_passed": null,
+   "daily_loss_lock_days": 0,
+   "equity_at_result": null,
+   "fail_reason": null,
+   "final_balance": 49977.34999999999,
+   "mll_floor_at_result": null,
+   "resolved_time": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "target_hit": false,
+   "trades_to_result": null,
+   "trading_days": 1
+  },
+  "status": {
+   "fail_reason": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "trades_to_result": null
+  }
+ },
+ "real_20261003T200033Z_fbb5d32f": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699369200,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699456200,
+    "min_distance_to_mll_usd": 1900.0,
+    "trades": 1,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": 1699542600,
+    "daily_locked": true,
+    "min_distance_time": 1699542600,
+    "min_distance_to_mll_usd": 400.0,
+    "trades": 1,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699628400,
+    "min_distance_to_mll_usd": 400.0,
+    "trades": 1,
+    "trading_day": "2023-11-10"
+   },
+   {
+    "breach_time": 1699715400,
+    "breached": true,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699715400,
+    "min_distance_to_mll_usd": -1200.0,
+    "trades": 1,
+    "trading_day": "2023-11-11"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699369200000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 50150.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50150.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699369800000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 50150.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49150.0,
+    "day_start_balance": 50150.0,
+    "equity": 50150.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699455600000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 50050.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49150.0,
+    "day_start_balance": 50150.0,
+    "equity": 50050.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699456200000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 50050.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49050.0,
+    "day_start_balance": 50050.0,
+    "equity": 50050.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699542000000,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "balance": 48550.0,
+    "breached": false,
+    "daily_locked": true,
+    "daily_loss_floor": 49050.0,
+    "day_start_balance": 50050.0,
+    "equity": 48550.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699542600000,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "balance": 48550.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 47550.0,
+    "day_start_balance": 48550.0,
+    "equity": 48550.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699628400000,
+    "trading_day": "2023-11-10"
+   },
+   {
+    "balance": 48750.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 47550.0,
+    "day_start_balance": 48550.0,
+    "equity": 48750.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699629000000,
+    "trading_day": "2023-11-10"
+   },
+   {
+    "balance": 48750.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 47750.0,
+    "day_start_balance": 48750.0,
+    "equity": 48750.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699714800000,
+    "trading_day": "2023-11-11"
+   },
+   {
+    "balance": 46950.0,
+    "breached": true,
+    "daily_locked": false,
+    "daily_loss_floor": 47750.0,
+    "day_start_balance": 48750.0,
+    "equity": 46950.0,
+    "mll_floor": 48150.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699715400000,
+    "trading_day": "2023-11-11"
+   }
+  ],
+  "overall": {
+   "expectancy_r": null,
+   "expectancy_usd": -464.2857142857143,
+   "max_drawdown_usd": -3500.0,
+   "net_pnl_usd": -3250.0,
+   "net_r": null,
+   "profit_factor": 0.12162162162162163,
+   "trades": 7,
+   "win_rate": 0.42857142857142855
+  },
+  "result": {
+   "consistency_passed": null,
+   "daily_loss_lock_days": 1,
+   "equity_at_result": 46950.0,
+   "fail_reason": "mll_breach",
+   "final_balance": 46950.0,
+   "mll_floor_at_result": 48150.0,
+   "resolved_time": 1699715400,
+   "resolved_trade_id": 5,
+   "status": "failed",
+   "target_hit": false,
+   "trades_to_result": 5,
+   "trading_days": 4
+  },
+  "status": {
+   "fail_reason": "mll_breach",
+   "resolved_trade_id": 5,
+   "status": "failed",
+   "trades_to_result": 5
+  }
+ },
+ "synthetic_consistency_dilutes": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699281000,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699367400,
+    "min_distance_to_mll_usd": 2800.0,
+    "trades": 1,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699453800,
+    "min_distance_to_mll_usd": 3100.0,
+    "trades": 1,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699540200,
+    "min_distance_to_mll_usd": 3400.0,
+    "trades": 1,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699626600,
+    "min_distance_to_mll_usd": 3700.0,
+    "trades": 1,
+    "trading_day": "2023-11-10"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699885800,
+    "min_distance_to_mll_usd": 4000.0,
+    "trades": 1,
+    "trading_day": "2023-11-13"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699972200,
+    "min_distance_to_mll_usd": 4300.0,
+    "trades": 1,
+    "trading_day": "2023-11-14"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281000000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 52800.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 52800.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281600000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 52800.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 51800.0,
+    "day_start_balance": 52800.0,
+    "equity": 52800.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699367400000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 53100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 51800.0,
+    "day_start_balance": 52800.0,
+    "equity": 53100.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699368000000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 53100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 52100.0,
+    "day_start_balance": 53100.0,
+    "equity": 53100.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699453800000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 53400.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 52100.0,
+    "day_start_balance": 53100.0,
+    "equity": 53400.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699454400000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 53400.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 52400.0,
+    "day_start_balance": 53400.0,
+    "equity": 53400.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699540200000,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "balance": 53700.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 52400.0,
+    "day_start_balance": 53400.0,
+    "equity": 53700.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699540800000,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "balance": 53700.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 52700.0,
+    "day_start_balance": 53700.0,
+    "equity": 53700.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699626600000,
+    "trading_day": "2023-11-10"
+   },
+   {
+    "balance": 54000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 52700.0,
+    "day_start_balance": 53700.0,
+    "equity": 54000.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699627200000,
+    "trading_day": "2023-11-10"
+   },
+   {
+    "balance": 54000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 53000.0,
+    "day_start_balance": 54000.0,
+    "equity": 54000.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699885800000,
+    "trading_day": "2023-11-13"
+   },
+   {
+    "balance": 54300.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 53000.0,
+    "day_start_balance": 54000.0,
+    "equity": 54300.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699886400000,
+    "trading_day": "2023-11-13"
+   },
+   {
+    "balance": 54300.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 53300.0,
+    "day_start_balance": 54300.0,
+    "equity": 54300.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699972200000,
+    "trading_day": "2023-11-14"
+   },
+   {
+    "balance": 55800.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 53300.0,
+    "day_start_balance": 54300.0,
+    "equity": 55800.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699972800000,
+    "trading_day": "2023-11-14"
+   }
+  ],
+  "overall": {
+   "expectancy_r": null,
+   "expectancy_usd": 828.5714285714286,
+   "max_drawdown_usd": 0.0,
+   "net_pnl_usd": 5800.0,
+   "net_r": null,
+   "profit_factor": null,
+   "trades": 7,
+   "win_rate": 1.0
+  },
+  "result": {
+   "consistency_passed": true,
+   "daily_loss_lock_days": 0,
+   "equity_at_result": 55800.0,
+   "fail_reason": null,
+   "final_balance": 55800.0,
+   "mll_floor_at_result": 50000.0,
+   "resolved_time": 1699972800,
+   "resolved_trade_id": 7,
+   "status": "passed",
+   "target_hit": true,
+   "trades_to_result": 7,
+   "trading_days": 7
+  },
+  "status": {
+   "fail_reason": null,
+   "resolved_trade_id": 7,
+   "status": "passed",
+   "trades_to_result": 7
+  }
+ },
+ "synthetic_daily_lock_and_freeze": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699281000,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699367400,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": 1699454400,
+    "daily_locked": true,
+    "min_distance_time": 1699454400,
+    "min_distance_to_mll_usd": 900.0,
+    "trades": 1,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699540200,
+    "min_distance_to_mll_usd": 1000.0,
+    "trades": 1,
+    "trading_day": "2023-11-09"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281000000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 51100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 51100.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281600000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 51100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 50100.0,
+    "day_start_balance": 51100.0,
+    "equity": 51100.0,
+    "mll_floor": 49100.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699367400000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 52100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 50100.0,
+    "day_start_balance": 51100.0,
+    "equity": 52100.0,
+    "mll_floor": 49100.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699368000000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 52100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 51100.0,
+    "day_start_balance": 52100.0,
+    "equity": 52100.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699453800000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 51000.0,
+    "breached": false,
+    "daily_locked": true,
+    "daily_loss_floor": 51100.0,
+    "day_start_balance": 52100.0,
+    "equity": 51000.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699454400000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 51000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 50000.0,
+    "day_start_balance": 51000.0,
+    "equity": 51000.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699540200000,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "balance": 51050.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 50000.0,
+    "day_start_balance": 51000.0,
+    "equity": 51050.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699540800000,
+    "trading_day": "2023-11-09"
+   }
+  ],
+  "overall": {
+   "expectancy_r": null,
+   "expectancy_usd": 262.5,
+   "max_drawdown_usd": -1100.0,
+   "net_pnl_usd": 1050.0,
+   "net_r": null,
+   "profit_factor": 1.9545454545454546,
+   "trades": 4,
+   "win_rate": 0.75
+  },
+  "result": {
+   "consistency_passed": null,
+   "daily_loss_lock_days": 1,
+   "equity_at_result": null,
+   "fail_reason": null,
+   "final_balance": 51050.0,
+   "mll_floor_at_result": null,
+   "resolved_time": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "target_hit": false,
+   "trades_to_result": null,
+   "trading_days": 4
+  },
+  "status": {
+   "fail_reason": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "trades_to_result": null
+  }
+ },
+ "synthetic_mll_breach_mae": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699281000,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "breach_time": 1699368000,
+    "breached": true,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699368000,
+    "min_distance_to_mll_usd": -250.0,
+    "trades": 1,
+    "trading_day": "2023-11-07"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281000000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 50500.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50500.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281600000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 50500.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49500.0,
+    "day_start_balance": 50500.0,
+    "equity": 50500.0,
+    "mll_floor": 48500.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699367400000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 50500.0,
+    "breached": true,
+    "daily_locked": false,
+    "daily_loss_floor": 49500.0,
+    "day_start_balance": 50500.0,
+    "equity": 48250.0,
+    "mll_floor": 48500.0,
+    "open_pnl": -2250.0,
+    "target_level": 53000.0,
+    "time": 1699368000000,
+    "trading_day": "2023-11-07"
+   }
+  ],
+  "overall": {
+   "expectancy_r": null,
+   "expectancy_usd": 200.0,
+   "max_drawdown_usd": -100.0,
+   "net_pnl_usd": 400.0,
+   "net_r": null,
+   "profit_factor": 5.0,
+   "trades": 2,
+   "win_rate": 0.5
+  },
+  "result": {
+   "consistency_passed": null,
+   "daily_loss_lock_days": 0,
+   "equity_at_result": 48250.0,
+   "fail_reason": "mll_breach",
+   "final_balance": 50500.0,
+   "mll_floor_at_result": 48500.0,
+   "resolved_time": 1699368000,
+   "resolved_trade_id": 2,
+   "status": "failed",
+   "target_hit": false,
+   "trades_to_result": 2,
+   "trading_days": 1
+  },
+  "status": {
+   "fail_reason": "mll_breach",
+   "resolved_trade_id": 2,
+   "status": "failed",
+   "trades_to_result": 2
+  }
+ },
+ "synthetic_partial_exits_two_days": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699282200,
+    "min_distance_to_mll_usd": 1950.0,
+    "trades": 1,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699368600,
+    "min_distance_to_mll_usd": 1940.0,
+    "trades": 0,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699454400,
+    "min_distance_to_mll_usd": 1250.0,
+    "trades": 1,
+    "trading_day": "2023-11-08"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281000000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 50450.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50450.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699282200000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 50900.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49450.0,
+    "day_start_balance": 50450.0,
+    "equity": 50900.0,
+    "mll_floor": 48450.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699368600000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 50900.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49900.0,
+    "day_start_balance": 50900.0,
+    "equity": 50900.0,
+    "mll_floor": 48900.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699453800000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 50200.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49900.0,
+    "day_start_balance": 50900.0,
+    "equity": 50200.0,
+    "mll_floor": 48900.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699454400000,
+    "trading_day": "2023-11-08"
+   }
+  ],
+  "overall": {
+   "expectancy_r": null,
+   "expectancy_usd": 100.0,
+   "max_drawdown_usd": -700.0,
+   "net_pnl_usd": 200.0,
+   "net_r": null,
+   "profit_factor": 1.2857142857142858,
+   "trades": 2,
+   "win_rate": 0.5
+  },
+  "result": {
+   "consistency_passed": null,
+   "daily_loss_lock_days": 0,
+   "equity_at_result": null,
+   "fail_reason": null,
+   "final_balance": 50200.0,
+   "mll_floor_at_result": null,
+   "resolved_time": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "target_hit": false,
+   "trades_to_result": null,
+   "trading_days": 3
+  },
+  "status": {
+   "fail_reason": null,
+   "resolved_trade_id": null,
+   "status": "incomplete",
+   "trades_to_result": null
+  }
+ },
+ "synthetic_pass_clean": {
+  "daily_risk": [
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699281000,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699367400,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699453800,
+    "min_distance_to_mll_usd": 2000.0,
+    "trades": 1,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699540200,
+    "min_distance_to_mll_usd": 2100.0,
+    "trades": 1,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "breach_time": null,
+    "breached": false,
+    "daily_lock_time": null,
+    "daily_locked": false,
+    "min_distance_time": 1699626600,
+    "min_distance_to_mll_usd": 2800.0,
+    "trades": 1,
+    "trading_day": "2023-11-10"
+   }
+  ],
+  "equity": [
+   {
+    "balance": 50000.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50000.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281000000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 50700.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49000.0,
+    "day_start_balance": 50000.0,
+    "equity": 50700.0,
+    "mll_floor": 48000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699281600000,
+    "trading_day": "2023-11-06"
+   },
+   {
+    "balance": 50700.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49700.0,
+    "day_start_balance": 50700.0,
+    "equity": 50700.0,
+    "mll_floor": 48700.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699367400000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 51400.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 49700.0,
+    "day_start_balance": 50700.0,
+    "equity": 51400.0,
+    "mll_floor": 48700.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699368000000,
+    "trading_day": "2023-11-07"
+   },
+   {
+    "balance": 51400.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 50400.0,
+    "day_start_balance": 51400.0,
+    "equity": 51400.0,
+    "mll_floor": 49400.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699453800000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 52100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 50400.0,
+    "day_start_balance": 51400.0,
+    "equity": 52100.0,
+    "mll_floor": 49400.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699454400000,
+    "trading_day": "2023-11-08"
+   },
+   {
+    "balance": 52100.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 51100.0,
+    "day_start_balance": 52100.0,
+    "equity": 52100.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699540200000,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "balance": 52800.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 51100.0,
+    "day_start_balance": 52100.0,
+    "equity": 52800.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699540800000,
+    "trading_day": "2023-11-09"
+   },
+   {
+    "balance": 52800.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 51800.0,
+    "day_start_balance": 52800.0,
+    "equity": 52800.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699626600000,
+    "trading_day": "2023-11-10"
+   },
+   {
+    "balance": 53500.0,
+    "breached": false,
+    "daily_locked": false,
+    "daily_loss_floor": 51800.0,
+    "day_start_balance": 52800.0,
+    "equity": 53500.0,
+    "mll_floor": 50000.0,
+    "open_pnl": 0.0,
+    "target_level": 53000.0,
+    "time": 1699627200000,
+    "trading_day": "2023-11-10"
+   }
+  ],
+  "overall": {
+   "expectancy_r": null,
+   "expectancy_usd": 700.0,
+   "max_drawdown_usd": 0.0,
+   "net_pnl_usd": 3500.0,
+   "net_r": null,
+   "profit_factor": null,
+   "trades": 5,
+   "win_rate": 1.0
+  },
+  "result": {
+   "consistency_passed": true,
+   "daily_loss_lock_days": 0,
+   "equity_at_result": 53500.0,
+   "fail_reason": null,
+   "final_balance": 53500.0,
+   "mll_floor_at_result": 50000.0,
+   "resolved_time": 1699627200,
+   "resolved_trade_id": 5,
+   "status": "passed",
+   "target_hit": true,
+   "trades_to_result": 5,
+   "trading_days": 5
+  },
+  "status": {
+   "fail_reason": null,
+   "resolved_trade_id": 5,
+   "status": "passed",
+   "trades_to_result": 5
+  }
+ }
+}

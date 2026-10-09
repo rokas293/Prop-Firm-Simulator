@@ -10,5 +10,5 @@ export function positionCapMessage(
   what: string,
 ): string | null {
   if (cap === null || cap === undefined || contracts <= cap) return null
-  return `${what} of ${contracts} contracts is over this session's ${cap}-contract Topstep position limit. Reduce the size (or widen the stop distance so auto-sizing fits) and try again.`
+  return `${what} of ${contracts} contracts is over this session's ${cap}-contract position limit. Reduce the size (or widen the stop distance so auto-sizing fits) and try again.`
 }

@@ -6,7 +6,8 @@
 // rule.
 import { useEffect, useRef } from 'react'
 import { useModalFocus } from '../components/useModalFocus'
-import type { StatsResult } from '../api/types'
+import type { PropRules, StatsResult } from '../api/types'
+import { describeRules } from '../chart/sessionSetup'
 import { describePropResult } from '../compass/propResult'
 import Skeleton from '../components/Skeleton'
 import { POPOVER_SHELL } from '../components/popoverStyles'
@@ -18,6 +19,8 @@ export default function PropRulesPopover({
   totalTrades,
   rulesetLabel,
   maxContracts,
+  rules,
+  ended = false,
   onOpenAnalytics,
   onClose,
 }: {
@@ -25,6 +28,10 @@ export default function PropRulesPopover({
   totalTrades: number
   rulesetLabel: string
   maxContracts: number | null
+  // The rule set this session is judged by (null for a session that predates it).
+  rules?: PropRules | null
+  // The replay has reached its end date: an open Combine reads "Not passed", as on the completion card.
+  ended?: boolean
   onOpenAnalytics: () => void
   onClose: () => void
 }) {
@@ -60,7 +67,7 @@ export default function PropRulesPopover({
       <div className="flex items-baseline justify-between">
         <span className="text-sm text-text">{rulesetLabel}</span>
         <span className="text-xs text-text-muted">
-          {STATUS_LABEL[narrative?.status ?? 'incomplete']}
+          {narrative?.status === 'incomplete' && ended ? 'Not passed' : STATUS_LABEL[narrative?.status ?? 'incomplete']}
         </span>
       </div>
       {narrative ? (
@@ -78,14 +85,25 @@ export default function PropRulesPopover({
           <Skeleton className="h-4 w-1/2" />
         </div>
       )}
-      <div className="flex items-baseline justify-between text-xs">
-        <span className="micro-label">Position cap</span>
-        <span className="tabular-nums text-text">{maxContracts !== null ? `${maxContracts} contracts` : 'None'}</span>
-      </div>
+      {rules && (
+        <ul className="flex flex-col gap-1 text-xs text-text-muted" aria-label="Rules">
+          {describeRules(rules).map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+          {(rules.no_overnight || rules.no_weekend) && <li>Flat by {rules.close_time} ET</li>}
+        </ul>
+      )}
+      {/* The rules list already says it; this row is for a session with no saved rules. */}
+      {!rules && (
+        <div className="flex items-baseline justify-between text-xs">
+          <span className="micro-label">Position cap</span>
+          <span className="tabular-nums text-text">{maxContracts !== null ? `${maxContracts} contracts` : 'None'}</span>
+        </div>
+      )}
       <button
         type="button"
         onClick={onOpenAnalytics}
-        className="h-7 self-start rounded px-2 text-xs text-text transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className="-ml-2 h-7 self-start rounded px-2 text-xs text-text transition-colors hover:bg-surface-2-hover active:bg-surface-2-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
         Full result in Analytics
       </button>

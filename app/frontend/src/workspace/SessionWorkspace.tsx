@@ -20,6 +20,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL, { type ChartKLHandle, type OrderLineSpec, type PositionToolSpec } from '../chart/kl/ChartKL'
 import { revealedSessionBands, type SessionBand } from '../chart/kl/sessionOverlay'
 import { positionCapMessage } from '../chart/positionCap'
+import { entryRefusal, flattenNotice, holdingRule } from '../chart/holdingRestrictions'
 import { defaultToolLevels } from '../chart/positionTool'
 import { balanceFor, riskPctFromUsd, type OrderContext, type OrderKind, type OrderRequest, type PositionToolLevels } from '../chart/orderTicket'
 import { DEFAULT_SCALPER, entryBrackets, fromScalperConfig, scalperPreview, toScalperConfig, type ScalperBrackets } from '../chart/scalper'
@@ -78,6 +79,7 @@ import { useKLDrawingStore } from '../state/klDrawingStore'
 import { DRAWING_SHORTCUTS, isTypingTarget } from '../keyboard/shortcuts'
 import TradePanel, { type PositionRow, type WorkingOrderRow } from './TradePanel'
 import PropRulesPopover from './PropRulesPopover'
+import SessionCompleteCard from './SessionCompleteCard'
 import { isSessionEnded, lastAllowedIndex, sessionDisplayName } from '../chart/sessionEnd'
 import {
   HISTORY_BARS,
@@ -127,7 +129,7 @@ import {
   type UpdateTradeJournalRequest,
 } from '../api/types'
 import EmptyState from '../components/EmptyState'
-import { fmtEtDate, fmtEtDateTime } from '../timeFormat'
+import { fmtEtDateTime, fmtEtLongDate, fmtEtLongDateTime } from '../timeFormat'
 import { fmtPrice } from '../format'
 import { OPEN_ENTRY_ID, type OpenJournalEntry } from '../panels/journalEntry'
 
@@ -406,6 +408,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const propRunId = session?.account.prop_ruleset ? manualRunId(session.id) : null
   const { data: propStats } = useStats(propRunId, 'all')
   const banner = combineBanner(propStats?.result)
+  // G6: the no-overnight / no-weekend rule the sim broker enforces (null = none).
+  const holding = useMemo(() => holdingRule(session?.account.prop_rules), [session?.account.prop_rules])
+  // The completion card's own dismissal, per session.
+  const [completeDismissedFor, setCompleteDismissedFor] = useState<string | null>(null)
   // FXR_SPEC.md phase F6: "Open in journal" from the analytics workspace
   // lands here with one trade to show -- opens the drawer on it, once.
   const selectRun = useUiStore((s) => s.selectRun)
@@ -589,6 +595,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const lastAllowedRef = useRef(lastAllowed)
   lastAllowedRef.current = lastAllowed
   const sessionEnded = bars ? isSessionEnded(bars, cursorIndex, session?.end_date ?? null) : false
+  // The result the completion card shows (the same stats query as the prop verdict
+  // when this is a prop session, so it is not fetched twice).
+  const { data: endStats } = useStats(sessionEnded && session ? manualRunId(session.id) : null, 'all')
 
   // F4: once this (new) session's bars have loaded, restore its persisted
   // position/working orders -- entry_time/placed_time are re-resolved to
@@ -839,7 +848,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       workingOrdersRef.current,
       spec,
       session.account.commission_per_contract,
+      holding,
     )
+    // A no-overnight / no-weekend close flattened the position (and cancelled working
+    // orders): say so, and stop auto-play so it is seen.
+    if (result.flattenedAtClose && holding) {
+      setIsPlaying(false)
+      setOrderNotice(flattenNotice(holding, session.instrument))
+    }
     // "Save & Journal" on a limit/stop order: the journal entry opens when it fills.
     const journalFill = workingOrdersRef.current.some((o) => o.journalOnFill && result.filledOrderIds.includes(o.id))
     positionRef.current = result.position
@@ -1045,6 +1061,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // most one position-in-progress at a time, same single-position
   // simplification F2 already established.
   const flat = !position && workingOrders.length === 0
+  // Why trading is refused right now (null = open): the end date, a no-overnight /
+  // no-weekend close, an open trade, or no bars yet. Buy, Sell, Place order and the
+  // position tool dim with this as their tooltip.
+  const tradeBlock: string | null = sessionEnded
+    ? 'The session has ended'
+    : (bars && bars[cursorIndex] ? entryRefusal(holding, bars[cursorIndex].time) : null) ??
+      (!flat ? 'Close or cancel the open trade first' : !bars || bars.length === 0 ? 'Waiting for bars' : null)
   // A position tool is a plan for the NEXT trade: once any trade is open or
   // working (a Quick Buy/Sell, a right-click order) it has nothing left to plan.
   useEffect(() => {
@@ -1075,6 +1098,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const capMsg = positionCapMessage(quickQty, session.account.max_contracts, 'Market order')
     if (capMsg) {
       setOrderNotice(capMsg)
+      return
+    }
+    const holdMsg = entryRefusal(holding, bars[cursorIndex].time)
+    if (holdMsg) {
+      setOrderNotice(holdMsg)
       return
     }
     setOrderNotice(null)
@@ -1298,6 +1326,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setOrderNotice(capMsg)
       return
     }
+    const holdMsg = entryRefusal(holding, bars[cursorIndex].time)
+    if (holdMsg) {
+      setOrderNotice(holdMsg)
+      return
+    }
     setOrderNotice(null)
     const marketBar = bars[cursorIndex]
     const spec = getContractSpec(session.instrument)
@@ -1379,6 +1412,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         const capMsg = positionCapMessage(o.contracts, session.account.max_contracts, 'Order')
         if (capMsg) {
           setOrderNotice(capMsg)
+          return
+        }
+        const holdMsg = entryRefusal(holding, bars[cursorIndex].time)
+        if (holdMsg) {
+          setOrderNotice(holdMsg)
           return
         }
         setOrderNotice(null)
@@ -1806,13 +1844,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const cursorBar = bars?.[cursorIndex]
   const unrealizedPnl = openPositionRecord?.pnl_usd ?? 0
-  const hasNotices = orderNotice !== null || toast !== null || banner !== null || sessionEnded
+  const hasNotices = orderNotice !== null || toast !== null || banner !== null
 
   return (
     <div className="flex h-full w-full flex-col bg-bg">
       <SessionTopBar
-        name={sessionDisplayName(session, fmtEtDate)}
-        subtitle={session.end_date !== null ? `to ${fmtEtDate(session.end_date)}` : ''}
+        name={sessionDisplayName(session, fmtEtLongDate)}
+        subtitle={session.end_date !== null ? `to ${fmtEtLongDate(session.end_date)}` : ''}
         disciplineLock={session.discipline_lock ? { engaged: session.lock_floor_time !== null } : null}
         onBack={() => selectSession(null)}
         menu={{
@@ -1851,14 +1889,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onStepSizeChange: handleStepSizeChange,
           autoPlay: isPlaying,
           onToggleAutoPlay: () => setIsPlaying((v) => !v),
-          cursorLabel: cursorBar ? fmtEtDateTime(cursorBar.time) : null,
+          cursorLabel: cursorBar ? fmtEtLongDateTime(cursorBar.time) : null,
         }}
         actions={{
           onPlaceOrder: () => openOrderDialog(),
-          placeOrderDisabled: !bars || bars.length === 0 || !flat || sessionEnded,
+          placeOrderDisabled: tradeBlock !== null,
           // A position tool is on the chart: Place order is the next step.
           placeOrderReady: positionTool !== null,
-          placeOrderDisabledReason: sessionEnded ? 'The session has ended' : !flat ? 'Close or cancel the open trade first' : 'Waiting for bars',
+          placeOrderDisabledReason: tradeBlock ?? undefined,
           onToggleJournal: () => setJournalOpen((v) => !v),
           journalOpen,
           onToggleTheme: () => setThemeMode(themeMode === 'dark' ? 'light' : 'dark'),
@@ -1898,8 +1936,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           armedTool={armedTool}
           positionTools={{
             onStart: startPositionTool,
-            disabled: !bars || bars.length === 0 || !flat || sessionEnded,
-            disabledReason: sessionEnded ? 'The session has ended' : !flat ? 'Close or cancel the open trade first' : 'Waiting for bars',
+            disabled: tradeBlock !== null,
+            disabledReason: tradeBlock ?? undefined,
           }}
         />
         {/* min-w-0 matters here, not just min-h-0: without it, this flex
@@ -1974,25 +2012,6 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           )}
           {hasNotices && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2 px-4">
-              {sessionEnded && (
-                <p
-                  className="pointer-events-auto flex items-center gap-3 rounded bg-surface px-3 py-2 text-xs text-text shadow-lg"
-                  role="status"
-                >
-                  <span>
-                    Session complete
-                    <span className="text-text-muted">
-                      {session.end_date !== null ? ` · the replay reached its end date, ${fmtEtDate(session.end_date)}.` : '.'}
-                    </span>
-                  </span>
-                  <button
-                    onClick={() => selectRun(manualRunId(session.id))}
-                    className="h-7 rounded px-2 text-text-muted transition-colors hover:bg-surface-2 hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                  >
-                    View analytics
-                  </button>
-                </p>
-              )}
               {banner && (
                 <p className="pointer-events-auto rounded bg-surface-2 px-3 py-2 text-xs text-text-muted shadow-lg" role="status">
                   {banner}
@@ -2016,6 +2035,21 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 </p>
               )}
             </div>
+          )}
+          {sessionEnded && completeDismissedFor !== session.id && (
+            <SessionCompleteCard
+              name={sessionDisplayName(session, fmtEtLongDate)}
+              endDate={session.end_date}
+              balance={session.account.balance}
+              isProp={!!session.account.prop_ruleset}
+              stats={endStats}
+              onAnalytics={() => selectRun(manualRunId(session.id))}
+              onJournal={() => {
+                setCompleteDismissedFor(session.id)
+                setJournalOpen(true)
+              }}
+              onDismiss={() => setCompleteDismissedFor(session.id)}
+            />
           )}
         </div>
         {journalOpen && (
@@ -2051,7 +2085,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               initial={{ riskPct: defaultRiskPct, basis: riskBasis, autoBreakeven: armedAutoBreakeven, type: orderDialogType ?? undefined }}
               existingTags={[...new Set((manualTrades ?? []).flatMap((t) => t.tags))].sort()}
               checklistRules={session.checklist ?? []}
-              capLabel={session.account.prop_ruleset ? 'Topstep' : null}
+              capLabel={session.account.prop_ruleset ? (session.account.prop_ruleset === 'topstep_50k' ? 'Topstep' : 'prop rules') : null}
               onBasisChange={prefs.setRiskBasis}
               onSave={placeOrder}
               onDiscard={() => {
@@ -2100,7 +2134,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <PropRulesPopover
             result={propStats?.result}
             totalTrades={manualTrades?.length ?? 0}
-            rulesetLabel={session.account.prop_ruleset === 'topstep_50k' ? 'Topstep $50k Combine' : session.account.prop_ruleset}
+            rulesetLabel={session.account.prop_ruleset === 'topstep_50k' ? 'Topstep $50k Combine' : 'Custom prop rules'}
+            rules={session.account.prop_rules ?? null}
+            ended={sessionEnded}
             maxContracts={session.account.max_contracts ?? null}
             onOpenAnalytics={() => selectRun(manualRunId(session.id))}
             onClose={() => setPropRulesOpen(false)}
@@ -2111,8 +2147,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onToggleHideTrades={() => prefs.setHideTrades(!prefs.hideTrades)}
           onBuy={() => enterPosition('long')}
           onSell={() => enterPosition('short')}
-          tradingDisabled={!bars || bars.length === 0 || !flat || sessionEnded}
-          disabledReason={sessionEnded ? 'The session has ended' : !flat ? 'Close or cancel the open trade first' : 'Waiting for bars'}
+          tradingDisabled={tradeBlock !== null}
+          disabledReason={tradeBlock ?? ""}
           quantity={{ value: quickQty, max: session.account.max_contracts ?? null, onChange: handleQuantityChange }}
           scalper={{
             armed: scalper.armed,

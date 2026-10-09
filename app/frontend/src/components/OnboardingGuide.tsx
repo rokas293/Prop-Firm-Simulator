@@ -11,7 +11,7 @@ import { useOnboardingStore } from '../state/onboardingStore'
 const STEPS: { title: string; body: string }[] = [
   {
     title: 'Start a session',
-    body: 'Pick MNQ or MES, a timeframe and a start time, or a random one. Optionally run it under Topstep rules or the discipline lock.',
+    body: 'Pick MNQ or MES, a start and end date (or a random start), then create it. An advanced session adds commissions, the discipline lock, a checklist and prop firm rules.',
   },
   {
     title: 'Trade the replay',
@@ -45,14 +45,26 @@ function Steps({ wide = true }: { wide?: boolean }) {
 export function FirstRunGuide() {
   const dismissed = useOnboardingStore((s) => s.dismissed)
   const dismiss = useOnboardingStore((s) => s.dismiss)
-  if (dismissed) return null
+  const openTour = useOnboardingStore((s) => s.openTour)
+  // Once dismissed it stays collapsed to one quiet line that reopens it.
+  if (dismissed) {
+    return (
+      <button
+        type="button"
+        onClick={openTour}
+        className="-ml-2 h-7 self-start rounded px-2 text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text active:bg-surface-2-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        How this works
+      </button>
+    )
+  }
   return (
-    <section aria-label="How this works" className="mb-6 rounded bg-surface p-4">
+    <section aria-label="How this works" className="rounded bg-surface p-4">
       <div className="mb-3 flex h-7 items-center justify-between">
         <h2 className="text-base font-medium text-text">How this works</h2>
         <button
           onClick={dismiss}
-          className="h-7 rounded px-2 text-xs text-text-muted hover:bg-surface-2 hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          className="h-7 rounded px-2 text-xs text-text-muted hover:bg-surface-2 hover:text-text active:bg-surface-2-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
           Got it
         </button>

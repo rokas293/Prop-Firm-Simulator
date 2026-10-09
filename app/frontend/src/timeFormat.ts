@@ -130,3 +130,57 @@ export function etDayTicks(times: readonly number[], max = 6): number[] {
   for (let i = 0; i < max; i++) out.push(firsts[Math.round((i * (firsts.length - 1)) / (max - 1))])
   return out
 }
+
+// The ET wall clock of an instant, for rules that are stated in it (a close time,
+// a weekday): the ET calendar date, minutes since ET midnight, and the weekday
+// (0 = Sunday ... 6 = Saturday).
+export function etClock(unixSeconds: number): { date: string; minutes: number; weekday: number } {
+  const p = etParts(unixSeconds)
+  const weekday = new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day))).getUTCDay()
+  return { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute), weekday }
+}
+
+// "yyyy-mm-dd" plus whole days (calendar arithmetic, no zone involved).
+export function addDaysIso(dateIso: string, days: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso)
+  if (!m) return dateIso
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + days)).toISOString().slice(0, 10)
+}
+
+// "yyyy-mm-dd" plus whole calendar months, clamping the day to the target month's
+// length (31 Jan + 1M = 28/29 Feb), the way a "+1M" button is expected to behave.
+export function addMonthsIso(dateIso: string, months: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso)
+  if (!m) return dateIso
+  const total = Number(m[1]) * 12 + (Number(m[2]) - 1) + months
+  const year = Math.floor(total / 12)
+  const month = total % 12
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+  const day = Math.min(Number(m[3]), lastDay)
+  return new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10)
+}
+
+// The standard way the session setup, home and completion surfaces write a date and
+// a time: "15 Jul 2021" and "16:00 ET". Spelled out here (not Intl's locale month
+// names, which vary: "Sept" vs "Sep") so it reads the same everywhere.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// "2024-03-04" -> "4 Mar 2024" (calendar arithmetic, no zone involved); '' for a non-date.
+export function fmtIsoDateLong(dateIso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso)
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return ''
+  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`
+}
+
+// An instant's ET calendar date, "15 Jul 2021".
+export function fmtEtLongDate(unixSeconds: number): string {
+  return fmtIsoDateLong(etClock(unixSeconds).date)
+}
+
+// An instant's ET date and wall time, "15 Jul 2021 16:00 ET".
+export function fmtEtLongDateTime(unixSeconds: number): string {
+  const c = etClock(unixSeconds)
+  const hh = String(Math.floor(c.minutes / 60)).padStart(2, '0')
+  const mm = String(c.minutes % 60).padStart(2, '0')
+  return `${fmtIsoDateLong(c.date)} ${hh}:${mm} ${ET_LABEL}`
+}

@@ -149,3 +149,86 @@ def test_no_breach_and_no_lock_on_an_uneventful_day(cfg):
     assert result.status == "incomplete"
     assert len(result.day_logs) == 1
     assert result.day_logs[0].daily_pnl == pytest.approx(100.0)
+
+
+# ---- G6: configurable loss types and optional rules (FXR_V2_SPEC.md section 4) ----
+
+from dataclasses import replace  # noqa: E402
+
+
+def custom(**kw):
+    base = replace(
+        load_prop_rules(),
+        mll_type="static",
+        mll_freeze_trigger_balance=None,
+        mll_freeze_floor=None,
+    )
+    return replace(base, **kw)
+
+
+def test_topstep_config_is_eod_trailing_and_unchanged(cfg):
+    # The default type is the Topstep one, so every existing caller behaves as before.
+    assert cfg.mll_type == "eod_trailing"
+    assert cfg.mll_freeze_trigger_balance == 52000.0 and cfg.mll_freeze_floor == 50000.0
+
+
+def test_static_floor_never_moves():
+    tracker = PropRulesTracker(custom())
+    d1, d2, d3 = (dt.date(2025, 1, 6 + i) for i in range(3))
+    tracker.on_bar(ts(d1), d1, balance=51000.0, equity=51000.0)
+    tracker.on_bar(ts(d2), d2, balance=52500.0, equity=52500.0)  # closes day 1 (EOD 51000)
+    tracker.on_bar(ts(d3), d3, balance=52500.0, equity=52500.0)  # closes day 2 (EOD 52500)
+    assert not tracker.passed  # below the 3000 target
+    assert tracker.mll_floor == 48000.0  # start - offset, whatever the balance did
+    assert not tracker.mll_frozen
+    # ... and it still breaches against live equity.
+    st = tracker.on_bar(ts(d3) + pd.Timedelta(minutes=1), d3, balance=52500.0, equity=48000.0)
+    assert st.newly_failed and tracker.fail_reason == "mll_breach"
+
+
+def test_intraday_trailing_floor_follows_the_equity_high_water_mark():
+    tracker = PropRulesTracker(custom(mll_type="intraday_trailing"))
+    d1 = dt.date(2025, 1, 6)
+    t = ts(d1)
+    tracker.on_bar(t, d1, balance=50000.0, equity=51200.0)  # open profit: peak 51200
+    assert tracker.mll_floor == 49200.0  # trails WITHOUT waiting for the day to close
+    tracker.on_bar(t + pd.Timedelta(minutes=1), d1, balance=50000.0, equity=50500.0)
+    assert tracker.mll_floor == 49200.0  # never falls back
+    # Under an EOD-trailing floor 50500 would be fine (floor 48000); here 49200 binds.
+    st = tracker.on_bar(t + pd.Timedelta(minutes=2), d1, balance=50000.0, equity=49200.0)
+    assert st.newly_failed and tracker.fail_reason == "mll_breach"
+
+
+def test_intraday_trailing_is_stricter_than_eod_for_the_same_path():
+    path = [(51200.0, 51200.0), (50000.0, 49000.0)]  # (balance, equity): a spike, then a dip
+    d1 = dt.date(2025, 1, 6)
+    outcomes = {}
+    for kind in ("eod_trailing", "intraday_trailing"):
+        tr = PropRulesTracker(custom(mll_type=kind))
+        for i, (bal, eq) in enumerate(path):
+            tr.on_bar(ts(d1) + pd.Timedelta(minutes=i), d1, balance=bal, equity=eq)
+        outcomes[kind] = tr.failed
+    assert outcomes == {"eod_trailing": False, "intraday_trailing": True}
+
+
+def test_intraday_trailing_freezes_at_the_start_balance_when_configured():
+    tracker = PropRulesTracker(custom(mll_type="intraday_trailing", mll_freeze_trigger_balance=52000.0, mll_freeze_floor=50000.0))
+    d1 = dt.date(2025, 1, 6)
+    tracker.on_bar(ts(d1), d1, balance=50000.0, equity=53500.0)
+    assert tracker.mll_frozen and tracker.mll_floor == 50000.0  # not 51500
+    tracker.on_bar(ts(d1) + pd.Timedelta(minutes=1), d1, balance=50000.0, equity=60000.0)
+    assert tracker.mll_floor == 50000.0
+
+
+def test_no_daily_loss_limit_never_locks():
+    tracker = PropRulesTracker(custom(daily_loss_limit=None))
+    d1 = dt.date(2025, 1, 6)
+    st = tracker.on_bar(ts(d1), d1, balance=49500.0, equity=48500.0)  # -1500 on the day
+    assert not st.is_daily_locked
+
+
+def test_no_consistency_rule_passes_on_target_alone():
+    tracker = PropRulesTracker(custom(consistency_max_pct=None))
+    d1 = dt.date(2025, 1, 6)
+    st = tracker.on_bar(ts(d1), d1, balance=53000.0, equity=53000.0)  # the whole profit on one day
+    assert st.newly_passed and tracker.consistency_passed is True

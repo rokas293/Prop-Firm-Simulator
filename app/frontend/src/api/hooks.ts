@@ -204,6 +204,22 @@ export function useBtSessions(includeArchived = false) {
   })
 }
 
+export function useSessionSetupOptions(enabled = true) {
+  return useQuery({
+    queryKey: ['bt-session-setup-options'],
+    queryFn: () => api.getSessionSetupOptions(),
+    staleTime: Infinity, // data ranges and presets only change with a data refresh
+    enabled,
+  })
+}
+
+export function useHomeOverview() {
+  return useQuery({
+    queryKey: ['bt-home'],
+    queryFn: () => api.getHomeOverview(),
+  })
+}
+
 export function useBtSession(sessionId: string | null) {
   return useQuery({
     queryKey: ['bt-session', sessionId],

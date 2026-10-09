@@ -58,3 +58,17 @@ export function fmtPoints(v: number | null | undefined): string {
   if (v === null || v === undefined) return '-'
   return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+
+// "12m 30s", "1h 05m", "2d 3h": a time in trade. Seconds are shown only under
+// ten minutes, so the figure keeps one or two meaningful units.
+export function fmtDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '-'
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (s < 600) return `${m}m ${String(s % 60).padStart(2, '0')}s`
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ${String(m % 60).padStart(2, '0')}m`
+  return `${Math.floor(h / 24)}d ${h % 24}h`
+}

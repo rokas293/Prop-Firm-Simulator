@@ -20,6 +20,7 @@ import base64
 import binascii
 import datetime as dt
 import json
+import os
 import random
 import re
 import threading
@@ -30,8 +31,7 @@ from typing import List, Optional
 
 from app.backend import models
 from app.backend.config import get_bt_sessions_dir
-from app.backend.services import bar_service
-from propbt.config import load_prop_rules
+from app.backend.services import bar_service, prop_presets
 
 # FXR_SPEC.md section 1: "scoped to MNQ + MES (expandable later)" -- this
 # platform's own restriction, independent of data.yaml's active symbols
@@ -60,9 +60,13 @@ ALLOWED_TIMEFRAMES = tuple(TIMEFRAME_SECONDS)
 # The replay always counts in 1-minute bars (the only data there is).
 ONE_MINUTE = 60
 
-# FXR_SPEC.md phase F6: the one prop ruleset propbt/config/prop_rules.yaml
-# defines today (Topstep $50k Combine).
-ALLOWED_PROP_RULESETS = ("topstep_50k",)
+# FXR_SPEC.md phase F6 / FXR_V2_SPEC.md section 4 (G6): a prop session is the
+# Topstep preset (propbt/config/prop_rules.yaml) or a custom rule set; either way
+# the account carries the concrete `prop_rules` the PropRulesTracker enforces.
+ALLOWED_PROP_RULESETS = (prop_presets.TOPSTEP_50K, prop_presets.CUSTOM)
+
+# Commission per contract when the setup form does not set one (round turn).
+DEFAULT_COMMISSION = 1.3
 
 # Random start deliberately never lands in the data's own final stretch --
 # otherwise "kill snooping bias" (FXR_SPEC section F) could hand back a
@@ -173,7 +177,8 @@ def _resolve_assets(req: models.CreateSessionRequest) -> List[str]:
     return assets
 
 
-def _resolve_start_time(instrument: str, req: models.CreateSessionRequest) -> int:
+def _resolve_window(instrument: str, req: models.CreateSessionRequest) -> tuple:
+    """(start_time, end_date) for the new session; end_date is None for an open-ended one."""
     try:
         lo, hi = bar_service.get_instrument_range(instrument)
     except bar_service.UnknownInstrument as e:
@@ -183,19 +188,85 @@ def _resolve_start_time(instrument: str, req: models.CreateSessionRequest) -> in
         # Client never sees or influences this -- FXR_SPEC section F's
         # "kill snooping bias" only holds if the server, not the browser,
         # makes the pick.
-        buffered_hi = max(lo, hi - RANDOM_START_END_BUFFER_SECONDS)
-        return random.randint(lo, buffered_hi)
+        if req.end_date is not None:
+            raise InvalidSessionRequest("end_date cannot be combined with random_start (give random_duration_seconds)")
+        duration = req.random_duration_seconds
+        if duration is None:
+            buffered_hi = max(lo, hi - RANDOM_START_END_BUFFER_SECONDS)
+            return random.randint(lo, buffered_hi), None
+        if duration < ONE_MINUTE:
+            raise InvalidSessionRequest("random_duration_seconds must be at least one minute")
+        if lo + duration > hi:
+            raise InvalidSessionRequest(f"a {duration}-second session is longer than {instrument}'s data")
+        start = random.randint(lo, hi - duration)
+        return start, start + duration
 
+    if req.random_duration_seconds is not None:
+        raise InvalidSessionRequest("random_duration_seconds only applies with random_start")
     if req.start_time is None:
         raise InvalidSessionRequest("start_time is required unless random_start is true")
     if not (lo <= req.start_time <= hi):
         raise InvalidSessionRequest(
             f"start_time {req.start_time} is outside {instrument}'s available data range [{lo}, {hi}]"
         )
-    return req.start_time
+    if req.end_date is not None:
+        if req.end_date <= req.start_time:
+            raise InvalidSessionRequest(f"end_date {req.end_date} must be after start_time {req.start_time}")
+        if req.end_date > hi:
+            raise InvalidSessionRequest(
+                f"end_date {req.end_date} is after {instrument}'s last available data at {hi}"
+            )
+    return req.start_time, req.end_date
 
 
-def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccountModel:
+def _resolve_prop(req: models.CreateSessionRequest):
+    """(label, rules) for a prop session, (None, None) for a practice account."""
+    if req.prop_ruleset is None:
+        if req.prop_rules is not None:
+            raise InvalidSessionRequest("prop_rules needs a prop_ruleset ('custom' or a preset id)")
+        return None, None
+    if req.prop_ruleset not in ALLOWED_PROP_RULESETS:
+        raise InvalidSessionRequest(f"prop_ruleset must be one of {ALLOWED_PROP_RULESETS}, got {req.prop_ruleset!r}")
+    if req.prop_ruleset == prop_presets.CUSTOM:
+        if req.prop_rules is None:
+            raise InvalidSessionRequest("prop_ruleset 'custom' needs prop_rules")
+        rules = req.prop_rules
+    else:
+        preset = prop_presets.get_preset(req.prop_ruleset)
+        # The preset's levels are absolute dollars off its own balance: a session
+        # on a different balance would silently report a nonsense pass/fail.
+        if req.starting_balance != preset.starting_balance:
+            raise InvalidSessionRequest(
+                f"{req.prop_ruleset} requires starting_balance == {preset.starting_balance:g}, got {req.starting_balance:g}"
+            )
+        rules = req.prop_rules if req.prop_rules is not None else preset.rules
+    return prop_presets.label_for(rules, req.starting_balance), rules
+
+
+def _validate_rules(rules: models.PropRules, starting_balance: float) -> None:
+    if rules.max_loss >= starting_balance:
+        raise InvalidSessionRequest("the max loss must be smaller than the account balance")
+    if rules.daily_loss_limit is not None and rules.daily_loss_limit > rules.max_loss:
+        raise InvalidSessionRequest("the daily loss limit cannot be larger than the max loss")
+    # The close the no-overnight / no-weekend rules flatten at: inside the trading
+    # day, before the 17:00 ET maintenance halt.
+    if not ("09:30" <= rules.close_time <= "17:00"):
+        raise InvalidSessionRequest("the close time must be between 09:30 and 17:00 ET")
+
+
+def _commissions_from_request(req: models.CreateSessionRequest, assets: List[str]) -> dict:
+    """Per-instrument commissions covering every asset; `commission_per_contract`
+    (what the single-asset replay charges) is the primary asset's."""
+    given = dict(req.commissions or {})
+    for sym, value in given.items():
+        if sym not in assets:
+            raise InvalidSessionRequest(f"commission given for {sym!r}, which is not one of the session's assets {assets}")
+        if value < 0:
+            raise InvalidSessionRequest("commission cannot be negative")
+    return {a: given.get(a, req.commission_per_contract) for a in assets}
+
+
+def _account_from_request(req: models.CreateSessionRequest, assets: List[str]) -> models.SimAccountModel:
     if req.risk_per_trade_percent is None and req.risk_per_trade_usd is None:
         raise InvalidSessionRequest("one of risk_per_trade_percent/risk_per_trade_usd is required")
     if req.risk_per_trade_percent is not None and req.risk_per_trade_usd is not None:
@@ -206,26 +277,18 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
         raise InvalidSessionRequest("quick_quantity must be at least 1")
     if req.commission_per_contract < 0:
         raise InvalidSessionRequest("commission_per_contract cannot be negative")
-    if req.prop_ruleset is not None:
-        if req.prop_ruleset not in ALLOWED_PROP_RULESETS:
-            raise InvalidSessionRequest(f"prop_ruleset must be one of {ALLOWED_PROP_RULESETS}, got {req.prop_ruleset!r}")
-        # The rule tracker's floors/target are absolute dollar levels off the
-        # ruleset's own start_balance -- a session on a different balance
-        # would silently report a nonsense pass/fail.
-        rules = load_prop_rules()
-        if req.starting_balance != rules.start_balance:
-            raise InvalidSessionRequest(
-                f"{req.prop_ruleset} requires starting_balance == {rules.start_balance:g}, got {req.starting_balance:g}"
-            )
 
+    label, rules = _resolve_prop(req)
     max_contracts = None
-    if req.prop_ruleset is not None:
-        max_contracts = load_prop_rules().max_open_contracts
-        if req.quick_quantity > max_contracts:
+    if rules is not None:
+        _validate_rules(rules, req.starting_balance)
+        max_contracts = rules.max_contracts
+        if max_contracts is not None and req.quick_quantity > max_contracts:
             raise InvalidSessionRequest(
-                f"quick_quantity {req.quick_quantity} exceeds the {req.prop_ruleset} position limit of {max_contracts} contracts"
+                f"quick_quantity {req.quick_quantity} exceeds the {_rules_label({'prop_ruleset': label})} position limit of {max_contracts} contracts"
             )
 
+    commissions = _commissions_from_request(req, assets)
     return models.SimAccountModel(
         id=uuid.uuid4().hex,
         starting_balance=req.starting_balance,
@@ -233,8 +296,10 @@ def _account_from_request(req: models.CreateSessionRequest) -> models.SimAccount
         currency="USD",
         risk_per_trade_percent=req.risk_per_trade_percent,
         risk_per_trade_usd=req.risk_per_trade_usd,
-        commission_per_contract=req.commission_per_contract,
-        prop_ruleset=req.prop_ruleset,
+        commission_per_contract=commissions[assets[0]],
+        commissions=commissions,
+        prop_ruleset=label,
+        prop_rules=rules,
         max_contracts=max_contracts,
     )
 
@@ -261,14 +326,13 @@ def _clean_checklist(items: Optional[List[str]]) -> List[str]:
 
 
 def _contract_cap(data: dict):
-    """The session's position limit, or None. Falls back to the ruleset's own
-    limit so a session saved before max_contracts existed is still capped."""
-    account = data["account"]
-    if account.get("max_contracts") is not None:
-        return account["max_contracts"]
-    if account.get("prop_ruleset"):
-        return load_prop_rules().max_open_contracts
-    return None
+    """The session's position limit, or None (uncapped). _migrate has already
+    filled it from the rules of a session saved before G6."""
+    return data["account"].get("max_contracts")
+
+
+def _rules_label(account: dict) -> str:
+    return prop_presets.PRESET_LABELS.get(account.get("prop_ruleset") or "", "custom prop rules")
 
 
 def _check_cap(data: dict, contracts: int, what: str) -> None:
@@ -276,7 +340,7 @@ def _check_cap(data: dict, contracts: int, what: str) -> None:
     if cap is not None and contracts > cap:
         raise InvalidSessionRequest(
             f"{what} of {contracts} contracts would put the position over this session's "
-            f"{data['account'].get('prop_ruleset')} limit of {cap} contracts"
+            f"{_rules_label(data['account'])} limit of {cap} contracts"
         )
 
 
@@ -301,14 +365,22 @@ def _read_trades(session_id: str) -> list:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Write-then-rename, so a concurrent reader (the browser's stats / trades GETs
+    are not behind the write lock) sees the old file or the new one, never half of one."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _write_trades(session_id: str, trades: list) -> None:
-    _trades_path(session_id).write_text(json.dumps(trades, indent=2), encoding="utf-8")
+    _write_atomic(_trades_path(session_id), json.dumps(trades, indent=2))
 
 
 def _write(session_id: str, data: dict) -> None:
     session_dir = _session_dir(session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
-    (session_dir / "session.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_atomic(session_dir / "session.json", json.dumps(data, indent=2))
 
 
 def _migrate(data: dict) -> dict:
@@ -328,6 +400,19 @@ def _migrate(data: dict) -> dict:
     data.setdefault("end_date", None)
     data.setdefault("name", None)
     data.setdefault("checklist", [])
+    # G6: a prop session carries its concrete rules. One saved before the rule
+    # builder was judged by the Topstep config, which is exactly the "Topstep 50k"
+    # preset (derived from the same prop_rules.yaml), so mapping it onto the preset
+    # changes no verdict (tests/test_prop_presets.py). Restrictions stay off, as they
+    # always were; the cap the old code read from the yaml moves onto the account.
+    if account.get("prop_ruleset") and not account.get("prop_rules"):
+        rules = prop_presets.legacy_rules(account["prop_ruleset"])
+        account["prop_rules"] = rules.model_dump()
+        if account.get("max_contracts") is None:
+            account["max_contracts"] = rules.max_contracts
+    # G6: commissions are per instrument; a saved session had one number for its instrument.
+    if not account.get("commissions"):
+        account["commissions"] = {a: account["commission_per_contract"] for a in (data.get("assets") or [data["instrument"]])}
     # G5: the chart timeframe and the step size are their own settings now; a
     # session saved before them charted and stepped by its base timeframe.
     data.setdefault("chart_timeframe", data["base_timeframe"])
@@ -367,13 +452,8 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
     step_size = req.step_size or req.base_timeframe
     _validate_timeframe(chart_timeframe, "chart_timeframe")
     _validate_timeframe(step_size, "step_size")
-    start_time = _resolve_start_time(instrument, req)
-    account = _account_from_request(req)
-    if req.end_date is not None:
-        if req.random_start:
-            raise InvalidSessionRequest("end_date cannot be combined with random_start")
-        if req.end_date <= start_time:
-            raise InvalidSessionRequest(f"end_date {req.end_date} must be after start_time {start_time}")
+    start_time, end_date = _resolve_window(instrument, req)
+    account = _account_from_request(req, assets)
 
     checklist = _clean_checklist(req.checklist)
 
@@ -389,7 +469,7 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         "step_size": step_size,
         "replay_version": 2,
         "start_time": start_time,
-        "end_date": req.end_date,
+        "end_date": end_date,
         "quick_quantity": req.quick_quantity,
         "checklist": checklist,
         "created_at": now.isoformat(),

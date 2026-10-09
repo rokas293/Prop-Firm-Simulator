@@ -26,9 +26,11 @@
 //   F2's own already-shipped "no slippage modeling" simplification for
 //   consistency; revisit if a later phase needs higher fidelity.
 import type { Bar, PersistedPosition, PersistedWorkingOrder, TradeRecord } from '../api/types'
+import { nextCloseAfter, type HoldingRule } from './holdingRestrictions'
 
 export type Side = 'long' | 'short'
-export type ExitType = 'manual_close' | 'stop_loss' | 'take_profit'
+// 'session_close': flattened by the session's no-overnight / no-weekend rule (G6).
+export type ExitType = 'manual_close' | 'stop_loss' | 'take_profit' | 'session_close'
 
 export interface ContractSpec {
   pointValue: number // $ per point
@@ -559,6 +561,9 @@ export interface AdvanceReplayResult {
   workingOrders: WorkingOrder[]
   closedTrades: ClosedTradeResult[]
   filledOrderIds: string[]
+  // Set when a no-overnight / no-weekend close flattened a position or cancelled
+  // working orders in this advance (G6), so the UI can say so.
+  flattenedAtClose: boolean
 }
 
 // `bars` is the 1-minute feed (G5), so "every bar passed over" is every MINUTE
@@ -586,14 +591,37 @@ export function advanceReplay(
   workingOrders: WorkingOrder[],
   spec: ContractSpec,
   commissionPerContract: number,
+  holding: HoldingRule | null = null,
 ): AdvanceReplayResult {
   let pos = position
   let orders = workingOrders
   const closedTrades: ClosedTradeResult[] = []
   const filledOrderIds: string[] = []
+  let flattenedAtClose = false
+
+  // G6: the next no-overnight / no-weekend close the replay has not yet reached,
+  // measured from the end of the bar the cursor is on. At it, an open position is
+  // closed at the last revealed price and working orders are cancelled.
+  let nextClose = holding && fromIndexExclusive >= 0 ? nextCloseAfter(holding, bars[fromIndexExclusive].time + 60) : Number.POSITIVE_INFINITY
+  const flattenAt = (exitIndex: number) => {
+    if (pos && exitIndex >= pos.entryIndex) {
+      closedTrades.push(closePositionAt(bars, pos, exitIndex, marketFillPrice(bars[exitIndex]), 'session_close', spec, commissionPerContract))
+      pos = null
+      flattenedAtClose = true
+    }
+    if (orders.length > 0) {
+      orders = []
+      flattenedAtClose = true
+    }
+    nextClose = holding ? nextCloseAfter(holding, nextClose) : Number.POSITIVE_INFINITY
+  }
 
   for (let i = fromIndexExclusive + 1; i <= toIndexInclusive; i++) {
     const bar = bars[i]
+
+    // The close fell in a gap before this bar (halt, weekend): the position was
+    // last priced at the bar before it, and nothing may fill on this one.
+    while (holding && bar.time >= nextClose) flattenAt(i - 1)
 
     // A position only meets bars AFTER the one it was entered on, and an order
     // only bars after the one it was placed on. Moving the cursor back and
@@ -653,9 +681,12 @@ export function advanceReplay(
         }
       }
     }
+
+    // The close lands exactly at this bar's end: flatten at its close.
+    while (holding && bar.time + 60 >= nextClose) flattenAt(i)
   }
 
-  return { position: pos, workingOrders: orders, closedTrades, filledOrderIds }
+  return { position: pos, workingOrders: orders, closedTrades, filledOrderIds, flattenedAtClose }
 }
 
 export interface OpenPositionView {

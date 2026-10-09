@@ -149,7 +149,7 @@ describe('PlaceOrderDialog', () => {
     type(input('Position size (contracts)'), '7')
     const note = host.querySelector('[data-testid="size-note"]')
     expect(note?.getAttribute('role')).toBe('alert')
-    expect(note?.textContent).toContain('5-contract Topstep position limit')
+    expect(note?.textContent).toContain('5-contract position limit')
     expect(button('Save').disabled).toBe(true)
   })
 

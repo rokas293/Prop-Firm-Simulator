@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { etDayEndUnix, etDayStartUnix, etDayTicks, etWallTimeToUnix, fmtEtDate, fmtEtDateTime, fmtEtDateTimeSec, fmtEtInput, fmtEtShort, fmtEtTick } from './timeFormat'
+import { etDayEndUnix, etDayStartUnix, etDayTicks, etWallTimeToUnix, fmtEtDate, fmtEtDateTime, fmtEtDateTimeSec, fmtEtInput, fmtEtLongDate, fmtEtLongDateTime, fmtEtShort, fmtEtTick, fmtIsoDateLong } from './timeFormat'
 
 const utc = (iso: string) => Date.parse(iso) / 1000
 
@@ -112,5 +112,24 @@ describe('fmtEtInput', () => {
     for (const wall of ['2024-03-12T09:30', '2024-11-05T16:59', '2025-01-02T00:00']) {
       expect(fmtEtInput(etWallTimeToUnix(wall)!)).toBe(wall)
     }
+  })
+})
+
+describe('the standard date and time form (15 Jul 2021, 16:00 ET)', () => {
+  it('writes an ISO date long, whatever the month', () => {
+    expect(fmtIsoDateLong('2021-07-15')).toBe('15 Jul 2021')
+    expect(fmtIsoDateLong('2024-03-04')).toBe('4 Mar 2024') // no leading zero
+    expect(fmtIsoDateLong('2025-09-30')).toBe('30 Sep 2025') // "Sep", never "Sept"
+    expect(fmtIsoDateLong('')).toBe('')
+    expect(fmtIsoDateLong('2024-13-01')).toBe('')
+  })
+  it('writes an instant as its ET date, and as ET date and time', () => {
+    const t = utc('2024-01-15T14:30:00Z') // 09:30 EST
+    expect(fmtEtLongDate(t)).toBe('15 Jan 2024')
+    expect(fmtEtLongDateTime(t)).toBe('15 Jan 2024 09:30 ET')
+    expect(fmtEtLongDateTime(utc('2024-07-15T20:00:00Z'))).toBe('15 Jul 2024 16:00 ET') // EDT
+  })
+  it('uses the ET date, not the UTC one (20:00 ET is already the next UTC day)', () => {
+    expect(fmtEtLongDate(utc('2024-03-05T01:30:00Z'))).toBe('4 Mar 2024')
   })
 })

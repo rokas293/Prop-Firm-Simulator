@@ -179,6 +179,79 @@ export interface SessionWindow {
 // (not "Session") throughout, matching the backend's own naming choice to
 // stay unambiguous next to SessionWindow above (a trading-session window,
 // a completely different concept).
+// FXR_V2_SPEC.md section 4 (G6): a prop session's rule set -- the same levels
+// propbt's PropRulesTracker enforces. Optional rules are null when the account
+// does not have them.
+export type MaxLossType = 'static' | 'eod_trailing' | 'intraday_trailing'
+
+export interface PropRules {
+  profit_target: number
+  max_loss_type: MaxLossType
+  max_loss: number
+  // A trailing floor stops rising once it reaches the starting balance.
+  max_loss_locks_at_start: boolean
+  daily_loss_limit: number | null
+  // The best single day may be at most this percent of total profit.
+  consistency_pct: number | null
+  max_contracts: number | null
+  no_overnight: boolean
+  no_weekend: boolean
+  // Stored now, enforced from G7.
+  no_news: boolean
+  // "HH:MM" Eastern Time: when no-overnight / no-weekend flatten.
+  close_time: string
+}
+
+export interface PropPreset {
+  id: string
+  label: string
+  starting_balance: number
+  rules: PropRules
+}
+
+export interface InstrumentRange {
+  min: number
+  max: number
+}
+
+export interface SessionSetupOptions {
+  ranges: Record<string, InstrumentRange>
+  presets: PropPreset[]
+  default_commissions: Record<string, number>
+}
+
+export interface SessionProgress {
+  fraction: number | null
+  trading_days_total: number | null
+  trading_days_remaining: number | null
+  complete: boolean
+  trades: number
+  net_pnl_usd: number
+  win_rate: number | null
+}
+
+export interface HomeKpis {
+  trades: number
+  buys: number
+  sells: number
+  wins: number
+  win_rate: number | null
+  avg_time_in_trade_seconds: number | null
+}
+
+export interface WeekdayWinRate {
+  weekday: number
+  label: string
+  trades: number
+  wins: number
+  win_rate: number | null
+}
+
+export interface HomeOverview {
+  kpis: HomeKpis
+  weekday: WeekdayWinRate[]
+}
+
 export interface SimAccount {
   id: string
   starting_balance: number
@@ -191,6 +264,10 @@ export interface SimAccount {
   prop_ruleset?: string | null
   // Position limit in contracts (Topstep: 5); null/absent = uncapped.
   max_contracts?: number | null
+  // G6: the concrete rules (null for a practice account); `prop_ruleset` is the
+  // label: "topstep_50k" when they are that preset's, else "custom".
+  prop_rules?: PropRules | null
+  commissions?: Record<string, number>
 }
 
 // FXR_SPEC.md section B/3, phase F4: the sim broker's open position and
@@ -297,6 +374,8 @@ export interface BacktestSessionSummary {
   lock_floor_time: number | null
   // Only on the sessions LIST, for Topstep sessions.
   prop_status?: PropStatus | null
+  // Only on the sessions LIST (G6): the home page's progress bar.
+  progress?: SessionProgress | null
 }
 
 export type BacktestSessionDetail = BacktestSessionSummary
@@ -341,12 +420,16 @@ export interface CreateSessionRequest {
   start_time?: number | null
   end_date?: number | null
   random_start?: boolean
+  // G6: with random_start, how long the session runs from the (server-picked) start.
+  random_duration_seconds?: number | null
   starting_balance: number
   risk_per_trade_percent?: number | null
   risk_per_trade_usd?: number | null
   quick_quantity?: number
   commission_per_contract: number
+  commissions?: Record<string, number> | null
   prop_ruleset?: string | null
+  prop_rules?: PropRules | null
   discipline_lock?: boolean
   checklist?: string[]
 }

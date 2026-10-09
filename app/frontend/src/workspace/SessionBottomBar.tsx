@@ -186,7 +186,7 @@ export default function SessionBottomBar({
           onClick={onBuy}
           disabled={tradingDisabled}
           title={tradingDisabled ? disabledReason : 'Buy at market (Shift+B)'}
-          className="h-7 shrink-0 rounded bg-positive/15 px-3 text-xs text-positive-fg transition-colors hover:bg-positive/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-7 shrink-0 rounded bg-positive/15 px-3 text-xs text-positive-fg transition-colors hover:bg-positive/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           Buy
         </button>
@@ -195,7 +195,7 @@ export default function SessionBottomBar({
           onClick={onSell}
           disabled={tradingDisabled}
           title={tradingDisabled ? disabledReason : 'Sell at market (Shift+S)'}
-          className="h-7 shrink-0 rounded bg-negative/15 px-3 text-xs text-negative-fg transition-colors hover:bg-negative/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-7 shrink-0 rounded bg-negative/15 px-3 text-xs text-negative-fg transition-colors hover:bg-negative/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           Sell
         </button>

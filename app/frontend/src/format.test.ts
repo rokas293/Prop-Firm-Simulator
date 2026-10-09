@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtPoints, fmtPrice, fmtUsd, fmtUsdWhole } from './format'
+import { fmtDuration, fmtPoints, fmtPrice, fmtUsd, fmtUsdWhole } from './format'
 
 describe('fmtPrice', () => {
   it('formats MNQ prices at 2dp with a thousands separator (0.25pt ticks)', () => {
@@ -47,5 +47,20 @@ describe('fmtUsd sign placement', () => {
     expect(fmtUsdWhole(-47950)).toBe('-$47,950')
     expect(fmtUsdWhole(53000)).toBe('$53,000')
     expect(fmtUsdWhole(null)).toBe('-')
+  })
+})
+
+describe('fmtDuration', () => {
+  it('keeps one or two meaningful units', () => {
+    expect(fmtDuration(45)).toBe('45s')
+    expect(fmtDuration(150)).toBe('2m 30s')
+    expect(fmtDuration(600)).toBe('10m')
+    expect(fmtDuration(3900)).toBe('1h 05m')
+    expect(fmtDuration(90000)).toBe('1d 1h')
+  })
+  it('is a dash for nothing', () => {
+    expect(fmtDuration(null)).toBe('-')
+    expect(fmtDuration(undefined)).toBe('-')
+    expect(fmtDuration(Number.NaN)).toBe('-')
   })
 })

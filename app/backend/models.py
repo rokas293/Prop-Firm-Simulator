@@ -202,6 +202,32 @@ class SessionWindow(BaseModel):
 # session window) -- named `BacktestSession...`/routed under /api/bt-
 # sessions specifically to avoid colliding with that pre-existing meaning.
 
+class PropRules(BaseModel):
+    """FXR_V2_SPEC.md section 4 (G6): a prop-firm session's rule set. The
+    dollar amounts are absolute (off the session's starting balance), the same
+    levels propbt's PropRulesTracker enforces -- `bt_session_service` /
+    `prop_presets.engine_config` turn this into the tracker's own config, so no
+    rule is judged anywhere else. Optional rules are None when not part of the
+    account."""
+    profit_target: float = Field(gt=0)
+    # Where the loss floor sits and how it moves (see propbt.engine.prop_rules).
+    max_loss_type: Literal["static", "eod_trailing", "intraday_trailing"] = "eod_trailing"
+    max_loss: float = Field(gt=0)
+    # A trailing floor stops rising once it reaches the starting balance (Topstep's
+    # freeze). Ignored for a static floor.
+    max_loss_locks_at_start: bool = True
+    daily_loss_limit: Optional[float] = Field(None, gt=0)
+    # The best single day may be at most this percent of the total profit.
+    consistency_pct: Optional[float] = Field(None, gt=0, le=100)
+    max_contracts: Optional[int] = Field(None, ge=1)
+    # Restrictions. Overnight/weekend auto-flatten at `close_time` (ET); news
+    # trading is stored here and enforced from G7.
+    no_overnight: bool = False
+    no_weekend: bool = False
+    no_news: bool = False
+    close_time: str = Field("16:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
 class SimAccountModel(BaseModel):
     id: str
     starting_balance: float
@@ -222,6 +248,14 @@ class SimAccountModel(BaseModel):
     # (prop_rules.yaml max_open_contracts) when prop_ruleset is set; None =
     # uncapped practice account.
     max_contracts: Optional[int] = None
+    # G6: the concrete rules a prop session is judged by. `prop_ruleset` is only
+    # the label ("topstep_50k" when they equal that preset on its balance, else
+    # "custom"); a session saved before G6 gets the Topstep preset on load.
+    prop_rules: Optional[PropRules] = None
+    # G6: commission per contract for each instrument of the session. The
+    # single-asset replay prices trades with `commission_per_contract` (the
+    # primary asset's value) until multi-asset arrives in G7.
+    commissions: Dict[str, float] = Field(default_factory=dict)
 
 
 class CreateSessionRequest(BaseModel):
@@ -253,8 +287,16 @@ class CreateSessionRequest(BaseModel):
     # Unix seconds of the last instant the cursor may reach (None = run to the
     # end of the data). Cannot be combined with random_start.
     end_date: Optional[int] = None
+    # G6: with random_start, the session runs this many seconds from the start the
+    # server picks (the end date is derived, the start stays hidden from the client).
+    random_duration_seconds: Optional[int] = None
     commission_per_contract: float = 1.0
+    # G6: per instrument; when given, the primary asset's value is the one trades use.
+    commissions: Optional[Dict[str, float]] = None
+    # "topstep_50k" (the preset, `prop_rules` optional) or "custom" (`prop_rules`
+    # required). The server labels the result by comparing against the preset.
     prop_ruleset: Optional[str] = None
+    prop_rules: Optional[PropRules] = None
     # FXR_SPEC.md section F, phase F7b: "no rewind past a placed trade".
     discipline_lock: bool = False
     # FXR_V2_SPEC.md section 3.5/4 (G3): the session's strategy rules, shown as
@@ -363,6 +405,20 @@ class ScalperConfig(BaseModel):
         return self
 
 
+class SessionProgress(BaseModel):
+    """How far a session's replay has come (home page cards). Trading days are
+    the instrument's own trading days in the data (CME boundary), so holidays
+    and gaps are not counted."""
+    # 0..1 of the way from start to end_date; None for a session with no end.
+    fraction: Optional[float] = None
+    trading_days_total: Optional[int] = None
+    trading_days_remaining: Optional[int] = None
+    complete: bool = False
+    trades: int = 0
+    net_pnl_usd: float = 0.0
+    win_rate: Optional[float] = None
+
+
 class BacktestSessionSummary(BaseModel):
     id: str
     # Optional display name; the UI falls back to "<assets> · <start date>".
@@ -410,6 +466,8 @@ class BacktestSessionSummary(BaseModel):
     lock_floor_time: Optional[int] = None
     # Filled only by GET /bt-sessions (the list), for prop sessions.
     prop_status: Optional[PropStatus] = None
+    # Filled only by GET /bt-sessions (the list): the home page's progress bar.
+    progress: Optional["SessionProgress"] = None
 
 
 class BacktestSessionDetail(BacktestSessionSummary):
@@ -581,3 +639,48 @@ class AddScreenshotRequest(BaseModel):
 class RecordTradeResponse(BaseModel):
     trade: ManualTrade
     session: BacktestSessionDetail
+
+
+# --- FXR_V2_SPEC.md section 4 (G6): the home page and the setup form. ---
+
+class InstrumentRange(BaseModel):
+    """First and last 1-minute bar of an instrument's data (unix seconds)."""
+    min: int
+    max: int
+
+
+class PropPreset(BaseModel):
+    id: str
+    label: str
+    starting_balance: float
+    rules: PropRules
+
+
+class SessionSetupOptions(BaseModel):
+    """What the New session form needs from the server: each asset's data
+    range, the prop presets, and the default commission per contract."""
+    ranges: Dict[str, InstrumentRange]
+    presets: List[PropPreset]
+    default_commissions: Dict[str, float]
+
+
+class HomeKpis(BaseModel):
+    trades: int = 0
+    buys: int = 0
+    sells: int = 0
+    wins: int = 0
+    win_rate: Optional[float] = None
+    avg_time_in_trade_seconds: Optional[float] = None
+
+
+class WeekdayWinRate(BaseModel):
+    weekday: int  # 0 = Monday ... 6 = Sunday, the ET day the trade was entered
+    label: str
+    trades: int = 0
+    wins: int = 0
+    win_rate: Optional[float] = None
+
+
+class HomeOverview(BaseModel):
+    kpis: HomeKpis
+    weekday: List[WeekdayWinRate]

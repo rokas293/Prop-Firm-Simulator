@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useRun } from './api/hooks'
 import ComparePage from './pages/ComparePage'
 import RunsListPage from './pages/RunsListPage'
-import SessionsListPage from './pages/SessionsListPage'
+import HomePage from './pages/HomePage'
 import Workspace from './workspace/Workspace'
 import SessionWorkspace from './workspace/SessionWorkspace'
 import CommandPalette from './workspace/CommandPalette'
@@ -142,12 +142,20 @@ export default function App() {
         </div>
       )}
       {!compareRunIds && !selectedRunId && !selectedSessionId && (
-        <div key="landing" className="propbt-fade-in">
+        <div key="landing">
           {/* FXR_SPEC.md phase F1: a tab switcher between completed
               automated-backtest runs and manual-replay sessions -- the two
               are unrelated data models (see uiStore.ts's own comment), so
               this just decides which list page is mounted. */}
           <div className="flex gap-2 border-b border-border px-6 pt-4">
+            <button
+              onClick={() => setLandingTab('sessions')}
+              className={`rounded-t px-3 py-2 text-xs ${
+                landingTab === 'sessions' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Home
+            </button>
             <button
               onClick={() => setLandingTab('runs')}
               className={`rounded-t px-3 py-2 text-xs ${
@@ -156,16 +164,8 @@ export default function App() {
             >
               Runs
             </button>
-            <button
-              onClick={() => setLandingTab('sessions')}
-              className={`rounded-t px-3 py-2 text-xs ${
-                landingTab === 'sessions' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
-              }`}
-            >
-              Sessions
-            </button>
           </div>
-          {landingTab === 'runs' ? <RunsListPage /> : <SessionsListPage />}
+          {landingTab === 'runs' ? <RunsListPage /> : <HomePage />}
         </div>
       )}
       {!compareRunIds && selectedRunId && (

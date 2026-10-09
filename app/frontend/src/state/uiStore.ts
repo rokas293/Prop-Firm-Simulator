@@ -31,7 +31,7 @@ interface UiState {
   setDistractionFree: (v: boolean) => void
   // FXR_SPEC.md phase F1: the manual-replay session side of the app, kept
   // mutually exclusive with selectedRunId (selecting one clears the other)
-  // since App.tsx renders exactly one of RunsListPage/SessionsListPage/
+  // since App.tsx renders exactly one of RunsListPage/HomePage/
   // Workspace/SessionWorkspace at a time. landingTab is the tab switcher
   // shown when neither is selected.
   selectedSessionId: string | null
@@ -77,7 +77,7 @@ export const useUiStore = create<UiState>()(
       selectedSessionId: null,
       selectSession: (sessionId) =>
         set((s) => ({ selectedSessionId: sessionId, selectedRunId: sessionId ? null : s.selectedRunId })),
-      landingTab: 'runs',
+      landingTab: 'sessions',
       setLandingTab: (tab) => set({ landingTab: tab }),
       pendingJournalTrade: null,
       openJournalTrade: (sessionId, tradeId) =>

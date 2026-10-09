@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from app.backend import models
-from app.backend.services import bt_session_service
+from app.backend.services import bt_session_service, home_service
 
 # Routed under /api/bt-sessions, not /api/sessions -- that prefix already
 # means "trading-session windows" (see api/sessions.py, models.SessionWindow),
@@ -30,7 +30,19 @@ def list_sessions(include_archived: bool = False) -> List[models.BacktestSession
     for s in sessions:
         if s.account.prop_ruleset:
             s.prop_status = manual_analytics.prop_status(s.id)
+    home_service.attach_progress(sessions)
     return sessions
+
+
+# Fixed paths: declared before "/{session_id}" so they are not read as an id.
+@router.get("/setup-options", response_model=models.SessionSetupOptions)
+def setup_options() -> models.SessionSetupOptions:
+    return home_service.setup_options()
+
+
+@router.get("/home", response_model=models.HomeOverview)
+def home_overview() -> models.HomeOverview:
+    return home_service.home_overview()
 
 
 @router.get("/{session_id}", response_model=models.BacktestSessionDetail)
