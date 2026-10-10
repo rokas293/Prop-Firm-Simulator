@@ -125,6 +125,11 @@ export default function TradeListPanel() {
     () => [...new Set((allTrades ?? []).map((t) => t.session_id).filter((v): v is string => !!v))].sort(),
     [allTrades],
   )
+  // G7: a multi-asset session's trades are in more than one instrument.
+  const instrumentOptions = useMemo(
+    () => [...new Set((allTrades ?? []).map((t) => t.instrument).filter((v): v is string => !!v))].sort(),
+    [allTrades],
+  )
   const hourOptions = useMemo(
     () => [...new Set((allTrades ?? []).map((t) => nyHourOfDay(t.entry_time)))].sort((a, b) => a - b),
     [allTrades],
@@ -250,6 +255,23 @@ export default function TradeListPanel() {
                   ))}
                 </select>
               </FilterField>
+              {instrumentOptions.length > 1 && (
+                <FilterField label="Instrument">
+                  <select
+                    value={filters.instrument ?? ''}
+                    onChange={(e) => setFilter('instrument', e.target.value || null)}
+                    aria-label="Filter by instrument"
+                    className={FILTER_SELECT}
+                  >
+                    <option value="">All</option>
+                    {instrumentOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </FilterField>
+              )}
               {backtestSessionOptions.length > 1 && (
                 <FilterField label="Backtest session">
                   <select

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 
 class RunResultModel(BaseModel):
@@ -39,6 +39,9 @@ class RunMetaResponse(RunSummary):
     source: str = "engine"                      # "engine" | "manual"
     prop_ruleset: Optional[str] = None           # manual runs only: e.g. "topstep_50k"
     session_ids: List[str] = Field(default_factory=list)  # manual runs only
+    # G7: the instruments the scope's trades are in (a multi-asset session lists
+    # both); the analytics instrument filter offers these. Empty for engine runs.
+    instruments: List[str] = Field(default_factory=list)
 
 
 class TradeRecord(BaseModel):
@@ -225,6 +228,9 @@ class PropRules(BaseModel):
     no_overnight: bool = False
     no_weekend: bool = False
     no_news: bool = False
+    # G7: with `no_news`, no entry within this many minutes either side of a
+    # high-impact scheduled event (news_events.csv).
+    news_window_minutes: int = Field(5, ge=1, le=120)
     close_time: str = Field("16:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -315,6 +321,9 @@ class CreateSessionRequest(BaseModel):
 # way it already does for cursor_time (resyncCursorIndex).
 
 class PersistedPosition(BaseModel):
+    # G7: which of the session's assets this position is in (None = the primary,
+    # which is every position saved before multi-asset). One position per asset.
+    instrument: Optional[str] = None
     side: str
     contracts: int
     entry_price: float
@@ -351,6 +360,7 @@ class PersistedPosition(BaseModel):
 
 class PersistedWorkingOrder(BaseModel):
     id: str
+    instrument: Optional[str] = None  # G7: None = the primary asset
     side: str
     order_type: str  # "limit" | "stop"
     price: float
@@ -452,7 +462,9 @@ class BacktestSessionSummary(BaseModel):
     cursor_time: int
     status: str  # "active" | "archived"
     account: SimAccountModel
-    position: Optional[PersistedPosition] = None
+    # G7: at most one open position per asset (the sim broker's single-position
+    # rule, kept per instrument); they share the one cursor and the one account.
+    positions: List[PersistedPosition] = Field(default_factory=list)
     working_orders: List[PersistedWorkingOrder] = Field(default_factory=list)
     # FXR_SPEC.md section C, phase F5: session-level journal notes (separate
     # from any one trade's own notes below). Optional/defaulted so every
@@ -468,6 +480,14 @@ class BacktestSessionSummary(BaseModel):
     prop_status: Optional[PropStatus] = None
     # Filled only by GET /bt-sessions (the list): the home page's progress bar.
     progress: Optional["SessionProgress"] = None
+
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def position(self) -> Optional[PersistedPosition]:
+        """The first open position (the only one in a single-asset session) --
+        kept for clients written before multi-asset; new code reads `positions`."""
+        return self.positions[0] if self.positions else None
 
 
 class BacktestSessionDetail(BacktestSessionSummary):
@@ -500,7 +520,16 @@ class UpdateCursorRequest(BaseModel):
     # Confirm/Close/partial-close/cancel-order/drag-modify) so a reload
     # never has to wait for the next replay step to see the latest trade.
     position: Optional[PersistedPosition] = None
+    # G7: every open position (one per asset). Wins over the single `position`
+    # above, which stays for clients written before multi-asset.
+    positions: List[PersistedPosition] = Field(default_factory=list)
     working_orders: List[PersistedWorkingOrder] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _fold_legacy_position(self) -> "UpdateCursorRequest":
+        if self.position is not None and not self.positions:
+            self.positions = [self.position]
+        return self
 
 
 # --- FXR_SPEC.md section 2/6, phase F2: manual trades journaled from the
@@ -684,3 +713,14 @@ class WeekdayWinRate(BaseModel):
 class HomeOverview(BaseModel):
     kpis: HomeKpis
     weekday: List[WeekdayWinRate]
+
+
+# --- FXR_V2_SPEC.md section 6 (G7): the economic calendar. Only what is known
+# in advance: when an event is scheduled, its name and its impact. News_events.csv
+# carries no actual/forecast/previous values, and none is ever added: a scheduled
+# event ahead of the cursor is fine to show, its outcome is not.
+
+class NewsEvent(BaseModel):
+    time: int  # unix seconds, the scheduled release
+    event: str
+    impact: str  # "high" (the only grade the calendar file lists)

@@ -247,14 +247,14 @@ export function useUpdateBtSessionCursor() {
     mutationFn: ({
       sessionId,
       cursorTime,
-      position,
+      positions,
       workingOrders,
     }: {
       sessionId: string
       cursorTime: number
-      position?: PersistedPosition | null
+      positions?: PersistedPosition[]
       workingOrders?: PersistedWorkingOrder[]
-    }) => api.updateBtSessionCursor(sessionId, cursorTime, position ?? null, workingOrders ?? []),
+    }) => api.updateBtSessionCursor(sessionId, cursorTime, positions ?? [], workingOrders ?? []),
     onSuccess: (updated) => {
       queryClient.setQueryData(['bt-session', updated.id], updated)
     },
@@ -390,5 +390,16 @@ export function useDeleteTradeScreenshot() {
       screenshotId: string
     }) => api.deleteTradeScreenshot(sessionId, tradeId, screenshotId),
     onSuccess: (updated, { sessionId }) => spliceUpdatedTrade(queryClient, sessionId, updated),
+  })
+}
+
+// FXR_V2_SPEC.md section 6 (G7): the economic calendar's schedule between two times
+// (unix seconds). Only when / which / how important -- never an outcome.
+export function useNewsEvents(from: number | null, to: number | null) {
+  return useQuery({
+    queryKey: ['news-events', from, to],
+    queryFn: () => api.getNewsEvents({ from: from as number, to: to as number }),
+    enabled: from !== null && to !== null,
+    staleTime: Infinity,
   })
 }

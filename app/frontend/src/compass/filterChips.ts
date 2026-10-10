@@ -17,6 +17,7 @@ export function activeFilterChips(f: TradeFilters): FilterChip[] {
   if (f.setup !== null) add('setup', `Setup: ${f.setup}`)
   if (f.grade !== null) add('grade', `Grade: ${f.grade}`)
   if (f.sessionId !== null) add('sessionId', `Backtest session: ${f.sessionId.slice(0, 13)}`)
+  if (f.instrument !== null) add('instrument', `Instrument: ${f.instrument}`)
   if (f.leg !== null) add('leg', `Leg: ${f.leg}`)
   if (f.session !== null) add('session', `Session: ${f.session}`)
   if (f.side !== null) add('side', `Side: ${f.side}`)

@@ -97,7 +97,8 @@ function PartialClose({ contracts, disabled, onPartialClose }: { contracts: numb
 }
 
 function PositionsTab({
-  position,
+  positions,
+  activeInstrument,
   closing,
   onClose,
   onPartialClose,
@@ -107,11 +108,13 @@ function PositionsTab({
   trailingPoints,
   onTrailingPointsChange,
 }: {
-  position: PositionRow | null
+  positions: PositionRow[]
+  // The charted instrument: the toggles below arm / edit ITS trade.
+  activeInstrument: string
   closing: boolean
-  onClose: () => void
-  onPartialClose: (qty: number) => void
-  onBreakeven: () => void
+  onClose: (instrument: string) => void
+  onPartialClose: (instrument: string, qty: number) => void
+  onBreakeven: (instrument: string) => void
   autoBreakeven: boolean
   onAutoBreakevenChange: (v: boolean) => void
   trailingPoints: number | null
@@ -124,10 +127,10 @@ function PositionsTab({
       <div className="flex items-center gap-4 px-2 pt-1 text-xs text-text-muted">
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={autoBreakeven} onChange={(e) => onAutoBreakevenChange(e.target.checked)} className="accent-accent" />
-          {position ? 'Break-even at +1R' : 'Next trade: break-even at +1R'}
+          {positions.some((p) => p.instrument === activeInstrument) ? `${activeInstrument} break-even at +1R` : `Next ${activeInstrument} trade: break-even at +1R`}
         </label>
         <label className="flex items-center gap-2">
-          Trail
+          {activeInstrument} trail
           <input
             type="number"
             min={0}
@@ -144,7 +147,7 @@ function PositionsTab({
           pts
         </label>
       </div>
-      {position ? (
+      {positions.length > 0 ? (
         // table-fixed + a <colgroup>: the columns keep their widths whatever the
         // numbers do (an SL appearing, a P&L gaining a digit), so nothing reflows.
         <table className="w-full table-fixed border-collapse">
@@ -173,8 +176,9 @@ function PositionsTab({
             </tr>
           </thead>
           <tbody>
-            <tr className="hover:bg-surface-2">
-              <td className={TD}>{position.instrument}</td>
+            {positions.map((position) => (
+            <tr key={position.instrument} className="hover:bg-surface-2">
+              <td className={`${TD} ${position.instrument === activeInstrument ? '' : 'text-text-muted'}`}>{position.instrument}</td>
               <td className={TD}>{position.side === 'long' ? 'Long' : 'Short'}</td>
               <td className={TDN}>{position.contracts}</td>
               <td className={TDN}>{fmtPrice(position.entryPrice, position.instrument)}</td>
@@ -185,21 +189,22 @@ function PositionsTab({
                 {position.rMultiple !== null ? `${position.rMultiple > 0 ? '+' : ''}${fmtR(position.rMultiple)}` : '—'}
               </td>
               <td className="h-7 whitespace-nowrap px-2 text-right">
-                <PartialClose contracts={position.contracts} disabled={closing} onPartialClose={onPartialClose} />
+                <PartialClose contracts={position.contracts} disabled={closing} onPartialClose={(qty) => onPartialClose(position.instrument, qty)} />
                 <button
                   type="button"
-                  onClick={onBreakeven}
+                  onClick={() => onBreakeven(position.instrument)}
                   disabled={closing}
                   title="Move the stop loss to the entry price (needs the trade in profit)"
                   className={ROW_ACTION}
                 >
                   Break-even
                 </button>
-                <button type="button" onClick={onClose} disabled={closing} className={ROW_ACTION}>
+                <button type="button" onClick={() => onClose(position.instrument)} disabled={closing} className={ROW_ACTION}>
                   {closing ? 'Closing…' : 'Close'}
                 </button>
               </td>
             </tr>
+            ))}
           </tbody>
         </table>
       ) : (
@@ -209,8 +214,8 @@ function PositionsTab({
   )
 }
 
-function OrdersTab({ order, onCancel }: { order: WorkingOrderRow | null; onCancel: () => void }) {
-  if (!order) return <Empty>No working orders.</Empty>
+function OrdersTab({ orders, onCancel }: { orders: WorkingOrderRow[]; onCancel: (instrument: string) => void }) {
+  if (orders.length === 0) return <Empty>No working orders.</Empty>
   return (
     <table className="w-full border-collapse">
       <thead>
@@ -226,20 +231,22 @@ function OrdersTab({ order, onCancel }: { order: WorkingOrderRow | null; onCance
         </tr>
       </thead>
       <tbody>
-        <tr className="hover:bg-surface-2">
-          <td className={TD}>{order.instrument}</td>
-          <td className={TD}>{order.side === 'long' ? 'Buy' : 'Sell'}</td>
-          <td className={TD}>{order.orderType === 'limit' ? 'Limit' : 'Stop'}</td>
-          <td className={TDN}>{order.contracts}</td>
-          <td className={TDN}>{fmtPrice(order.price, order.instrument)}</td>
-          <td className={TDN}>{order.slPrice !== null ? fmtPrice(order.slPrice, order.instrument) : '—'}</td>
-          <td className={TDN}>{order.tpPrice !== null ? fmtPrice(order.tpPrice, order.instrument) : '—'}</td>
-          <td className="h-7 px-2 text-right">
-            <button type="button" onClick={onCancel} className={ROW_ACTION}>
-              Cancel
-            </button>
-          </td>
-        </tr>
+        {orders.map((order, i) => (
+          <tr key={`${order.instrument}-${i}`} className="hover:bg-surface-2">
+            <td className={TD}>{order.instrument}</td>
+            <td className={TD}>{order.side === 'long' ? 'Buy' : 'Sell'}</td>
+            <td className={TD}>{order.orderType === 'limit' ? 'Limit' : 'Stop'}</td>
+            <td className={TDN}>{order.contracts}</td>
+            <td className={TDN}>{fmtPrice(order.price, order.instrument)}</td>
+            <td className={TDN}>{order.slPrice !== null ? fmtPrice(order.slPrice, order.instrument) : '—'}</td>
+            <td className={TDN}>{order.tpPrice !== null ? fmtPrice(order.tpPrice, order.instrument) : '—'}</td>
+            <td className="h-7 px-2 text-right">
+              <button type="button" onClick={() => onCancel(order.instrument)} className={ROW_ACTION}>
+                Cancel
+              </button>
+            </td>
+          </tr>
+        ))}
       </tbody>
     </table>
   )
@@ -326,8 +333,9 @@ export default function TradePanel({
   height,
   tab,
   onTabChange,
-  position,
-  workingOrder,
+  positions,
+  workingOrders,
+  activeInstrument,
   trades,
   closing,
   onClosePosition,
@@ -343,14 +351,17 @@ export default function TradePanel({
   height: number
   tab: TradePanelTab
   onTabChange: (t: TradePanelTab) => void
-  position: PositionRow | null
-  workingOrder: WorkingOrderRow | null
+  // One row per instrument holding something (G7: positions and orders in both
+  // MNQ and MES, whichever is on the chart). Row actions name the instrument.
+  positions: PositionRow[]
+  workingOrders: WorkingOrderRow[]
+  activeInstrument: string
   trades: readonly ManualTrade[]
   closing: boolean
-  onClosePosition: () => void
-  onPartialClose: (qty: number) => void
-  onBreakeven: () => void
-  onCancelOrder: () => void
+  onClosePosition: (instrument: string) => void
+  onPartialClose: (instrument: string, qty: number) => void
+  onBreakeven: (instrument: string) => void
+  onCancelOrder: (instrument: string) => void
   autoBreakeven: boolean
   onAutoBreakevenChange: (v: boolean) => void
   trailingPoints: number | null
@@ -358,8 +369,8 @@ export default function TradePanel({
   onOpenTrade: (tradeId: number) => void
 }) {
   const counts: Record<TradePanelTab, number> = {
-    positions: position ? 1 : 0,
-    orders: workingOrder ? 1 : 0,
+    positions: positions.length,
+    orders: workingOrders.length,
     history: trades.length,
   }
   return (
@@ -386,7 +397,8 @@ export default function TradePanel({
       <div id="trade-panel-body" role="tabpanel" aria-labelledby={`trade-tab-${tab}`} className="min-h-0 flex-1 overflow-auto px-2 pb-2">
         {tab === 'positions' && (
           <PositionsTab
-            position={position}
+            positions={positions}
+            activeInstrument={activeInstrument}
             closing={closing}
             onClose={onClosePosition}
             onPartialClose={onPartialClose}
@@ -397,7 +409,7 @@ export default function TradePanel({
             onTrailingPointsChange={onTrailingPointsChange}
           />
         )}
-        {tab === 'orders' && <OrdersTab order={workingOrder} onCancel={onCancelOrder} />}
+        {tab === 'orders' && <OrdersTab orders={workingOrders} onCancel={onCancelOrder} />}
         {tab === 'history' && <HistoryTab trades={trades} onOpenTrade={onOpenTrade} />}
       </div>
     </section>

@@ -31,7 +31,7 @@ from typing import List, Optional
 
 from app.backend import models
 from app.backend.config import get_bt_sessions_dir
-from app.backend.services import bar_service, prop_presets
+from app.backend.services import bar_service, news_service, prop_presets
 
 # FXR_SPEC.md section 1: "scoped to MNQ + MES (expandable later)" -- this
 # platform's own restriction, independent of data.yaml's active symbols
@@ -177,12 +177,20 @@ def _resolve_assets(req: models.CreateSessionRequest) -> List[str]:
     return assets
 
 
-def _resolve_window(instrument: str, req: models.CreateSessionRequest) -> tuple:
-    """(start_time, end_date) for the new session; end_date is None for an open-ended one."""
+def _resolve_window(assets: List[str], req: models.CreateSessionRequest) -> tuple:
+    """(start_time, end_date) for the new session; end_date is None for an open-ended one.
+
+    The assets share one cursor, so the window must lie inside the data every one
+    of them has: the latest first bar to the earliest last bar (G7)."""
     try:
-        lo, hi = bar_service.get_instrument_range(instrument)
+        ranges = [bar_service.get_instrument_range(a) for a in assets]
     except bar_service.UnknownInstrument as e:
         raise InvalidSessionRequest(str(e))
+    lo = max(r[0] for r in ranges)
+    hi = min(r[1] for r in ranges)
+    instrument = " and ".join(assets) if len(assets) > 1 else assets[0]
+    if lo > hi:
+        raise InvalidSessionRequest(f"{instrument} have no overlapping data")
 
     if req.random_start:
         # Client never sees or influences this -- FXR_SPEC section F's
@@ -344,6 +352,45 @@ def _check_cap(data: dict, contracts: int, what: str) -> None:
         )
 
 
+def _check_book(data: dict, req: models.UpdateCursorRequest) -> None:
+    """The broker state a client wants saved, against the account's rules (G7).
+
+    The position cap is ONE number for the whole account, counted across every
+    instrument -- Topstep gives a micro no discount, so 3 MNQ + 2 MES is 5
+    contracts (propbt/config/prop_rules.yaml, position_limit.max_open_contracts,
+    carried onto the session as account.max_contracts). The no-news restriction
+    refuses a position that was entered inside a high-impact event's window.
+    """
+    primary, assets = data["instrument"], data["assets"]
+    seen = set()
+    for p in req.positions:
+        sym = p.instrument or primary
+        if sym not in assets:
+            raise InvalidSessionRequest(f"position in {sym!r}, which is not one of the session's assets {assets}")
+        if sym in seen:
+            raise InvalidSessionRequest(f"more than one open position in {sym}: the broker holds one position per asset")
+        seen.add(sym)
+    for o in req.working_orders:
+        sym = o.instrument or primary
+        if sym not in assets:
+            raise InvalidSessionRequest(f"working order in {sym!r}, which is not one of the session's assets {assets}")
+        _check_cap(data, o.contracts, "working order")
+
+    total = sum(p.contracts for p in req.positions)
+    _check_cap(data, total, "positions" if len(req.positions) > 1 else "position")
+
+    rules = data["account"].get("prop_rules")
+    if rules and rules.get("no_news"):
+        before = {((p.get("instrument") or primary), p["entry_time"]) for p in data.get("positions", [])}
+        window = rules.get("news_window_minutes", 5)
+        for p in req.positions:
+            if ((p.instrument or primary), p.entry_time) in before:
+                continue
+            reason = news_service.window_refusal(p.entry_time, window)
+            if reason:
+                raise InvalidSessionRequest(f"no news trading: {reason}")
+
+
 def _trades_path(session_id: str) -> Path:
     return _session_dir(session_id) / "trades.json"
 
@@ -400,6 +447,14 @@ def _migrate(data: dict) -> dict:
     data.setdefault("end_date", None)
     data.setdefault("name", None)
     data.setdefault("checklist", [])
+    # G7: a session holds one position per asset. One saved before multi-asset had
+    # the single `position` (always in its only asset, which is the primary).
+    legacy_position = data.pop("position", None)
+    if "positions" not in data:
+        data["positions"] = [legacy_position] if legacy_position else []
+    for item in (*data["positions"], *data.get("working_orders", [])):
+        if not item.get("instrument"):
+            item["instrument"] = data["instrument"]
     # G6: a prop session carries its concrete rules. One saved before the rule
     # builder was judged by the Topstep config, which is exactly the "Topstep 50k"
     # preset (derived from the same prop_rules.yaml), so mapping it onto the preset
@@ -452,7 +507,7 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
     step_size = req.step_size or req.base_timeframe
     _validate_timeframe(chart_timeframe, "chart_timeframe")
     _validate_timeframe(step_size, "step_size")
-    start_time, end_date = _resolve_window(instrument, req)
+    start_time, end_date = _resolve_window(assets, req)
     account = _account_from_request(req, assets)
 
     checklist = _clean_checklist(req.checklist)
@@ -483,7 +538,7 @@ def create_session(req: models.CreateSessionRequest) -> models.BacktestSessionDe
         "settings": {"random_start": req.random_start},
         "discipline_lock": req.discipline_lock,
         "lock_floor_time": None,
-        "position": None,
+        "positions": [],
         "working_orders": [],
         "notes": None,
     }
@@ -549,10 +604,7 @@ def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.Ba
     # Defense in depth: the sim broker lives in the browser and refuses an
     # over-cap order itself (positionCap.ts); this keeps a hand-built or
     # stale client from persisting one anyway.
-    if req.position is not None:
-        _check_cap(data, req.position.contracts, "position")
-    for o in req.working_orders:
-        _check_cap(data, o.contracts, "working order")
+    _check_book(data, req)
     # FXR_SPEC.md section F, phase F7b: with the discipline lock on, the
     # cursor never goes back past where the first trade was placed -- enforced
     # here too (not just in the UI), so a stale or hand-built client can't
@@ -565,11 +617,12 @@ def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.Ba
             raise InvalidSessionRequest(
                 f"discipline lock: cursor_time {req.cursor_time} is before the first placed trade at {floor}"
             )
-        if floor is None and (req.position is not None or req.working_orders):
+        if floor is None and (req.positions or req.working_orders):
             data["lock_floor_time"] = req.cursor_time
     data["cursor_time"] = req.cursor_time
-    data["position"] = req.position.model_dump() if req.position is not None else None
-    data["working_orders"] = [o.model_dump() for o in req.working_orders]
+    primary = data["instrument"]
+    data["positions"] = [{**p.model_dump(), "instrument": p.instrument or primary} for p in req.positions]
+    data["working_orders"] = [{**o.model_dump(), "instrument": o.instrument or primary} for o in req.working_orders]
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)
@@ -686,9 +739,9 @@ def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> model
     from all exits, and only THIS exit's P&L is added to the balance).
     """
     data = _read(session_id)
-    if req.instrument != data["instrument"]:
+    if req.instrument not in data["assets"]:
         raise InvalidSessionRequest(
-            f"trade instrument {req.instrument!r} does not match session instrument {data['instrument']!r}"
+            f"trade instrument {req.instrument!r} is not one of the session's assets {data['assets']}"
         )
     if req.side not in ("long", "short"):
         raise InvalidSessionRequest(f"side must be 'long' or 'short', got {req.side!r}")

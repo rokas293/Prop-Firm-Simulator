@@ -19,7 +19,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import ChartKL, { type ChartKLHandle, type OrderLineSpec, type PositionToolSpec } from '../chart/kl/ChartKL'
 import { revealedSessionBands, type SessionBand } from '../chart/kl/sessionOverlay'
-import { positionCapMessage } from '../chart/positionCap'
+import { capRoom, openContractsElsewhere, positionCapMessage } from '../chart/positionCap'
 import { entryRefusal, flattenNotice, holdingRule } from '../chart/holdingRestrictions'
 import { defaultToolLevels } from '../chart/positionTool'
 import { balanceFor, riskPctFromUsd, type OrderContext, type OrderKind, type OrderRequest, type PositionToolLevels } from '../chart/orderTicket'
@@ -45,7 +45,8 @@ import { magnifierRange } from '../chart/magnifier'
 import { useSessionHotkeys } from '../keyboard/useSessionHotkeys'
 import { combineBanner } from '../compass/propResult'
 import {
-  advanceReplay,
+  EMPTY_BOOK,
+  advanceSession,
   closePosition,
   closePositionPartialAtMarket,
   fromPersistedPosition,
@@ -56,8 +57,10 @@ import {
   riskUsdAtEntry,
   toPersistedPosition,
   toPersistedWorkingOrder,
+  sessionUnrealizedPnl,
   unrealizedPnl as positionPnl,
   type ClosedTradeResult,
+  type InstrumentBook,
   type OpenPosition,
   NO_JOURNAL,
   type OrderJournal,
@@ -151,6 +154,7 @@ const BASE_TF_SECONDS: Record<string, number> = Object.fromEntries(SESSION_TIMEF
 // from its far end -- most of the budget stays as history behind the cursor
 // (so the user's view survives the swap), with a margin of lookahead so the
 // next trigger is a long way off. LOOKAHEAD must stay > TRIGGER.
+const NO_ORDERS: WorkingOrder[] = []
 const REANCHOR_TRIGGER_BARS = 20
 const REANCHOR_LOOKAHEAD_BARS = 200
 // The same, backwards (a rewind, G5): within REANCHOR_BACK_TRIGGER_BARS of the first
@@ -284,6 +288,15 @@ export function resyncCursorIndex(bars: Bar[], targetTime: number | null): numbe
     if (bars[i].time <= targetTime) best = i
   }
   return best
+}
+
+// "MES" / "MNQ and MES": the instruments other than `except` that hold a position,
+// for the cap's refusal message (empty when none does).
+export function elsewhereLabel(books: Record<string, InstrumentBook>, except: string | undefined): string {
+  return Object.entries(books)
+    .filter(([symbol, b]) => symbol !== except && b.position)
+    .map(([symbol]) => symbol)
+    .join(' and ')
 }
 
 export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
@@ -443,8 +456,27 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // and every entry path (enterPosition/confirmTicket/advanceReplay's
   // order-fill branch) is gated on `flat` below, same as F2/F3. A second
   // position can't be opened until the first is fully closed.
-  const [position, setPosition] = useState<OpenPosition | null>(null)
-  const [workingOrders, setWorkingOrders] = useState<WorkingOrder[]>([])
+  //
+  // G7 (multi-asset): one BOOK per instrument -- at most one position and its resting
+  // orders each -- sharing the one cursor and the one account. `books` is the render
+  // copy, `booksRef` the live one. Everything below that says position /
+  // workingOrders means the ACTIVE instrument's (the one on the chart); the shims
+  // keep that code as it was. advanceTo walks every book together (advanceSession).
+  const [books, setBooks] = useState<Record<string, InstrumentBook>>({})
+  const booksRef = useRef<Record<string, InstrumentBook>>({})
+  const [activeSymbol, setActiveSymbol] = useState('')
+  const activeRef = useRef('')
+  const activeInstrument: string = session ? (session.assets?.includes(activeSymbol) ? activeSymbol : session.instrument) : ''
+  const activeInstrumentOrNull = session ? activeInstrument : null
+  activeRef.current = activeInstrument
+  const position = books[activeInstrument]?.position ?? null
+  const workingOrders = books[activeInstrument]?.workingOrders ?? NO_ORDERS
+  const writeBook = (symbol: string, patch: Partial<InstrumentBook>) => {
+    booksRef.current = { ...booksRef.current, [symbol]: { ...(booksRef.current[symbol] ?? EMPTY_BOOK), ...patch } }
+    setBooks(booksRef.current)
+  }
+  const setPosition = (p: OpenPosition | null) => writeBook(activeRef.current, { position: p })
+  const setWorkingOrders = (o: WorkingOrder[]) => writeBook(activeRef.current, { workingOrders: o })
   // FXR_V2_SPEC.md 3.5 (G3): the Long/Short Position tool on the chart (entry,
   // stop and target; the side is the tool's own), and whether the Place Order
   // dialog is open over it. The tool is a plan on screen, not an order: it
@@ -500,8 +532,25 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // React reducer -- see advanceTo's own comment for why that distinction
   // matters here).
   const cursorIndexRef = useRef(0)
-  const positionRef = useRef<OpenPosition | null>(null)
-  const workingOrdersRef = useRef<WorkingOrder[]>([])
+  // The active instrument's position / orders, read and written through the books.
+  const positionRef = {
+    get current(): OpenPosition | null {
+      return booksRef.current[activeRef.current]?.position ?? null
+    },
+    set current(p: OpenPosition | null) {
+      const sym = activeRef.current
+      booksRef.current = { ...booksRef.current, [sym]: { ...(booksRef.current[sym] ?? EMPTY_BOOK), position: p } }
+    },
+  }
+  const workingOrdersRef = {
+    get current(): WorkingOrder[] {
+      return booksRef.current[activeRef.current]?.workingOrders ?? NO_ORDERS
+    },
+    set current(o: WorkingOrder[]) {
+      const sym = activeRef.current
+      booksRef.current = { ...booksRef.current, [sym]: { ...(booksRef.current[sym] ?? EMPTY_BOOK), workingOrders: o } }
+    },
+  }
   const loadedSessionIdRef = useRef<string | null>(null)
   // Discipline lock (F7b): the cursor time the first trade was placed at, or
   // null while none has been. Seeded from the saved session, then set locally
@@ -553,10 +602,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     lastReanchoredBackAtFirstBarTimeRef.current = null
     reanchoredAnchorRef.current = null
     setIsPlaying(false)
-    setPosition(null)
-    positionRef.current = null
-    setWorkingOrders([])
-    workingOrdersRef.current = []
+    booksRef.current = {}
+    setBooks({})
+    activeRef.current = session.instrument
+    setActiveSymbol(session.instrument)
     setPositionTool(null)
     setOrderDialogOpen(false)
   }, [session])
@@ -569,14 +618,22 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [windowAnchor, windowLookahead, session?.id],
   )
 
-  const { data: bars, isFetching: barsFetching } = useBars(
-    session?.instrument ?? null,
-    '1min',
-    barsWindow?.from ?? null,
-    barsWindow?.to ?? null,
-    MAX_POINTS,
-    true,
-  )
+  // One 1-minute feed per asset of the session over the same window (G7): the
+  // shared cursor is a TIME, and each instrument's fills only ever meet its own
+  // bars at or before it. The chart shows the active instrument's.
+  const primarySymbol = session?.instrument ?? null
+  const secondarySymbol = session?.assets?.find((a) => a !== session.instrument) ?? null
+  const primaryQuery = useBars(primarySymbol, '1min', barsWindow?.from ?? null, barsWindow?.to ?? null, MAX_POINTS, true)
+  const secondaryQuery = useBars(secondarySymbol, '1min', barsWindow?.from ?? null, barsWindow?.to ?? null, MAX_POINTS, true)
+  const onSecondary = secondarySymbol !== null && activeInstrument === secondarySymbol
+  const bars = onSecondary ? secondaryQuery.data : primaryQuery.data
+  const barsFetching = onSecondary ? secondaryQuery.isFetching : primaryQuery.isFetching
+  const feeds: Record<string, Bar[] | undefined> = {}
+  if (primarySymbol) feeds[primarySymbol] = primaryQuery.data
+  if (secondarySymbol) feeds[secondarySymbol] = secondaryQuery.data
+  const feedsRef = useRef(feeds)
+  feedsRef.current = feeds
+  const feedsReady = !!session && session.assets.every((a) => !!feeds[a] && feeds[a]!.length > 0)
 
   // The chart's history window for the current timeframe (see historyAnchor).
   const chartTfSeconds = timeframeSeconds(chartTf)
@@ -606,20 +663,27 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // function's own comment for why an index can never survive a reload
   // directly). Runs at most once per session id (restoredForSessionRef).
   useEffect(() => {
-    if (!session || !bars || bars.length === 0 || restoredForSessionRef.current === session.id) return
+    if (!session || !feedsReady || restoredForSessionRef.current === session.id) return
     restoredForSessionRef.current = session.id
-    if (session.position) {
-      const entryIndex = resyncCursorIndex(bars, session.position.entry_time)
-      const restored = fromPersistedPosition(session.position, entryIndex)
-      positionRef.current = restored
-      setPosition(restored)
+    const restored: Record<string, InstrumentBook> = {}
+    for (const p of session.positions) {
+      const sym = p.instrument ?? session.instrument
+      const feed = feedsRef.current[sym]
+      if (!feed) continue
+      restored[sym] = { ...(restored[sym] ?? EMPTY_BOOK), position: fromPersistedPosition(p, resyncCursorIndex(feed, p.entry_time)) }
     }
-    if (session.working_orders.length > 0) {
-      const restored = session.working_orders.map((o) => fromPersistedWorkingOrder(o, resyncCursorIndex(bars, o.placed_time)))
-      workingOrdersRef.current = restored
-      setWorkingOrders(restored)
+    for (const o of session.working_orders) {
+      const sym = o.instrument ?? session.instrument
+      const feed = feedsRef.current[sym]
+      if (!feed) continue
+      const book = restored[sym] ?? EMPTY_BOOK
+      restored[sym] = { ...book, workingOrders: [...book.workingOrders, fromPersistedWorkingOrder(o, resyncCursorIndex(feed, o.placed_time))] }
     }
-  }, [session, bars])
+    if (Object.keys(restored).length === 0) return
+    booksRef.current = { ...booksRef.current, ...restored }
+    setBooks(booksRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, feedsReady])
 
   // Every time a (possibly re-anchored) bars array lands, resolve the
   // logical cursor time back to an index into THIS array -- covers both
@@ -652,20 +716,35 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const resynced = resyncCursorIndex(bars, cursorTimeRef.current)
     if (resynced !== cursorIndex) setCursorIndexState(resynced)
     cursorIndexRef.current = resynced
-    // The sim broker's indices are positions in the feed array, which a re-anchor
-    // replaces: re-resolve the open position's entry and each order's placement from
-    // their times, or MAE/MFE would scan the wrong bars.
-    const held = positionRef.current
-    if (held) {
-      const entryIndex = resyncCursorIndex(bars, held.entryTime)
-      if (entryIndex !== held.entryIndex) {
-        positionRef.current = { ...held, entryIndex }
-        setPosition(positionRef.current)
+  }
+
+  // The sim broker's indices are positions in a feed array, which a re-anchor (or a
+  // feed arriving late) replaces: re-resolve every open position's entry and every
+  // order's placement, in ITS OWN instrument's feed, from their times -- or MAE/MFE
+  // would scan the wrong bars.
+  const [syncedFeeds, setSyncedFeeds] = useState<(Bar[] | undefined)[]>([])
+  const feedA = primarySymbol ? feeds[primarySymbol] : undefined
+  const feedB = secondarySymbol ? feeds[secondarySymbol] : undefined
+  if (feedA !== syncedFeeds[0] || feedB !== syncedFeeds[1]) {
+    setSyncedFeeds([feedA, feedB])
+    let next = booksRef.current
+    for (const [sym, book] of Object.entries(booksRef.current)) {
+      const feed = feeds[sym]
+      if (!feed || feed.length === 0) continue
+      const held = book.position
+      const heldIndex = held ? resyncCursorIndex(feed, held.entryTime) : 0
+      const position = held && heldIndex !== held.entryIndex ? { ...held, entryIndex: heldIndex } : held
+      const stale = book.workingOrders.some((o) => o.placedIndex !== resyncCursorIndex(feed, o.placedTime))
+      const workingOrders = stale
+        ? book.workingOrders.map((o) => ({ ...o, placedIndex: resyncCursorIndex(feed, o.placedTime) }))
+        : book.workingOrders
+      if (position !== held || workingOrders !== book.workingOrders) {
+        next = { ...next, [sym]: { position, workingOrders } }
       }
     }
-    if (workingOrdersRef.current.some((o) => o.placedIndex !== resyncCursorIndex(bars, o.placedTime))) {
-      workingOrdersRef.current = workingOrdersRef.current.map((o) => ({ ...o, placedIndex: resyncCursorIndex(bars, o.placedTime) }))
-      setWorkingOrders(workingOrdersRef.current)
+    if (next !== booksRef.current) {
+      booksRef.current = next
+      setBooks(next)
     }
   }
 
@@ -717,7 +796,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const cursorTime = cursorTimeOverride ?? cursorTimeRef.current
     if (cursorTime === null) return
     cursorTimeRef.current = cursorTime
-    if (session.discipline_lock && lockFloorRef.current === null && (positionRef.current || workingOrdersRef.current.length > 0)) {
+    const held = Object.values(booksRef.current)
+    if (session.discipline_lock && lockFloorRef.current === null && held.some((b) => b.position || b.workingOrders.length > 0)) {
       lockFloorRef.current = cursorTime
     }
     const sessionId = session.id
@@ -727,8 +807,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         updateCursor.mutateAsync({
           sessionId,
           cursorTime: cursorTimeRef.current ?? cursorTime,
-          position: positionRef.current ? toPersistedPosition(positionRef.current) : null,
-          workingOrders: workingOrdersRef.current.map(toPersistedWorkingOrder),
+          // Read when the save is SENT: every instrument's book, so the account's
+          // whole state is one snapshot.
+          positions: Object.entries(booksRef.current).flatMap(([symbol, b]) =>
+            b.position ? [{ ...toPersistedPosition(b.position), instrument: symbol }] : [],
+          ),
+          workingOrders: Object.entries(booksRef.current).flatMap(([symbol, b]) =>
+            b.workingOrders.map((o) => ({ ...toPersistedWorkingOrder(o), instrument: symbol })),
+          ),
         }),
       )
       .catch(() => undefined)
@@ -749,14 +835,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // stale data once it writes back. Confirmed live during F4 verification
   // (a partial close's persisted position reverted to its PRE-close
   // contract count) before this await was added.
-  const journalClosedTrade = async (trade: ClosedTradeResult) => {
+  const journalClosedTrade = async (trade: ClosedTradeResult, instrument: string = activeRef.current) => {
     if (!session) return
+    const feed = feedsRef.current[instrument] ?? bars
     const slPoints = trade.slPrice !== null ? Math.abs(trade.entryPrice - trade.slPrice) : null
     const tpPoints = trade.tpPrice !== null ? Math.abs(trade.tpPrice - trade.entryPrice) : null
     const body: CreateManualTradeRequest = {
       entry_time: trade.entryTime,
       exit_time: trade.exitTime,
-      instrument: session.instrument,
+      instrument,
       side: trade.side,
       leg: null,
       session: sessionForTime(sessionBands, trade.entryTime),
@@ -779,7 +866,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       mfe_r: trade.mfeR,
       // The replay counts in 1m bars; v1 journaled the session's own base bars, and
       // a session's trades keep that unit whatever the chart timeframe is.
-      bars_held: bars ? heldBaseBars(bars, trade.entryTime, trade.exitTime, BASE_TF_SECONDS[session.base_timeframe] ?? 60) : trade.barsHeld,
+      bars_held: feed ? heldBaseBars(feed, trade.entryTime, trade.exitTime, BASE_TF_SECONDS[session.base_timeframe] ?? 60) : trade.barsHeld,
       // One exit of a position (FXR_V2_SPEC.md 3.6): the server merges every
       // exit sharing this key into a single trade.
       trade_key: trade.tradeKey,
@@ -838,30 +925,52 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setOrderNotice(REWIND_BLOCKED_MESSAGE)
       return
     }
-    const spec = getContractSpec(session.instrument)
-    const positionBefore = positionRef.current
-    const result = advanceReplay(
-      bars,
-      cursorIndexRef.current,
-      newIndex,
-      positionRef.current,
-      workingOrdersRef.current,
-      spec,
-      session.account.commission_per_contract,
+    // G7: every instrument's book moves together on the one clock. A multi-asset
+    // session steps only once every asset's feed is loaded (a missing one would
+    // silently skip its fills).
+    const feedMap: Record<string, Bar[]> = {}
+    for (const a of session.assets) {
+      const f = feedsRef.current[a]
+      if (!f || f.length === 0) return
+      feedMap[a] = f
+    }
+    const active = activeRef.current
+    const booksBefore = booksRef.current
+    const positionBefore = booksBefore[active]?.position ?? null
+    const commissions: Record<string, number> = {}
+    for (const a of session.assets) commissions[a] = session.account.commissions?.[a] ?? session.account.commission_per_contract
+    const fromTime = cursorTimeRef.current ?? bars[cursorIndexRef.current]?.time ?? bars[newIndex].time
+    const result = advanceSession({
+      feeds: feedMap,
+      books: booksBefore,
+      fromTime,
+      toTime: bars[newIndex].time,
+      commissions,
       holding,
-    )
+      cap: session.account.max_contracts ?? null,
+      capMessage: (contracts, elsewhere) =>
+        positionCapMessage(contracts, session.account.max_contracts, 'Order', elsewhere, elsewhereLabel(booksBefore, undefined)) ??
+        `This fill would take the account over its ${session.account.max_contracts}-contract limit.`,
+    })
     // A no-overnight / no-weekend close flattened the position (and cancelled working
     // orders): say so, and stop auto-play so it is seen.
     if (result.flattenedAtClose && holding) {
       setIsPlaying(false)
-      setOrderNotice(flattenNotice(holding, session.instrument))
+      setOrderNotice(flattenNotice(holding, active))
     }
-    // "Save & Journal" on a limit/stop order: the journal entry opens when it fills.
-    const journalFill = workingOrdersRef.current.some((o) => o.journalOnFill && result.filledOrderIds.includes(o.id))
-    positionRef.current = result.position
-    workingOrdersRef.current = result.workingOrders
+    // A resting order the account's rules refused at the moment it would have
+    // filled (the cross-instrument cap): cancelled with its reason.
+    if (result.rejectedOrders.length > 0) {
+      setIsPlaying(false)
+      setOrderNotice(result.rejectedOrders.map((r) => `${r.instrument}: ${r.reason}`).join(' '))
+    }
+    // "Save & Journal" on a limit/stop order: the journal entry opens when it fills
+    // (when it is the charted instrument's: the drawer reads that position).
+    const journalFill = (booksBefore[active]?.workingOrders ?? []).some((o) => o.journalOnFill && result.filledOrderIds.includes(o.id))
+    booksRef.current = result.books
+    setBooks(result.books)
     // Auto break-even just moved the stop to the entry (this step, not before).
-    const after = result.position
+    const after = result.books[active]?.position ?? null
     if (
       positionBefore &&
       after &&
@@ -870,11 +979,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       positionBefore.slPrice !== positionBefore.entryPrice &&
       after.slPrice === after.entryPrice
     ) {
-      setToast(`Stop moved to break-even at ${fmtPrice(after.entryPrice, session.instrument)}`)
+      setToast(`Stop moved to break-even at ${fmtPrice(after.entryPrice, active)}`)
     }
-    setPosition(result.position)
-    setWorkingOrders(result.workingOrders)
-    if (journalFill && result.position) {
+    if (journalFill && after) {
       setIsPlaying(false)
       openOpenEntryInJournal()
     }
@@ -889,7 +996,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     // own read sees the post-trade balance AND that persist's write --
     // carrying the correct post-close position/working_orders -- lands
     // last, rather than racing and possibly being silently overwritten.
-    for (const trade of result.closedTrades) await journalClosedTrade(trade)
+    for (const trade of result.closedTrades) await journalClosedTrade(trade, trade.instrument)
     if (t !== undefined) persist(t)
     // Nearing the end of the loaded window -- rebuild it around the cursor
     // (history behind, a small lookahead margin ahead) so continued
@@ -947,7 +1054,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const earliest = Math.max(Math.min(barsWindow.from, chartHistory?.from ?? barsWindow.from), barsWindow.to - SESSION_BANDS_MAX_DAYS * 86400)
     return Math.floor(earliest / 86400) * 86400
   }, [barsWindow?.from, barsWindow?.to, chartHistory?.from])
-  const { data: sessionsInView } = useSessions(session?.instrument ?? null, sessionsFrom, barsWindow?.to ?? null)
+  const { data: sessionsInView } = useSessions(activeInstrumentOrNull, sessionsFrom, barsWindow?.to ?? null)
   const sessionBands: SessionBand[] = useMemo(
     () =>
       (sessionsInView ?? []).map((s) => ({
@@ -1031,14 +1138,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // the cursor on every step (useReplayIndicators). Nothing is computed in the
   // browser: the two are only spliced where the tail starts.
   const { data: indicatorHistory } = useIndicators(
-    session?.instrument ?? null,
+    activeInstrumentOrNull,
     chartTf,
     chartHistory?.from ?? null,
     chartHistory?.to ?? null,
     enabledIndicators,
   )
   const indicatorTail = useReplayIndicators({
-    instrument: session?.instrument ?? null,
+    instrument: activeInstrumentOrNull,
     timeframe: chartTf,
     tfSeconds: chartTfSeconds,
     historyFrom: chartHistory?.from ?? null,
@@ -1093,9 +1200,18 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // FXR_SPEC.md section 3/6: market orders fill at the current cursor bar's
   // close (chart/simBroker.ts's documented convention) -- entry and exit
   // both read `bars[cursorIndex]` only, never a bar beyond it.
+  // The position cap is ONE number for the account, counted across instruments
+  // (positionCap.ts): what is open in the OTHER instrument(s) is what an order
+  // here has less room for.
+  const capContext = () => ({
+    elsewhere: openContractsElsewhere(booksRef.current, activeInstrument),
+    label: elsewhereLabel(booksRef.current, activeInstrument),
+  })
+
   const enterPosition = (side: Side) => {
     if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return
-    const capMsg = positionCapMessage(quickQty, session.account.max_contracts, 'Market order')
+    const cc = capContext()
+    const capMsg = positionCapMessage(quickQty, session.account.max_contracts, 'Market order', cc.elsewhere, cc.label)
     if (capMsg) {
       setOrderNotice(capMsg)
       return
@@ -1108,7 +1224,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setOrderNotice(null)
     const entryBar = bars[cursorIndex]
     const entryPrice = marketFillPrice(entryBar)
-    const spec = getContractSpec(session.instrument)
+    const spec = getContractSpec(activeInstrument)
     // FXR_V2_SPEC.md 3.4: an armed Scalper Mode brackets the entry from its preset
     // distances, measured from the fill, and no ghost lines appear.
     const sc = armedScalperBrackets(side, entryPrice, quickQty, spec)
@@ -1136,19 +1252,30 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     positionRef.current = newPosition
     setPosition(newPosition)
     persist()
-    if (sc) setToast(scalperToast(side, quickQty, newPosition, session.instrument))
+    if (sc) setToast(scalperToast(side, quickQty, newPosition, activeInstrument))
   }
 
-  const handleClosePosition = async () => {
-    if (!session || !bars || !position) return
-    const spec = getContractSpec(session.instrument)
-    const result = closePosition(bars, position, cursorIndex, spec, session.account.commission_per_contract)
-    positionRef.current = null
-    setPosition(null)
+  // The feed a book's trade is judged on, and where the shared cursor is in it: the
+  // latest bar of THAT instrument at or before the cursor time (never after).
+  const cursorIn = (symbol: string): { feed: Bar[]; index: number } | null => {
+    const feed = symbol === activeInstrument ? bars : feedsRef.current[symbol]
+    if (!feed || feed.length === 0) return null
+    if (symbol === activeInstrument) return { feed, index: cursorIndex }
+    const index = lastIndexAtOrBefore(feed, cursorTimeRef.current ?? Number.POSITIVE_INFINITY)
+    return index >= 0 ? { feed, index } : null
+  }
+  const commissionOf = (symbol: string) => session?.account.commissions?.[symbol] ?? session?.account.commission_per_contract ?? 0
+
+  const handleClosePosition = async (symbol: string = activeInstrument) => {
+    const pos = booksRef.current[symbol]?.position
+    const at = cursorIn(symbol)
+    if (!session || !at || !pos) return
+    const result = closePosition(at.feed, pos, at.index, getContractSpec(symbol), commissionOf(symbol))
+    writeBook(symbol, { position: null })
     // Journal BEFORE persisting -- see journalClosedTrade's own comment on
     // why the order matters (both endpoints race on the same session.json
     // otherwise).
-    await journalClosedTrade(result)
+    await journalClosedTrade(result, symbol)
     persist()
   }
 
@@ -1157,30 +1284,31 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // position's trade -- the server merges it with the remainder's later exits,
   // so R and P&L are computed across all of them. The remainder keeps the same
   // entry/SL/TP. With no quantity given it closes half (the Shift hotkey).
-  const handlePartialClose = async (quantity?: number) => {
-    if (!session || !bars || !position) return
-    const qty = quantity ?? Math.max(1, Math.round(position.contracts / 2))
-    const refusal = partialCloseRefusal(qty, position.contracts)
+  const handlePartialClose = async (quantity?: number, symbol: string = activeInstrument) => {
+    const pos = booksRef.current[symbol]?.position
+    const at = cursorIn(symbol)
+    if (!session || !at || !pos) return
+    const qty = quantity ?? Math.max(1, Math.round(pos.contracts / 2))
+    const refusal = partialCloseRefusal(qty, pos.contracts)
     if (refusal) {
       setOrderNotice(refusal)
       return
     }
-    const spec = getContractSpec(session.instrument)
-    const result = closePositionPartialAtMarket(bars, position, cursorIndex, qty, spec, session.account.commission_per_contract)
-    positionRef.current = result.remainingPosition
-    setPosition(result.remainingPosition)
-    setToast(`Closed ${qty} of ${position.contracts} at ${fmtPrice(result.closedTrade.exitPrice, session.instrument)} | ${fmtSignedUsd(result.closedTrade.pnlUsd)}`)
-    await journalClosedTrade(result.closedTrade)
+    const result = closePositionPartialAtMarket(at.feed, pos, at.index, qty, getContractSpec(symbol), commissionOf(symbol))
+    writeBook(symbol, { position: result.remainingPosition })
+    setToast(`Closed ${qty} of ${pos.contracts} ${symbol} at ${fmtPrice(result.closedTrade.exitPrice, symbol)} | ${fmtSignedUsd(result.closedTrade.pnlUsd)}`)
+    await journalClosedTrade(result.closedTrade, symbol)
     persist()
   }
 
   // FXR_V2_SPEC.md 3.2/3.6: set, move or remove one of the position's two
   // levels. Every change is persisted; a level on the wrong side of the market
   // is refused (it would fill on the next bar) and the line snaps back.
-  const setLevel = (kind: LevelKind, price: number | null, source: 'ghost' | 'placed') => {
-    if (!session || !bars || !bars[cursorIndex] || !positionRef.current) return
-    const pos = positionRef.current
-    const spec = getContractSpec(session.instrument)
+  const setLevel = (kind: LevelKind, price: number | null, source: 'ghost' | 'placed', symbol: string = activeInstrument) => {
+    const pos = booksRef.current[symbol]?.position
+    const at = cursorIn(symbol)
+    if (!session || !at || !at.feed[at.index] || !pos) return
+    const spec = getContractSpec(symbol)
     let toastText: string | null = null
     let next: OpenPosition
     if (price === null) {
@@ -1188,19 +1316,18 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       toastText = kind === 'sl' ? 'Stop loss removed' : 'Take profit removed'
     } else {
       const snapped = roundToTick(price, spec.tickSize)
-      const refusal = levelRefusal(pos.side, kind, snapped, bars[cursorIndex].close, spec.tickSize)
+      const refusal = levelRefusal(pos.side, kind, snapped, at.feed[at.index].close, spec.tickSize)
       if (refusal) {
         setOrderNotice(refusal)
         setLineNonce((n) => n + 1)
         return
       }
       const r = levelReadout(pos.side, pos.entryPrice, snapped, pos.contracts, spec)
-      toastText = `${kind === 'sl' ? 'Stop loss' : 'Take profit'} ${source === 'ghost' ? 'set' : 'moved'} to ${fmtPrice(snapped, session.instrument)} | ${fmtSignedUsd(r.pnlUsd)} | ${r.ticks} ticks`
+      toastText = `${kind === 'sl' ? 'Stop loss' : 'Take profit'} ${source === 'ghost' ? 'set' : 'moved'} to ${fmtPrice(snapped, symbol)} | ${fmtSignedUsd(r.pnlUsd)} | ${r.ticks} ticks`
       next =
         kind === 'sl' ? { ...pos, slPrice: snapped, ghostSl: null } : { ...pos, tpPrice: snapped, ghostTp: null }
     }
-    positionRef.current = next
-    setPosition(next)
+    writeBook(symbol, { position: next })
     setLineNonce((n) => n + 1)
     persist()
     if (toastText) setToast(toastText)
@@ -1211,7 +1338,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (!session || !bars || !positionRef.current) return
     const pos = positionRef.current
     // Default distances are measured from the entry, as the originals were.
-    const g = ghostLevels(pos.side, pos.entryPrice, getContractSpec(session.instrument), averageTrueRange(bars, cursorIndex))
+    const g = ghostLevels(pos.side, pos.entryPrice, getContractSpec(activeInstrument), averageTrueRange(bars, cursorIndex))
     const next = kind === 'sl' ? { ...pos, ghostSl: g.sl } : { ...pos, ghostTp: g.tp }
     positionRef.current = next
     setPosition(next)
@@ -1219,15 +1346,16 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }
 
   // One-click break-even: the stop to the entry price, once the trade is in profit.
-  const handleBreakeven = () => {
-    if (!session || !bars || !bars[cursorIndex] || !positionRef.current) return
-    const pos = positionRef.current
-    const refusal = breakevenRefusal(pos, bars[cursorIndex].close)
+  const handleBreakeven = (symbol: string = activeInstrument) => {
+    const pos = booksRef.current[symbol]?.position
+    const at = cursorIn(symbol)
+    if (!session || !at || !at.feed[at.index] || !pos) return
+    const refusal = breakevenRefusal(pos, at.feed[at.index].close)
     if (refusal) {
       setOrderNotice(refusal)
       return
     }
-    setLevel('sl', pos.entryPrice, 'placed')
+    setLevel('sl', pos.entryPrice, 'placed', symbol)
   }
 
   // FXR_SPEC.md phase F4's optional toggles: FLAT, these arm the toggle
@@ -1267,15 +1395,17 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return usd !== null ? riskPctFromUsd(usd, balanceFor(riskBasis, balances)) : 1
   })()
   const defaultRiskUsd = balances ? Math.round((defaultRiskPct / 100) * balanceFor(riskBasis, balances) * 100) / 100 : null
-  const positionCap = session?.account.max_contracts ?? null
+  // What the dialog, the tool's sizing and the quantity box bound against: the cap
+  // less what is open in the other instrument (null = uncapped).
+  const positionCap = capRoom(session?.account.max_contracts ?? null, openContractsElsewhere(books, activeInstrument))
 
   // What the dialog (and its rules) need to know about the market right now --
   // the cursor bar's close and the ATR up to it, never a later bar.
   const buildOrderContext = (): OrderContext | null => {
     if (!session || !balances || !bars || !bars[cursorIndex]) return null
     return {
-      instrument: session.instrument,
-      spec: getContractSpec(session.instrument),
+      instrument: activeInstrument,
+      spec: getContractSpec(activeInstrument),
       mark: bars[cursorIndex].close,
       balances,
       cap: positionCap,
@@ -1299,10 +1429,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const positionToolSpec = useMemo<PositionToolSpec | null>(
     () =>
       positionTool && session
-        ? { levels: positionTool, spec: getContractSpec(session.instrument), sizing: { riskUsd: defaultRiskUsd, cap: positionCap } }
+        ? { levels: positionTool, spec: getContractSpec(activeInstrument), sizing: { riskUsd: defaultRiskUsd, cap: positionCap } }
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positionTool, session?.instrument, defaultRiskUsd, positionCap],
+    [positionTool, activeInstrument, defaultRiskUsd, positionCap],
   )
 
   // Opening the dialog (the top bar's Place order, Shift+N, the tool's menu)
@@ -1321,7 +1451,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // its reason -- this re-checks, as every entry path does.
   const placeOrder = (order: OrderRequest, journal: boolean) => {
     if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return
-    const capMsg = positionCapMessage(order.contracts, session.account.max_contracts, 'Order')
+    const cc = capContext()
+    const capMsg = positionCapMessage(order.contracts, session.account.max_contracts, 'Order', cc.elsewhere, cc.label)
     if (capMsg) {
       setOrderNotice(capMsg)
       return
@@ -1333,7 +1464,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
     setOrderNotice(null)
     const marketBar = bars[cursorIndex]
-    const spec = getContractSpec(session.instrument)
+    const spec = getContractSpec(activeInstrument)
     const orderJournal: OrderJournal = { tags: order.tags, checklist: order.checklist, notes: '' }
     const verb = order.side === 'long' ? 'Buy' : 'Sell'
     if (order.type === 'market') {
@@ -1360,7 +1491,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       }
       positionRef.current = newPosition
       setPosition(newPosition)
-      setToast(`${verb} ${order.contracts} ${session.instrument} at market, ${fmtPrice(newPosition.entryPrice, session.instrument)}`)
+      setToast(`${verb} ${order.contracts} ${activeInstrument} at market, ${fmtPrice(newPosition.entryPrice, activeInstrument)}`)
     } else {
       const working: WorkingOrder = {
         id: crypto.randomUUID(),
@@ -1380,7 +1511,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       }
       workingOrdersRef.current = [working]
       setWorkingOrders([working])
-      setToast(`${verb} ${order.type} ${order.contracts} ${session.instrument} placed at ${fmtPrice(order.entryPrice, session.instrument)}`)
+      setToast(`${verb} ${order.type} ${order.contracts} ${activeInstrument} placed at ${fmtPrice(order.entryPrice, activeInstrument)}`)
     }
     setPositionTool(null)
     setOrderDialogOpen(false)
@@ -1390,9 +1521,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (journal && order.type === 'market') openOpenEntryInJournal()
   }
 
-  const cancelWorkingOrder = () => {
-    workingOrdersRef.current = []
-    setWorkingOrders([])
+  const cancelWorkingOrder = (symbol: string = activeInstrument) => {
+    writeBook(symbol, { workingOrders: [] })
     persist()
   }
 
@@ -1403,13 +1533,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // SL/TP rides along unless Scalper Mode is armed (G4), which brackets it.
   const handleEmptyAreaMenuItems = (info: { time: number; price: number }): ContextMenuEntry[] => {
     if (!session || !bars || !bars[cursorIndex] || !flat || sessionEnded) return []
-    const spec = getContractSpec(session.instrument)
+    const spec = getContractSpec(activeInstrument)
     const marketPrice = bars[cursorIndex].close
-    return rightClickOrders(info.price, marketPrice, quickQty, session.instrument, spec).map((o) => ({
+    return rightClickOrders(info.price, marketPrice, quickQty, activeInstrument, spec).map((o) => ({
       label: withBracketsNote(o.label, armedScalperBrackets(o.side, o.price, o.contracts, spec)),
       onSelect: () => {
         if (!bars[cursorIndex]) return
-        const capMsg = positionCapMessage(o.contracts, session.account.max_contracts, 'Order')
+        const cc = capContext()
+        const capMsg = positionCapMessage(o.contracts, session.account.max_contracts, 'Order', cc.elsewhere, cc.label)
         if (capMsg) {
           setOrderNotice(capMsg)
           return
@@ -1450,26 +1581,31 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // chart-side changes needed to show it with the existing entry marker/
   // trade-overlay conventions, now also carrying real SL/TP when the
   // position has them (F3).
-  const openPositionRecord: TradeRecord | null =
-    position && session && bars && bars[cursorIndex]
-      ? {
-          ...openPositionAsTradeRecord({
-            position,
-            instrument: session.instrument,
-            cursorIndex,
-            markPrice: bars[cursorIndex].close,
-            cursorTime: bars[cursorIndex].time,
-          }),
-          // Counted in the session's base timeframe, like every journaled trade.
-          bars_held: heldBaseBars(bars, position.entryTime, bars[cursorIndex].time, BASE_TF_SECONDS[session.base_timeframe] ?? 60),
-        }
-      : null
+  // `symbol`'s open position as a TradeRecord, marked at the latest bar of THAT
+  // instrument at or before the shared cursor.
+  const openRecordFor = (symbol: string): TradeRecord | null => {
+    const pos = books[symbol]?.position
+    const at = cursorIn(symbol)
+    const bar = at?.feed[at.index]
+    if (!pos || !session || !at || !bar) return null
+    return {
+      ...openPositionAsTradeRecord({ position: pos, instrument: symbol, cursorIndex: at.index, markPrice: bar.close, cursorTime: bar.time }),
+      // Counted in the session's base timeframe, like every journaled trade.
+      bars_held: heldBaseBars(at.feed, pos.entryTime, bar.time, BASE_TF_SECONDS[session.base_timeframe] ?? 60),
+    }
+  }
+  const openPositionRecord: TradeRecord | null = openRecordFor(activeInstrument)
 
   // A trade with contracts still open (a partial close) is drawn through the
   // live position record instead -- not twice.
   const chartTrades: TradeRecord[] = useMemo(
-    () => [...(manualTrades ?? []).filter((t) => tradeOpenContracts(t) === 0), ...(openPositionRecord ? [openPositionRecord] : [])],
-    [manualTrades, openPositionRecord],
+    // The chart plots one instrument's price scale: that instrument's trades only.
+    () => [
+      ...(manualTrades ?? []).filter((t) => tradeOpenContracts(t) === 0 && (t.instrument ?? primarySymbol) === activeInstrument),
+      ...(openPositionRecord ? [openPositionRecord] : []),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [manualTrades, openPositionRecord, activeInstrument],
   )
 
   // FXR_V2_SPEC.md section 2/3: the position line, its SL/TP (placed, or ghost
@@ -1478,7 +1614,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const markPrice = bars?.[cursorIndex]?.close ?? null
   const orderLines = useMemo<OrderLineSpec[]>(() => {
     if (!session || prefs.hideTrades || markPrice === null) return []
-    const spec = getContractSpec(session.instrument)
+    const spec = getContractSpec(activeInstrument)
     const lines: OrderLineSpec[] = []
     if (position) {
       const base = { side: position.side, entryPrice: position.entryPrice, contracts: position.contracts, spec }
@@ -1502,7 +1638,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return lines
     // lineNonce forces a fresh list after a refused drag so ChartKL re-syncs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.instrument, prefs.hideTrades, markPrice, position, workingOrders, lineNonce])
+  }, [activeInstrument, prefs.hideTrades, markPrice, position, workingOrders, lineNonce])
 
   // A line's gesture. Pressing one pauses the replay (the market must not run
   // under a drag); releasing places the level -- or refuses it (setLevel).
@@ -1527,7 +1663,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         workingOrdersRef.current = updated
         setWorkingOrders(updated)
         persist()
-      } else cancelWorkingOrder()
+      } else cancelWorkingOrder(activeInstrument)
     }
   }
 
@@ -1536,19 +1672,19 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const getOrderLineMenu = (id: string): ContextMenuEntry[] => {
     setIsPlaying(false)
     if (id === 'pos' && position) {
-      const items: ContextMenuEntry[] = [{ label: 'Close position', onSelect: () => void handleClosePosition() }]
+      const items: ContextMenuEntry[] = [{ label: 'Close position', onSelect: () => void handleClosePosition(activeInstrument) }]
       const choices = partialCloseChoices(position.contracts)
       if (choices.length > 0) {
-        items.push(...choices.map((q) => ({ label: `Close ${q} of ${position.contracts}`, onSelect: () => void handlePartialClose(q) })))
+        items.push(...choices.map((q) => ({ label: `Close ${q} of ${position.contracts}`, onSelect: () => void handlePartialClose(q, activeInstrument) })))
       }
-      items.push({ separator: true }, { label: 'Move stop to break-even', onSelect: handleBreakeven })
+      items.push({ separator: true }, { label: 'Move stop to break-even', onSelect: () => handleBreakeven(activeInstrument) })
       if (position.slPrice === null && position.ghostSl === null) items.push({ label: 'Add stop loss', onSelect: () => addGhost('sl') })
       if (position.tpPrice === null && position.ghostTp === null) items.push({ label: 'Add take profit', onSelect: () => addGhost('tp') })
       return items
     }
     if (id === 'pos-sl') {
       return [
-        { label: 'Move to break-even', onSelect: handleBreakeven },
+        { label: 'Move to break-even', onSelect: () => handleBreakeven(activeInstrument) },
         { label: 'Remove stop loss', onSelect: () => setLevel('sl', null, 'placed'), destructive: true },
       ]
     }
@@ -1556,7 +1692,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (id === 'ghost-sl') return [{ label: 'Remove stop loss', onSelect: () => setLevel('sl', null, 'placed'), destructive: true }]
     if (id === 'ghost-tp') return [{ label: 'Remove take profit', onSelect: () => setLevel('tp', null, 'placed'), destructive: true }]
     if (id.startsWith('order-') && !id.endsWith('-sl') && !id.endsWith('-tp')) {
-      return [{ label: 'Cancel order', onSelect: cancelWorkingOrder, destructive: true }]
+      return [{ label: 'Cancel order', onSelect: () => cancelWorkingOrder(activeInstrument), destructive: true }]
     }
     return []
   }
@@ -1612,7 +1748,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     position && session && !(manualTrades ?? []).some((t) => t.trade_key === position.tradeKey)
       ? {
           tradeKey: position.tradeKey,
-          instrument: session.instrument,
+          instrument: activeInstrument,
           side: position.side,
           contracts: position.initialContracts,
           entryTime: position.entryTime,
@@ -1633,32 +1769,50 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     persist()
   }
 
-  const workingOrderRow: WorkingOrderRow | null =
-    workingOrders[0] && session
-      ? {
-          instrument: session.instrument,
-          side: workingOrders[0].side,
-          orderType: workingOrders[0].orderType,
-          price: workingOrders[0].price,
-          contracts: workingOrders[0].contracts,
-          slPrice: workingOrders[0].slPrice,
-          tpPrice: workingOrders[0].tpPrice,
-        }
-      : null
+  // Every instrument's position and orders, for the panel (one row each).
+  const symbols = session?.assets ?? []
+  const workingOrderRows: WorkingOrderRow[] = symbols.flatMap((symbol) =>
+    (books[symbol]?.workingOrders ?? []).map((o) => ({
+      instrument: symbol,
+      side: o.side,
+      orderType: o.orderType,
+      price: o.price,
+      contracts: o.contracts,
+      slPrice: o.slPrice,
+      tpPrice: o.tpPrice,
+    })),
+  )
+  const positionRows: PositionRow[] = symbols.flatMap((symbol) => {
+    const pos = books[symbol]?.position
+    const record = pos ? openRecordFor(symbol) : null
+    return pos && record
+      ? [
+          {
+            instrument: symbol,
+            side: pos.side,
+            contracts: pos.contracts,
+            entryPrice: pos.entryPrice,
+            slPrice: pos.slPrice,
+            tpPrice: pos.tpPrice,
+            pnlUsd: record.pnl_usd,
+            rMultiple: record.r_multiple,
+          },
+        ]
+      : []
+  })
+  const holdingSymbols = symbols.filter((s) => books[s]?.position || (books[s]?.workingOrders.length ?? 0) > 0)
 
-  const positionRow: PositionRow | null =
-    position && openPositionRecord && session
-      ? {
-          instrument: session.instrument,
-          side: position.side,
-          contracts: position.contracts,
-          entryPrice: position.entryPrice,
-          slPrice: position.slPrice,
-          tpPrice: position.tpPrice,
-          pnlUsd: openPositionRecord.pnl_usd,
-          rMultiple: openPositionRecord.r_multiple,
-        }
-      : null
+  // Switching the chart's symbol touches nothing but the view: the cursor (a time),
+  // the account and every book stay; the plan on the chart is for the other symbol.
+  const switchSymbol = (symbol: string) => {
+    if (!session || symbol === activeRef.current || !session.assets.includes(symbol)) return
+    setIsPlaying(false)
+    setPositionTool(null)
+    setOrderDialogOpen(false)
+    activeRef.current = symbol
+    setActiveSymbol(symbol)
+    setLineNonce((n) => n + 1)
+  }
 
   // The earliest the cursor may go: the discipline lock's floor, and never before the
   // session's own start (the backend refuses to save a cursor before it, so a rewind
@@ -1761,7 +1915,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const applyHistoryStep = (step: ReturnType<typeof undo>) => {
     if (!step || !session) return
     drawingHistoryRef.current = step.history
-    useKLDrawingStore.getState().setOverlaysForInstrument(session.instrument, step.restore)
+    useKLDrawingStore.getState().setOverlaysForInstrument(activeInstrument, step.restore)
     klChartRef.current?.reloadDrawings()
     setHistoryVersion((v) => v + 1)
   }
@@ -1773,7 +1927,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (!url || !session) return
     const a = document.createElement('a')
     a.href = url
-    a.download = `${session.instrument}-${fmtEtDateTime(cursorTimeRef.current ?? session.cursor_time).replace(/[: ]/g, '-')}.jpg`
+    a.download = `${activeInstrument}-${fmtEtDateTime(cursorTimeRef.current ?? session.cursor_time).replace(/[: ]/g, '-')}.jpg`
     a.click()
   }
 
@@ -1801,10 +1955,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     sessionBuy: () => enterPosition('long'),
     sessionSell: () => enterPosition('short'),
     sessionClose: () => {
-      if (position && !createTrade.isPending) handleClosePosition()
+      if (position && !createTrade.isPending) handleClosePosition(activeInstrument)
     },
     sessionCloseHalf: () => {
-      if (position && position.contracts >= 2 && !createTrade.isPending) handlePartialClose()
+      if (position && position.contracts >= 2 && !createTrade.isPending) handlePartialClose(undefined, activeInstrument)
     },
     sessionNewTrade: () => openOrderDialog(),
     sessionNewMarket: () => openOrderDialog('market'),
@@ -1843,7 +1997,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }
 
   const cursorBar = bars?.[cursorIndex]
-  const unrealizedPnl = openPositionRecord?.pnl_usd ?? 0
+  // Open P&L across every instrument, each marked in its own feed (one account).
+  const marks: Record<string, number | undefined> = {}
+  for (const symbol of symbols) {
+    const at = cursorIn(symbol)
+    marks[symbol] = at?.feed[at.index]?.close
+  }
+  const unrealizedPnl = sessionUnrealizedPnl(books, marks)
   const hasNotices = orderNotice !== null || toast !== null || banner !== null
 
   return (
@@ -1908,7 +2068,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
       <SessionChartToolbar
         assets={session.assets}
-        instrument={session.instrument}
+        instrument={activeInstrument}
+        onInstrumentChange={session.assets.length > 1 ? switchSymbol : undefined}
+        holding={holdingSymbols}
         chartTimeframe={chartTf}
         onChartTimeframeChange={handleChartTimeframeChange}
         goTo={{
@@ -1951,7 +2113,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         <div className="relative min-h-0 min-w-0 flex-1">
           <ChartKL
             ref={klChartRef}
-            instrument={session.instrument}
+            instrument={activeInstrument}
             timeframe={chartTf}
             from={chartHistory?.from ?? null}
             to={chartHistory?.to ?? null}
@@ -2023,12 +2185,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 </p>
               )}
               {orderNotice && (
-                <p className="pointer-events-auto flex items-start gap-2 rounded bg-surface-2 px-3 py-2 text-xs text-text-muted shadow-lg" role="status">
+                <p className="propbt-fade-in pointer-events-auto flex max-w-xl items-center gap-2 rounded bg-surface-2 py-1 pl-3 pr-1 text-xs text-text-muted shadow-lg" role="status">
                   <span>{orderNotice}</span>
                   <button
                     onClick={() => setOrderNotice(null)}
                     aria-label="Dismiss"
-                    className="rounded px-1 text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    className="h-7 w-7 shrink-0 rounded text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   >
                     &times;
                   </button>
@@ -2099,7 +2261,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
       {magnifyActive && magnifyBarTime !== null && (
         <MagnifierPanel
-          instrument={session.instrument}
+          instrument={activeInstrument}
           timeframe={chartTf}
           tfSeconds={chartTfSeconds}
           barTime={magnifyBarTime}
@@ -2113,14 +2275,15 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           height={clampPanelHeight(prefs.panelHeight || PANEL_DEFAULT_HEIGHT, window.innerHeight)}
           tab={prefs.panelTab}
           onTabChange={prefs.setPanelTab}
-          position={positionRow}
-          workingOrder={workingOrderRow}
+          positions={positionRows}
+          workingOrders={workingOrderRows}
+          activeInstrument={activeInstrument}
           trades={manualTrades ?? []}
           closing={createTrade.isPending}
-          onClosePosition={handleClosePosition}
-          onPartialClose={(qty) => void handlePartialClose(qty)}
-          onBreakeven={handleBreakeven}
-          onCancelOrder={cancelWorkingOrder}
+          onClosePosition={(symbol) => void handleClosePosition(symbol)}
+          onPartialClose={(symbol, qty) => void handlePartialClose(qty, symbol)}
+          onBreakeven={(symbol) => handleBreakeven(symbol)}
+          onCancelOrder={(symbol) => cancelWorkingOrder(symbol)}
           autoBreakeven={position ? position.autoBreakeven : armedAutoBreakeven}
           onAutoBreakevenChange={handleAutoBreakevenChange}
           trailingPoints={position ? position.trailingPoints : armedTrailingPoints}
@@ -2149,7 +2312,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onSell={() => enterPosition('short')}
           tradingDisabled={tradeBlock !== null}
           disabledReason={tradeBlock ?? ""}
-          quantity={{ value: quickQty, max: session.account.max_contracts ?? null, onChange: handleQuantityChange }}
+          quantity={{ value: quickQty, max: positionCap, onChange: handleQuantityChange }}
           scalper={{
             armed: scalper.armed,
             open: scalperOpen,
@@ -2159,9 +2322,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               onArmedChange: (armed) => setScalperArmed(session.id, armed),
               settings: scalper.settings,
               onChange: (patch) => patchScalper(session.id, patch),
-              preview: markPrice !== null ? scalperPreview(scalper.settings, markPrice, quickQty, getContractSpec(session.instrument)) : null,
+              preview: markPrice !== null ? scalperPreview(scalper.settings, markPrice, quickQty, getContractSpec(activeInstrument)) : null,
               quantity: quickQty,
-              instrument: session.instrument,
+              instrument: activeInstrument,
               onClose: () => setScalperOpen(false),
             },
           }}

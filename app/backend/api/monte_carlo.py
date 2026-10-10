@@ -23,13 +23,14 @@ def get_monte_carlo(
     session: Optional[str] = None,
     session_id: Optional[str] = None,
     hour_ny: Optional[int] = Query(None, ge=0, le=23),
+    instrument: Optional[str] = None,
 ) -> models.MonteCarloResponse:
     if method not in ("bootstrap", "shuffle"):
         raise HTTPException(status_code=400, detail=f"method must be bootstrap or shuffle, got {method!r}")
     try:
         return bundle_reader.get_monte_carlo(
             run_id, n_sims=n_sims, method=method, seed=seed, drawdown_budget_usd=drawdown_budget_usd,
-            tag=tag, setup=setup, grade=grade, session=session, session_id=session_id, hour_ny=hour_ny,
+            tag=tag, setup=setup, grade=grade, session=session, session_id=session_id, hour_ny=hour_ny, instrument=instrument,
         )
     except bundle_reader.RunNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))

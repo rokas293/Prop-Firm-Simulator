@@ -18,6 +18,7 @@ export function describeFilters(filters: TradeFilters): string {
   if (filters.setup !== null) return `setup = ${filters.setup}`
   if (filters.grade !== null) return `grade = ${filters.grade}`
   if (filters.sessionId !== null) return `backtest session = ${filters.sessionId.slice(0, 13)}`
+  if (filters.instrument !== null) return `instrument = ${filters.instrument}`
   if (filters.leg !== null) return `leg = ${filters.leg}`
   if (filters.session !== null) return `session = ${filters.session}`
   if (filters.side !== null) return `side = ${filters.side}`

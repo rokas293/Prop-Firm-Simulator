@@ -44,6 +44,9 @@ export interface TradeFilters {
   setup: string | null
   grade: string | null
   sessionId: string | null
+  // G7: one instrument of a multi-asset session (manual runs). Backend-filterable
+  // like the journal dimensions above; the prop verdict stays account-level.
+  instrument: string | null
 }
 
 export const EMPTY_FILTERS: TradeFilters = {
@@ -62,6 +65,7 @@ export const EMPTY_FILTERS: TradeFilters = {
   setup: null,
   grade: null,
   sessionId: null,
+  instrument: null,
 }
 
 // Extends the index signature so this is directly usable as fetch query
@@ -79,6 +83,7 @@ export interface TradeQueryParams extends Record<string, string | number | undef
   grade?: string
   session_id?: string
   hour_ny?: number
+  instrument?: string
 }
 
 // Converts the UI filter shape to /api/trades query params. The date ->
@@ -98,6 +103,7 @@ export function filtersToParams(f: TradeFilters): TradeQueryParams {
     setup: f.setup ?? undefined,
     grade: f.grade ?? undefined,
     session_id: f.sessionId ?? undefined,
+    instrument: f.instrument ?? undefined,
     // Same NY-hour the client-side compass filter computes; sending it lets
     // the server narrow too (identical result, applied again client-side).
     hour_ny: f.entryHourNy ?? undefined,
@@ -115,6 +121,7 @@ export function filtersToStatsParams(f: TradeFilters): TradeQueryParams {
     grade: f.grade ?? undefined,
     session: f.session ?? undefined,
     session_id: f.sessionId ?? undefined,
+    instrument: f.instrument ?? undefined,
     hour_ny: f.entryHourNy ?? undefined,
   }
 }

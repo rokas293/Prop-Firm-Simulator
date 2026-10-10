@@ -176,6 +176,8 @@ function GoToMenu({ goTo }: { goTo: GoToProps }) {
 export default function SessionChartToolbar({
   assets,
   instrument,
+  onInstrumentChange,
+  holding = [],
   chartTimeframe,
   onChartTimeframeChange,
   goTo,
@@ -190,7 +192,12 @@ export default function SessionChartToolbar({
   onScreenshot,
 }: {
   assets: string[]
+  // The charted instrument. With more than one asset the buttons below switch it
+  // (G7); the replay cursor, the account and every position are untouched by it.
   instrument: string
+  onInstrumentChange?: (symbol: string) => void
+  // Assets that hold an open position or a working order, marked on their button.
+  holding?: string[]
   // The chart's own timeframe (G5): independent of the step size, any of them can be chosen.
   chartTimeframe: string
   onChartTimeframeChange: (id: string) => void
@@ -207,23 +214,32 @@ export default function SessionChartToolbar({
 }) {
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 bg-bg px-2" role="toolbar" aria-label="Chart">
-      {/* The session's assets. Only the primary can be charted until MNQ and
-          MES share one cursor (phase G7), so the others show but are disabled. */}
+      {/* The session's assets: one cursor and one account, one chart at a time.
+          A dot marks an instrument with an open position or a working order. */}
       <div className="flex items-center gap-1" role="group" aria-label="Symbol">
-        {(assets.length > 0 ? assets : [instrument]).map((a) => (
-          <button
-            key={a}
-            type="button"
-            aria-pressed={a === instrument}
-            disabled={a !== instrument}
-            title={a === instrument ? `${a} (this session's chart)` : `${a}: multi-asset replay arrives in a later phase`}
-            className={`h-7 rounded px-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed ${
-              a === instrument ? 'text-text' : 'text-text-muted opacity-40'
-            }`}
-          >
-            {a}
-          </button>
-        ))}
+        {(assets.length > 0 ? assets : [instrument]).map((a) => {
+          const on = a === instrument
+          const switchable = !on && !!onInstrumentChange
+          return (
+            <button
+              key={a}
+              type="button"
+              aria-pressed={on}
+              disabled={!on && !switchable}
+              onClick={switchable ? () => onInstrumentChange?.(a) : undefined}
+              aria-label={holding.includes(a) ? `${a}, has an open position or order` : a}
+              title={on ? `${a} (on the chart)` : `Chart ${a} (the replay does not move)`}
+              className={`flex h-7 items-center gap-1 rounded px-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default ${
+                on ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2/50 hover:text-text'
+              }`}
+            >
+              {a}
+              {/* A fixed slot, so a position opening never moves the buttons beside it;
+                  neutral, as the accent is reserved for the active control. */}
+              <span aria-hidden className={`h-2 w-2 rounded-full ${holding.includes(a) ? 'bg-text-muted' : 'bg-transparent'}`} />
+            </button>
+          )
+        })}
       </div>
 
       <div className="mx-2" aria-hidden />

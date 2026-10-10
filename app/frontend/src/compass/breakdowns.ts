@@ -221,6 +221,10 @@ export function applyCompassFilters(trades: TradeRecord[], filters: TradeFilters
     const sessionId = filters.sessionId
     out = out.filter((t) => t.session_id === sessionId)
   }
+  if (filters.instrument !== null) {
+    const instrument = filters.instrument
+    out = out.filter((t) => t.instrument === instrument)
+  }
   if (filters.entryHourNy !== null) {
     const hour = filters.entryHourNy
     out = out.filter((t) => nyHourOfDay(t.entry_time) === hour)

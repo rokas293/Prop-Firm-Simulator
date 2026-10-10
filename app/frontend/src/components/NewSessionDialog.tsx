@@ -1,6 +1,6 @@
 // "New session" (FXR_V2_SPEC.md section 4, G6; layout after reference R8).
 //
-// QUICK: name, account balance, asset, a start and an end date with the
+// QUICK: name, account balance, assets (MNQ, MES or both: one cursor, one account), a start and an end date with the
 // instrument's data range under each, +1D / +1W / +1M to fill the end, and a
 // random start. Nothing about contracts or risk -- sizing happens per order.
 // ADVANCED adds commissions per instrument, the discipline lock, a strategy
@@ -20,7 +20,9 @@ import {
   DEFAULT_RANDOM_LENGTH_DAYS,
   DEFAULT_START_TIME,
   SPAN_DAYS,
+  assetsLabel,
   buildCreateRequest,
+  combinedRange,
   draftFromRules,
   endDateFor,
   groupMoney,
@@ -236,7 +238,9 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
   const [advanced, setAdvanced] = useState(false)
   const [name, setName] = useState('')
   const [balanceText, setBalanceText] = useState('50000')
-  const [asset, setAsset] = useState<(typeof ASSETS)[number]>('MNQ')
+  // Multi-select (G7): MNQ, MES or both. The first picked is the session's primary
+  // (the chart's first symbol); at least one stays selected.
+  const [assets, setAssets] = useState<string[]>(['MNQ'])
   const [startDate, setStartDate] = useState('')
   const [startTime, setStartTime] = useState(DEFAULT_START_TIME)
   const [endDate, setEndDate] = useState('')
@@ -259,12 +263,22 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
   }, [open, onClose])
 
   const balance = Number(balanceText.replace(/[^0-9.]/g, '')) || 0
-  const range = options?.ranges[asset]
+  // The assets share one cursor, so the window must lie in the data they all have.
+  const range = combinedRange(options?.ranges, assets)
+  const multi = assets.length > 1
   const presets = options?.presets ?? []
 
   const windowResult = useMemo(
-    () => resolveWindow({ startDate, startTime, endDate, range, asset }),
-    [startDate, startTime, endDate, range, asset],
+    () =>
+      resolveWindow({
+        startDate,
+        startTime,
+        endDate,
+        range,
+        asset: assetsLabel(assets),
+        dataOf: assets.length > 1 ? `the shared ${assetsLabel(assets)}` : undefined,
+      }),
+    [startDate, startTime, endDate, range, assets],
   )
   const lengthDays = Number(randomDays)
   const lengthError = randomStart ? randomLengthError(lengthDays) : undefined
@@ -275,8 +289,12 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
   const matched = rules ? matchingPreset(rules, balance, presets) : null
 
   const commissionFor = (sym: string) => commissionText[sym] ?? (options?.default_commissions[sym] ?? 1.3).toFixed(2)
-  const commissionValues = advanced ? { [asset]: Number(commissionFor(asset)) } : { [asset]: options?.default_commissions[asset] ?? 1.3 }
-  const commissionError = advanced && !(Number(commissionFor(asset)) >= 0 && commissionFor(asset).trim() !== '') ? 'Enter a commission of $0 or more.' : undefined
+  const commissionValues: Record<string, number> = Object.fromEntries(
+    assets.map((sym) => [sym, advanced ? Number(commissionFor(sym)) : (options?.default_commissions[sym] ?? 1.3)]),
+  )
+  const commissionError = advanced && assets.some((sym) => !(Number(commissionFor(sym)) >= 0 && commissionFor(sym).trim() !== '')) ? 'Enter a commission of $0 or more.' : undefined
+  const toggleAsset = (sym: string) =>
+    setAssets((cur) => (cur.includes(sym) ? (cur.length > 1 ? cur.filter((a) => a !== sym) : cur) : [...cur, sym]))
 
   // Everything that keeps Create disabled, in the order the fields appear. The footer
   // always states the first one -- even when its field is scrolled out of view -- and
@@ -293,7 +311,7 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
   }
   if (commissionError) blockers.push({ message: commissionError, field: 'commission' })
   if (advanced && propOn && ruleResult) {
-    const order = ['profitTarget', 'maxLoss', 'dailyLoss', 'consistency', 'cap', 'closeTime'] as const
+    const order = ['profitTarget', 'maxLoss', 'dailyLoss', 'consistency', 'cap', 'newsWindow', 'closeTime'] as const
     for (const key of order) {
       const message = ruleResult.errors[key]
       if (message) blockers.push({ message, field: key })
@@ -338,7 +356,7 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
     const body = buildCreateRequest({
       name,
       balance,
-      asset,
+      assets,
       window: randomStart ? null : windowResult.window,
       random: randomStart ? { days: lengthDays } : null,
       commissions: commissionValues,
@@ -387,14 +405,26 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
             <Field id="balance" label="Account balance">
               <MoneyInput value={balanceText} onChange={(raw) => setBalanceText(raw.split('.')[0])} label="Account balance" />
             </Field>
-            <Field label="Asset">
-              <select value={asset} onChange={(e) => setAsset(e.target.value as (typeof ASSETS)[number])} aria-label="Asset" className="propbt-input w-full">
-                {ASSETS.map((sym) => (
-                  <option key={sym} value={sym}>
-                    {sym}
-                  </option>
-                ))}
-              </select>
+            <Field label="Assets" hint={multi ? 'One cursor and one account; the position cap counts both.' : undefined}>
+              <div role="group" aria-label="Assets" className="flex items-center gap-2">
+                {ASSETS.map((sym) => {
+                  const on = assets.includes(sym)
+                  return (
+                    <button
+                      key={sym}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={on}
+                      aria-label={sym}
+                      title={on && assets.length === 1 ? 'A session needs at least one asset' : undefined}
+                      onClick={() => toggleAsset(sym)}
+                      className={`${CHIP} ${on ? CHIP_ON : ''}`}
+                    >
+                      {sym}
+                    </button>
+                  )
+                })}
+              </div>
             </Field>
           </div>
 
@@ -457,15 +487,17 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
           {advanced && (
             <>
               <Section title="Commissions">
-                <Field id="commission" label={`${asset} · per contract, round turn`} error={commissionError}>
-                  <MoneyInput
-                    value={commissionFor(asset)}
-                    onChange={(raw) => setCommissionText((c) => ({ ...c, [asset]: raw }))}
-                    label={`${asset} commission per contract`}
-                    invalid={!!commissionError}
-                    className="max-w-48"
-                  />
-                </Field>
+                {assets.map((sym, i) => (
+                  <Field key={sym} id={i === 0 ? 'commission' : `commission-${sym}`} label={`${sym} · per contract, round turn`} error={i === 0 ? commissionError : undefined}>
+                    <MoneyInput
+                      value={commissionFor(sym)}
+                      onChange={(raw) => setCommissionText((c) => ({ ...c, [sym]: raw }))}
+                      label={`${sym} commission per contract`}
+                      invalid={!!commissionError}
+                      className="max-w-48"
+                    />
+                  </Field>
+                ))}
               </Section>
 
               <Section title="Discipline">
@@ -612,10 +644,25 @@ export default function NewSessionDialog({ open, onClose }: { open: boolean; onC
                       )}
                       <ToggleRow
                         label="No news trading"
-                        hint="Saved with the session; enforced once the economic calendar lands."
+                        hint="No entries within a window either side of a high-impact economic event."
                         checked={draft.noNews}
                         onChange={(v) => patch({ noNews: v })}
                       />
+                      {draft.noNews && (
+                        <Field id="newsWindow" label="News window (minutes either side)" error={errors.newsWindow}>
+                          <input
+                            type="number"
+                            min={1}
+                            max={120}
+                            step={1}
+                            value={draft.newsWindow}
+                            onChange={(e) => patch({ newsWindow: e.target.value })}
+                            aria-label="News window in minutes"
+                            aria-invalid={errors.newsWindow ? true : undefined}
+                            className="propbt-input w-32"
+                          />
+                        </Field>
+                      )}
                     </div>
                   </div>
                 )}

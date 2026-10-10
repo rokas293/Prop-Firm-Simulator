@@ -4,6 +4,7 @@ import type { PropPreset, PropRules } from '../api/types'
 import { etWallTimeToUnix } from '../timeFormat'
 import {
   buildCreateRequest,
+  combinedRange,
   describeRules,
   draftFromRules,
   endDateFor,
@@ -146,6 +147,7 @@ const TOPSTEP: PropRules = {
   no_overnight: false,
   no_weekend: false,
   no_news: false,
+  news_window_minutes: 5,
   close_time: '16:00',
 }
 const PRESET: PropPreset = { id: 'topstep_50k', label: 'Topstep 50k', starting_balance: 50000, rules: TOPSTEP }
@@ -217,7 +219,7 @@ describe('describeRules', () => {
     ])
     expect(
       describeRules({ ...TOPSTEP, max_loss_type: 'static', daily_loss_limit: null, consistency_pct: null, max_contracts: null, no_overnight: true, no_news: true }),
-    ).toEqual(['Target $3,000', 'Max loss $2,000 (static)', 'No overnight holding', 'No news trading'])
+    ).toEqual(['Target $3,000', 'Max loss $2,000 (static)', 'No overnight holding', 'No entries within 5 min of high-impact news'])
   })
 })
 
@@ -227,7 +229,7 @@ describe('buildCreateRequest', () => {
   const base = {
     name: '  NY open reps ',
     balance: 25000,
-    asset: 'MES',
+    assets: ['MES'],
     window: { start: 100, end: 200 },
     random: null,
     commissions: { MES: 1.3 },
@@ -243,6 +245,11 @@ describe('buildCreateRequest', () => {
     expect(r).not.toHaveProperty('risk_per_trade_percent')
     expect(r.prop_ruleset).toBeUndefined()
     expect(r.random_start).toBeUndefined()
+  })
+
+  it('a session of both micros sends both assets, the first as primary, each with its commission', () => {
+    const r = buildCreateRequest({ ...base, checklist: [], assets: ['MNQ', 'MES'], commissions: { MNQ: 1.1, MES: 1.5 } })
+    expect(r).toMatchObject({ assets: ['MNQ', 'MES'], commission_per_contract: 1.1, commissions: { MNQ: 1.1, MES: 1.5 } })
   })
 
   it('trims and drops blank checklist rules', () => {
@@ -287,5 +294,49 @@ describe('typed field text', () => {
     expect(normalizeClock('9:30')).toBe('09:30')
     expect(normalizeClock('16:00')).toBe('16:00')
     expect(normalizeClock('16:0')).toBe('16:0')
+  })
+})
+
+// ------------------------------------------------------------ multi-asset
+
+describe('combinedRange', () => {
+  const ranges = { MNQ: { min: 100, max: 900 }, MES: { min: 300, max: 700 } }
+  it('is the data every selected asset has: the latest first bar to the earliest last bar', () => {
+    expect(combinedRange(ranges, ['MNQ', 'MES'])).toEqual({ min: 300, max: 700 })
+    expect(combinedRange(ranges, ['MNQ'])).toEqual({ min: 100, max: 900 })
+  })
+  it('is unknown until the ranges load or when an asset has none', () => {
+    expect(combinedRange(undefined, ['MNQ'])).toBeUndefined()
+    expect(combinedRange(ranges, ['MNQ', 'ZN'])).toBeUndefined()
+    expect(combinedRange(ranges, [])).toBeUndefined()
+  })
+})
+
+describe('the news window in the rule builder', () => {
+  it('is off, and 5 minutes, by default; saved with the rules when news trading is restricted', () => {
+    const d = draftFromRules(TOPSTEP)
+    expect(d.newsWindow).toBe('5')
+    expect(rulesFromDraft({ ...d, noNews: true, newsWindow: '15' }, 50000).rules).toMatchObject({ no_news: true, news_window_minutes: 15 })
+    expect(rulesFromDraft(d, 50000).rules).toMatchObject({ no_news: false, news_window_minutes: 5 })
+  })
+  it('wants a whole number of minutes from 1 to 120 once restricted, and says so', () => {
+    const d = { ...draftFromRules(TOPSTEP), noNews: true }
+    for (const bad of ['', '0', '2.5', '121', 'abc']) {
+      const r = rulesFromDraft({ ...d, newsWindow: bad }, 50000)
+      expect(r.rules).toBeNull()
+      expect(r.errors.newsWindow).toMatch(/1 to 120/)
+    }
+    // ... and is not judged while the restriction is off.
+    expect(rulesFromDraft({ ...draftFromRules(TOPSTEP), newsWindow: 'abc' }, 50000).rules).not.toBeNull()
+  })
+  it('is described with the window', () => {
+    expect(describeRules({ ...TOPSTEP, no_news: true, news_window_minutes: 10 })).toContain('No entries within 10 min of high-impact news')
+  })
+})
+
+describe('resolveWindow over a shared range', () => {
+  it('names the shared data in its refusals', () => {
+    const r = resolveWindow({ ...input({ startDate: '2021-07-01' }), asset: 'MNQ and MES', dataOf: 'the shared MNQ and MES' })
+    expect(r.errors.start).toBe('Start is before the shared MNQ and MES first data (15 Jul 2021).')
   })
 })

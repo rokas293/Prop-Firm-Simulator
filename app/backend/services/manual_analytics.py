@@ -33,6 +33,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from app.backend import models
+from app.backend.services import bar_service
 from app.backend.services import bt_session_service as bts
 from app.backend.services import prop_presets
 from app.backend.services.bundle_reader import RunNotFound, filter_trades_frame
@@ -81,7 +82,8 @@ def _sessions_in_scope(run_id: str) -> List[models.BacktestSessionDetail]:
         except bts.SessionNotFound:
             raise RunNotFound(run_id)
     summaries = bts.list_sessions(include_archived=True)
-    return [bts.get_session(s.id) for s in summaries if s.instrument == scope.instrument]
+    # A multi-asset session belongs to the pool of each of its assets (G7).
+    return [bts.get_session(s.id) for s in summaries if scope.instrument in (s.assets or [s.instrument])]
 
 
 def _empty_frame() -> pd.DataFrame:
@@ -97,6 +99,9 @@ def _build_frame(run_id: str, sessions: List[models.BacktestSessionDetail]) -> p
     rows = []
     for s in sessions:
         for t in bts.list_trades(s.id):
+            # A pooled scope plots one instrument's price scale: only that instrument's trades.
+            if scope.kind == "all" and t.instrument != scope.instrument:
+                continue
             d = t.model_dump()
             ts = pd.Timestamp(d["entry_time"], unit="s", tz="UTC")
             day = trading_day_of(ts, sessions_cfg)
@@ -186,10 +191,51 @@ def session_engine_config(session: models.BacktestSessionDetail) -> PropRulesCon
     return prop_presets.engine_config(acct.prop_rules, acct.starting_balance, acct.commissions)
 
 
+def _trade_span(t) -> Tuple[pd.Timestamp, pd.Timestamp]:
+    """First entry to last exit of a trade."""
+    return t.entry_time, max(l.ts for l in _legs(t))
+
+
+def _units(rows: List) -> List[List[int]]:
+    """Positions of `rows` grouped into time-disjoint units, oldest first. A unit
+    is one trade, or -- when positions in two instruments were open together --
+    all the trades that overlap one another (their open P&L adds up, so they are
+    walked as a whole). Same-instrument trades never overlap (one position at a
+    time), so a single-asset session is always one trade per unit."""
+    spans = [_trade_span(t) for t in rows]
+    order = sorted(range(len(rows)), key=lambda i: (spans[i][0], i))
+    units: List[List[int]] = []
+    unit_end = None
+    for i in order:
+        start, end = spans[i]
+        if units and unit_end is not None and start < unit_end:
+            units[-1].append(i)
+            unit_end = max(unit_end, end)
+        else:
+            units.append([i])
+            unit_end = end
+    return units
+
+
+def _minute_marks(instrument: str, start: pd.Timestamp, end: pd.Timestamp) -> Optional[pd.DataFrame]:
+    """The instrument's 1m bars over [start, end] (high / low / close), or None
+    when there is no data to mark against."""
+    try:
+        raw = bar_service._load_raw(instrument)
+    except bar_service.UnknownInstrument:
+        return None
+    return raw.loc[start:end, ["high", "low", "close"]]
+
+
 def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -> PropReplay:
     """Feeds a session's manual trades through the SAME PropRulesTracker the
     automated backtest uses (propbt/engine/prop_rules.py) -- no rule is
     re-implemented here.
+
+    The rules are judged on ONE account: the balance, the trailing floor, the daily
+    loss and the consistency day are shared by every instrument the session trades
+    (FXR_V2_SPEC.md section 4, G7). `instrument` is only the fallback for a trade
+    that carries none.
 
     The sim journals closed trades, not a per-bar equity log, so the tracker
     is driven at trade resolution: per trade, once at entry (balance, flat
@@ -213,15 +259,21 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -
     boundary closes with the balance as it really stood (the EOD balance that
     trails/freezes the MLL), and the daily-loss limit sees each exit's loss on
     the day it happened.
+
+    Positions open in two instruments at once (G7) are one drawdown: a trade's
+    own MAE says nothing about what the other position was doing then, so a unit
+    of overlapping trades is walked minute by minute on the 1m bars
+    (`_replay_overlap`), adding both positions' open P&L into the account's equity.
     """
-    spec = load_contracts()[instrument]
+    specs = load_contracts()
     tracker = PropRulesTracker(cfg)
     replay = PropReplay(combine=None)  # type: ignore[arg-type]
 
     balance = cfg.start_balance
     target_level = cfg.start_balance + cfg.profit_target
+    sessions_cfg = load_sessions()
 
-    def observe(ts: pd.Timestamp, day, bal: float, eq: float):
+    def observe(ts: pd.Timestamp, day, bal: float, eq: float, keep_row: bool = True):
         st = tracker.on_bar(ts, day, bal, eq)
         row = {
             "time": ts,
@@ -238,12 +290,32 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -
             "breached": tracker.failed,
             "daily_locked": tracker.daily_locked,
         }
-        replay.rows.append(row)
+        if keep_row:
+            replay.rows.append(row)
         replay.samples.append(row)
         return st
 
-    sessions_cfg = load_sessions()
-    for i, t in enumerate(df.itertuples(index=False), start=1):
+    def spec_of(t):
+        return specs[getattr(t, "instrument", None) or instrument]
+
+    rows = list(df.itertuples(index=False))
+    for unit in _units(rows):
+        if len(unit) > 1:
+            balance, resolved_by = _replay_overlap([(i, rows[i]) for i in unit], spec_of, cfg, balance, observe, sessions_cfg)
+            if resolved_by is not None:
+                i, t, ts = resolved_by
+                last = replay.samples[-1]
+                replay.resolved_time = _unix(ts)
+                replay.resolved_trade_id = int(t.trade_id)
+                replay.trades_to_result = i + 1
+                replay.equity_at_result = float(last["equity"])
+                replay.mll_floor_at_result = float(last["mll_floor"])
+                break
+            continue
+
+        i = unit[0]
+        t = rows[i]
+        spec = spec_of(t)
         entry_ts = t.entry_time
         day_in = trading_day_of(entry_ts, sessions_cfg)
 
@@ -278,13 +350,107 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -
             last = replay.rows[-1]
             replay.resolved_time = _unix(last["time"])
             replay.resolved_trade_id = int(t.trade_id)
-            replay.trades_to_result = i
+            replay.trades_to_result = i + 1
             replay.equity_at_result = float(last["equity"])
             replay.mll_floor_at_result = float(last["mll_floor"])
             break
 
     replay.combine = tracker.finalize(balance)
     return replay
+
+
+def _replay_overlap(members, spec_of, cfg, balance, observe, sessions_cfg):
+    """Walks trades in different instruments that were open at the same time, one
+    1m bar at a time, as ONE account. `members` is [(position in the frame, trade)].
+
+    Each minute the account's equity low is the realized balance plus every open
+    position's worst open P&L that minute (a long's bar low, a short's bar high, x
+    the contracts still open x the point value) -- the same excursion convention
+    as a trade's MAE, summed across instruments. Two positions' extremes are not
+    known to coincide inside one minute, so summing them is the conservative
+    reading, as the journal's MAE ordering already is. An intraday-trailing floor
+    sees the minute's high first. An exit realizes at its own minute, after that
+    minute's low. A combined breach (the daily loss or the MLL) is stamped at the
+    minute it happened, not at the end of a trade. Commission is realized with an
+    exit's P&L (it is in pnl_usd), as everywhere else.
+
+    Returns (balance after the unit, (frame position, trade, time) of what resolved
+    the Combine, or None). With no 1m data to mark against it falls back to each
+    trade's own MAE, as a single-instrument trade is judged."""
+    infos = []
+    for i, t in members:
+        legs = _legs(t)
+        infos.append({
+            "i": i, "t": t, "spec": spec_of(t), "legs": legs, "sign": 1 if t.side == "long" else -1,
+            "entry": t.entry_time, "end": max(l.ts for l in legs), "size": int(t.size_contracts),
+            "entry_price": float(t.entry_price), "mark": float(t.entry_price),
+        })
+    start = min(x["entry"] for x in infos)
+    end = max(x["end"] for x in infos)
+    by_symbol = {}
+    for x in infos:
+        sym = getattr(x["t"], "instrument", None)
+        if sym not in by_symbol:
+            by_symbol[sym] = _minute_marks(sym, start, end)
+        x["bars"] = by_symbol[sym]
+
+    grid = {x["entry"] for x in infos} | {l.ts for x in infos for l in x["legs"]}
+    for b in by_symbol.values():
+        if b is not None:
+            grid |= set(b.index)
+
+    def open_before(x, m):  # contracts open while minute m trades (exits at m not yet taken)
+        return x["size"] - sum(l.contracts for l in x["legs"] if l.ts < m)
+
+    def open_after(x, m):  # contracts still open once minute m's exits are taken
+        return x["size"] - sum(l.contracts for l in x["legs"] if l.ts <= m)
+
+    def float_at(x, price, contracts):
+        return x["sign"] * (price - x["entry_price"]) * x["spec"].point_value * contracts
+
+    for m in sorted(grid):
+        day = trading_day_of(m, sessions_cfg)
+        for x in infos:  # an entry: the account's first sight of the position
+            if x["entry"] == m:
+                carried = sum(float_at(y, y["mark"], open_after(y, m)) for y in infos if y is not x and y["entry"] < m < y["end"])
+                observe(m, day, balance, balance + carried)
+
+        live = [x for x in infos if x["entry"] < m <= x["end"]]
+        if live:
+            worst = best = 0.0
+            deepest, deepest_loss = live[0], 0.0
+            for x in live:
+                n = open_before(x, m)
+                bars = x["bars"]
+                if bars is not None and m in bars.index:
+                    bar = bars.loc[m]
+                    x["mark"] = float(bar["close"])
+                    adverse, favourable = (bar["low"], bar["high"]) if x["sign"] == 1 else (bar["high"], bar["low"])
+                    w, b = float_at(x, float(adverse), n), float_at(x, float(favourable), n)
+                elif bars is None:
+                    mae = max((l.mae_points for l in x["legs"] if l.ts >= m), default=0.0)
+                    w, b = -mae * x["spec"].point_value * n, 0.0
+                else:  # a gap in this instrument's bars: the open P&L where it last was
+                    w = b = float_at(x, x["mark"], n)
+                worst += w
+                best += b
+                if w < deepest_loss:
+                    deepest, deepest_loss = x, w
+            if cfg.mll_type == "intraday_trailing" and best > 0:
+                observe(m, day, balance, balance + best, keep_row=False)
+            if observe(m, day, balance, balance + worst, keep_row=False).failed:
+                return balance, (deepest["i"], deepest["t"], m)
+
+        for x in infos:  # exits realize after the minute's low
+            for leg in x["legs"]:
+                if leg.ts != m:
+                    continue
+                balance += leg.pnl_usd
+                carried = sum(float_at(y, y["mark"], open_after(y, m)) for y in infos if y["entry"] < m and open_after(y, m) > 0)
+                st = observe(m, day, balance, balance + carried)
+                if st.failed or st.passed:
+                    return balance, (x["i"], x["t"], m)
+    return balance, None
 
 
 def _session_replay(run_id: str) -> Tuple[Optional[models.BacktestSessionDetail], pd.DataFrame, Optional[PropReplay]]:
@@ -356,6 +522,7 @@ def get_meta(run_id: str) -> models.RunMetaResponse:
         source="manual",
         prop_ruleset=session.account.prop_ruleset if session else None,
         session_ids=[s.id for s in sessions],
+        instruments=list(sessions[0].assets or [sessions[0].instrument]) if scope.kind == "session" and sessions else ([scope.instrument] if scope.instrument else []),
     )
 
 
@@ -461,10 +628,11 @@ def get_stats(
     session: Optional[str] = None,
     session_id: Optional[str] = None,
     hour_ny: Optional[int] = None,
+    instrument: Optional[str] = None,
 ) -> models.StatsResponse:
     _, df_all, replay = _session_replay(run_id)
     df = filter_trades_frame(
-        df_all, session=session, tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny,
+        df_all, session=session, tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny, instrument=instrument,
     )
 
     base = rb.compute_run_stats(df, replay.combine if replay is not None else None)

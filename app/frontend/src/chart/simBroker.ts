@@ -27,6 +27,7 @@
 //   consistency; revisit if a later phase needs higher fidelity.
 import type { Bar, PersistedPosition, PersistedWorkingOrder, TradeRecord } from '../api/types'
 import { nextCloseAfter, type HoldingRule } from './holdingRestrictions'
+import { lastIndexAtOrBefore } from './replayBars'
 
 export type Side = 'long' | 'short'
 // 'session_close': flattened by the session's no-overnight / no-weekend rule (G6).
@@ -564,7 +565,14 @@ export interface AdvanceReplayResult {
   // Set when a no-overnight / no-weekend close flattened a position or cancelled
   // working orders in this advance (G6), so the UI can say so.
   flattenedAtClose: boolean
+  // Resting orders the entry gate refused at the moment they would have filled (G7:
+  // the cross-instrument position cap, the no-news window). They are cancelled.
+  rejectedOrders: { id: string; reason: string }[]
 }
+
+// FXR_V2_SPEC.md G7: why a resting order may NOT fill on this bar, or null. Asked
+// only when the order has triggered; the order is cancelled with the reason.
+export type EntryGate = (order: WorkingOrder, bar: Bar) => string | null
 
 // `bars` is the 1-minute feed (G5), so "every bar passed over" is every MINUTE
 // passed over, even when one step spans an hour: orders, SL/TP, break-even and
@@ -592,11 +600,13 @@ export function advanceReplay(
   spec: ContractSpec,
   commissionPerContract: number,
   holding: HoldingRule | null = null,
+  gate: EntryGate | null = null,
 ): AdvanceReplayResult {
   let pos = position
   let orders = workingOrders
   const closedTrades: ClosedTradeResult[] = []
   const filledOrderIds: string[] = []
+  const rejectedOrders: { id: string; reason: string }[] = []
   let flattenedAtClose = false
 
   // G6: the next no-overnight / no-weekend close the replay has not yet reached,
@@ -644,9 +654,18 @@ export function advanceReplay(
     }
 
     if (!pos && orders.length > 0) {
-      const idx = orders.findIndex((o) => bar.time > o.placedTime && orderTriggered(o, bar))
-      if (idx >= 0) {
+      // The first order the bar triggers that the gate lets through fills; one the
+      // gate refuses is cancelled (and the next triggered order is considered).
+      for (;;) {
+        const idx = orders.findIndex((o) => bar.time > o.placedTime && orderTriggered(o, bar))
+        if (idx < 0) break
         const order = orders[idx]
+        const refusal = gate ? gate(order, bar) : null
+        if (refusal) {
+          rejectedOrders.push({ id: order.id, reason: refusal })
+          orders = orders.filter((o) => o.id !== order.id)
+          continue
+        }
         pos = {
           side: order.side,
           contracts: order.contracts,
@@ -679,6 +698,7 @@ export function advanceReplay(
           closedTrades.push(closePositionAt(bars, pos, i, exitPrice, hit, spec, commissionPerContract))
           pos = null
         }
+        break
       }
     }
 
@@ -686,7 +706,127 @@ export function advanceReplay(
     while (holding && bar.time + 60 >= nextClose) flattenAt(i)
   }
 
-  return { position: pos, workingOrders: orders, closedTrades, filledOrderIds, flattenedAtClose }
+  return { position: pos, workingOrders: orders, closedTrades, filledOrderIds, flattenedAtClose, rejectedOrders }
+}
+
+// ---------------------------------------------------------------------------
+// FXR_V2_SPEC.md section 4 (G7): two instruments, one cursor, one account.
+//
+// The broker keeps one BOOK per instrument -- at most one open position and its
+// resting orders, the single-position rule kept per asset. The books share a
+// cursor (a time) and an account (a balance, a cap, the prop rules).
+export interface InstrumentBook {
+  position: OpenPosition | null
+  workingOrders: WorkingOrder[]
+}
+
+export const EMPTY_BOOK: InstrumentBook = { position: null, workingOrders: [] }
+
+// The account's open P&L: every instrument's open position marked at ITS OWN
+// instrument's price (`marks`, the cursor bar's close in that feed), summed. A book
+// with no mark yet counts nothing rather than a stale guess.
+export function sessionUnrealizedPnl(books: Record<string, InstrumentBook>, marks: Record<string, number | undefined>): number {
+  let total = 0
+  for (const [symbol, book] of Object.entries(books)) {
+    const mark = marks[symbol]
+    if (!book.position || mark === undefined) continue
+    total += unrealizedPnl(book.position.side, book.position.entryPrice, mark, book.position.contracts, getContractSpec(symbol))
+  }
+  return total
+}
+
+export interface SessionTrade extends ClosedTradeResult {
+  instrument: string
+}
+
+export interface AdvanceSessionArgs {
+  // Each instrument's 1-minute feed (ascending). Nothing after `toTime` is read.
+  feeds: Record<string, Bar[]>
+  books: Record<string, InstrumentBook>
+  // The cursor before the step (exclusive) and after it (inclusive), in unix seconds.
+  fromTime: number
+  toTime: number
+  commissions: Record<string, number>
+  holding: HoldingRule | null
+  // The account's position cap across every instrument (null = none).
+  cap: number | null
+  // The no-news refusal for an entry on the bar that opens at this time, or null.
+  newsRefusal?: (barTime: number) => string | null
+  // The cap's message for a fill that would breach it.
+  capMessage?: (contracts: number, openElsewhere: number) => string | null
+}
+
+export interface AdvanceSessionResult {
+  books: Record<string, InstrumentBook>
+  closedTrades: SessionTrade[]
+  filledOrderIds: string[]
+  rejectedOrders: { instrument: string; id: string; reason: string }[]
+  flattenedAtClose: boolean
+}
+
+// Advances every instrument's book from `fromTime` (exclusive) to `toTime`
+// (inclusive) on the shared 1-minute clock, strictly in time order ACROSS the
+// instruments: a minute's bars are all processed before the next minute's, in a
+// fixed instrument order. That ordering is what makes the account-level rules
+// exact: a position that closes at 10:03 has freed its contracts for a limit order
+// that fills in the other instrument at 10:05, and one that opened at 10:05 counts
+// against it. (Walking one instrument to the end of the step and then the other
+// would let the order of the two decide a cap refusal.)
+//
+// Per instrument this is exactly advanceReplay over the same bars -- stepping it one
+// bar at a time is the same fold as stepping a range -- so a single-asset session
+// fills identically, which the tests check against advanceReplay on the same feed.
+// Fills are strictly per instrument and no-look-ahead: an instrument's orders and
+// stops only ever meet that instrument's own bars at or before `toTime`.
+export function advanceSession(args: AdvanceSessionArgs): AdvanceSessionResult {
+  const { feeds, fromTime, toTime, commissions, holding, cap } = args
+  const books: Record<string, InstrumentBook> = { ...args.books }
+  const symbols = Object.keys(feeds)
+  const closedTrades: SessionTrade[] = []
+  const filledOrderIds: string[] = []
+  const rejectedOrders: { instrument: string; id: string; reason: string }[] = []
+  let flattenedAtClose = false
+
+  // The bars each feed passes over: (index of the last bar at or before fromTime, ... toTime].
+  const visits: { time: number; order: number; symbol: string; index: number }[] = []
+  symbols.forEach((symbol, order) => {
+    const feed = feeds[symbol]
+    const lo = lastIndexAtOrBefore(feed, fromTime)
+    const hi = lastIndexAtOrBefore(feed, toTime)
+    for (let i = lo + 1; i <= hi; i++) visits.push({ time: feed[i].time, order, symbol, index: i })
+  })
+  visits.sort((a, b) => a.time - b.time || a.order - b.order)
+
+  for (const v of visits) {
+    const book = books[v.symbol] ?? EMPTY_BOOK
+    if (!book.position && book.workingOrders.length === 0) continue
+    const feed = feeds[v.symbol]
+    const gate: EntryGate = (order, bar) => {
+      let elsewhere = 0
+      for (const sym of symbols) if (sym !== v.symbol) elsewhere += books[sym]?.position?.contracts ?? 0
+      if (cap !== null && order.contracts + elsewhere > cap) {
+        return args.capMessage?.(order.contracts, elsewhere) ?? `This fill would take the account over its ${cap}-contract limit.`
+      }
+      return args.newsRefusal ? args.newsRefusal(bar.time) : null
+    }
+    const result = advanceReplay(
+      feed,
+      v.index - 1,
+      v.index,
+      book.position,
+      book.workingOrders,
+      getContractSpec(v.symbol),
+      commissions[v.symbol] ?? 0,
+      holding,
+      gate,
+    )
+    books[v.symbol] = { position: result.position, workingOrders: result.workingOrders }
+    for (const t of result.closedTrades) closedTrades.push({ ...t, instrument: v.symbol })
+    filledOrderIds.push(...result.filledOrderIds)
+    for (const r of result.rejectedOrders) rejectedOrders.push({ instrument: v.symbol, ...r })
+    flattenedAtClose = flattenedAtClose || result.flattenedAtClose
+  }
+  return { books, closedTrades, filledOrderIds, rejectedOrders, flattenedAtClose }
 }
 
 export interface OpenPositionView {

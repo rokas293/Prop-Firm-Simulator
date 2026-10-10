@@ -109,6 +109,7 @@ def filter_trades_frame(
     grade: Optional[str] = None,
     session_id: Optional[str] = None,
     hour_ny: Optional[int] = None,
+    instrument: Optional[str] = None,
 ) -> pd.DataFrame:
     """The one trade-filter implementation shared by /trades and (for manual
     runs) /stats and /monte-carlo, so a filter can never mean two things in
@@ -139,6 +140,8 @@ def filter_trades_frame(
         df = df[df["grade"] == grade]
     if session_id and "session_id" in df.columns:
         df = df[df["session_id"] == session_id]
+    if instrument and "instrument" in df.columns:
+        df = df[df["instrument"] == instrument]
     if hour_ny is not None and len(df):
         df = df[df["entry_time"].dt.tz_convert("America/New_York").dt.hour == hour_ny]
     return df
@@ -158,6 +161,7 @@ def list_trades(
     grade: Optional[str] = None,
     session_id: Optional[str] = None,
     hour_ny: Optional[int] = None,
+    instrument: Optional[str] = None,
 ) -> List[models.TradeRecord]:
     from app.backend.services import manual_analytics as ma
 
@@ -171,7 +175,7 @@ def list_trades(
 
     df = filter_trades_frame(
         df, leg=leg, session=session, side=side, result=result, exit_type=exit_type, ts_from=ts_from, ts_to=ts_to,
-        tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny,
+        tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny, instrument=instrument,
     )
     return [_trade_row(row) for _, row in df.iterrows()]
 

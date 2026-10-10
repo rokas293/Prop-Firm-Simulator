@@ -12,6 +12,7 @@ import type {
   IndicatorResponse,
   ManualTrade,
   MonteCarloResponse,
+  NewsEvent,
   PersistedPosition,
   PersistedWorkingOrder,
   RecordTradeResponse,
@@ -144,14 +145,16 @@ export const api = {
   updateBtSessionCursor: (
     sessionId: string,
     cursorTime: number,
-    position: PersistedPosition | null = null,
+    positions: PersistedPosition[] = [],
     workingOrders: PersistedWorkingOrder[] = [],
   ) =>
     sendJson<BacktestSessionDetail, UpdateSessionStateRequest>(`/bt-sessions/${sessionId}/cursor`, 'PATCH', {
       cursor_time: cursorTime,
-      position,
+      positions,
       working_orders: workingOrders,
     }),
+  // G7: the economic calendar's schedule.
+  getNewsEvents: (params: QueryParams) => request<NewsEvent[]>('/news-events', params),
   archiveBtSession: (sessionId: string) => postRequest<BacktestSessionDetail>(`/bt-sessions/${sessionId}/archive`),
   updateBtSessionNotes: (sessionId: string, notes: string) =>
     sendJson<BacktestSessionDetail, UpdateSessionNotesRequest>(`/bt-sessions/${sessionId}/notes`, 'PATCH', { notes }),

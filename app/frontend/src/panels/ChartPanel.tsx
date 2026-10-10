@@ -93,7 +93,15 @@ export default function ChartPanel() {
   const { data: rawTrades } = useTrades(runId, filterParams)
   // Compass cross-filters, applied client-side same as TradeListPanel --
   // see tradeStore.ts's TradeFilters comment (POLISH_ROADMAP Phase P5).
-  const trades = useMemo(() => applyCompassFilters(rawTrades ?? [], filters), [rawTrades, filters])
+  // G7: a multi-asset session's chart plots ONE instrument's price scale -- the
+  // Instrument filter's, else the session's primary -- so only that instrument's
+  // trades are drawn on it (the filter also narrows the lists and stats).
+  const multiAsset = (run?.instruments?.length ?? 0) > 1
+  const chartInstrument = multiAsset && filters.instrument && run?.instruments?.includes(filters.instrument) ? filters.instrument : (run?.instrument ?? null)
+  const trades = useMemo(() => {
+    const filtered = applyCompassFilters(rawTrades ?? [], filters)
+    return multiAsset ? filtered.filter((t) => t.instrument === chartInstrument) : filtered
+  }, [rawTrades, filters, multiAsset, chartInstrument])
 
   const klChartRef = useRef<ChartKLHandle>(null)
 
@@ -216,7 +224,7 @@ export default function ChartPanel() {
   }, [selectedTrade])
 
   const { data: sessions } = useSessions(
-    run?.instrument ?? null,
+    chartInstrument,
     sessionLookupWindow?.from ?? null,
     sessionLookupWindow?.to ?? null,
   )
@@ -243,7 +251,7 @@ export default function ChartPanel() {
   }, [pendingDayJump])
 
   const { data: dayJumpSessions } = useSessions(
-    run?.instrument ?? null,
+    chartInstrument,
     dayJumpLookupWindow?.from ?? null,
     dayJumpLookupWindow?.to ?? null,
   )
@@ -272,7 +280,7 @@ export default function ChartPanel() {
   const barsWindow = useMemo(() => (targetWindow ? withMargin(targetWindow) : null), [targetWindow])
 
   const { data: bars, isFetching: barsFetching } = useBars(
-    run?.instrument ?? null,
+    chartInstrument,
     timeframe,
     barsWindow?.from ?? null,
     barsWindow?.to ?? null,
@@ -283,7 +291,7 @@ export default function ChartPanel() {
   // gone; kept only for `isFetching`, which feeds the secondary chart's
   // loading indicator with the same timing signal.
   const { isFetching: secondaryBarsFetching } = useBars(
-    splitView ? (run?.instrument ?? null) : null,
+    splitView ? (chartInstrument) : null,
     secondaryTimeframe,
     barsWindow?.from ?? null,
     barsWindow?.to ?? null,
@@ -323,7 +331,7 @@ export default function ChartPanel() {
   // trade-based/day-jump lookups above, which exist only to COMPUTE a day's
   // boundaries, not to display every session in the visible range.
   const { data: visibleSessions } = useSessions(
-    run?.instrument ?? null,
+    chartInstrument,
     barsWindow?.from ?? null,
     barsWindow?.to ?? null,
   )
@@ -358,7 +366,7 @@ export default function ChartPanel() {
   }, [indicatorPrefs.vwap, indicatorPrefs.ema20, indicatorPrefs.ema50, indicatorPrefs.atr14])
 
   const { data: indicatorData } = useIndicators(
-    run?.instrument ?? null,
+    chartInstrument,
     timeframe,
     barsWindow?.from ?? null,
     barsWindow?.to ?? null,
@@ -678,7 +686,7 @@ export default function ChartPanel() {
           <div className={splitView ? 'min-h-0 flex-1 border-b border-border' : 'h-full'}>
             <ChartKL
               ref={klChartRef}
-              instrument={run?.instrument ?? null}
+              instrument={chartInstrument}
               timeframe={timeframe}
               from={barsWindow?.from ?? null}
               to={barsWindow?.to ?? null}
@@ -702,7 +710,7 @@ export default function ChartPanel() {
             <div className="min-h-0 flex-1">
               <ChartKL
                 ref={klSecondaryChartRef}
-                instrument={run?.instrument ?? null}
+                instrument={chartInstrument}
                 timeframe={secondaryTimeframe}
                 from={barsWindow?.from ?? null}
                 to={barsWindow?.to ?? null}

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from app.backend.api import bars, bt_sessions, compass, daily_risk, equity, export, indicators, monte_carlo, runs, sessions, stats, trades
+from app.backend.api import bars, bt_sessions, compass, daily_risk, equity, export, indicators, monte_carlo, news, runs, sessions, stats, trades
 
 app = FastAPI(title="propbt viz backend", version="0.1.0")
 
@@ -21,6 +21,7 @@ app.include_router(export.router)
 app.include_router(compass.router)
 app.include_router(monte_carlo.router)
 app.include_router(bt_sessions.router)
+app.include_router(news.router)
 
 
 @app.get("/api/health")

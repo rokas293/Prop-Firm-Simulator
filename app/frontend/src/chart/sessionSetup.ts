@@ -28,6 +28,9 @@ export interface WindowInput {
   endDate: string // yyyy-mm-dd (ET), '' = replay without an end
   range: InstrumentRange | undefined
   asset: string
+  // Whose data the limits are: defaults to "<asset>'s". A multi-asset session names
+  // the shared range ("the shared MNQ and MES").
+  dataOf?: string
 }
 
 export interface ResolvedWindow {
@@ -42,6 +45,7 @@ export interface ResolvedWindow {
 export function resolveWindow(w: WindowInput): { errors: WindowErrors; window: ResolvedWindow | null } {
   const errors: WindowErrors = {}
   const range = w.range
+  const owner = w.dataOf ?? `${w.asset}'s`
   const dataMin = range ? fmtEtDate(range.min) : null
   const dataMax = range ? fmtEtDate(range.max) : null
 
@@ -51,8 +55,8 @@ export function resolveWindow(w: WindowInput): { errors: WindowErrors; window: R
     const time = w.startTime || DEFAULT_START_TIME
     start = parseCloseTime(time) === null ? null : etWallTimeToUnix(`${w.startDate}T${time}`)
     if (start === null) errors.start = 'Enter the start time as 24-hour HH:MM, like 09:30.'
-    else if (range && dataMin && w.startDate < dataMin) errors.start = `Start is before ${w.asset}'s first data (${fmtEtLongDate(range.min)}).`
-    else if (range && dataMax && w.startDate > dataMax) errors.start = `Start is after ${w.asset}'s last data (${fmtEtLongDate(range.max)}).`
+    else if (range && dataMin && w.startDate < dataMin) errors.start = `Start is before ${owner} first data (${fmtEtLongDate(range.min)}).`
+    else if (range && dataMax && w.startDate > dataMax) errors.start = `Start is after ${owner} last data (${fmtEtLongDate(range.max)}).`
     else if (range && start !== null) start = Math.min(Math.max(start, range.min), range.max)
   }
 
@@ -60,8 +64,8 @@ export function resolveWindow(w: WindowInput): { errors: WindowErrors; window: R
   if (w.endDate) {
     end = etDayEndUnix(w.endDate)
     if (end === null) errors.end = 'Enter the end as a date, like 2024-03-08.'
-    else if (range && dataMin && w.endDate < dataMin) errors.end = `End is before ${w.asset}'s first data (${fmtEtLongDate(range.min)}).`
-    else if (range && dataMax && w.endDate > dataMax) errors.end = `End is after ${w.asset}'s last data (${fmtEtLongDate(range.max)}).`
+    else if (range && dataMin && w.endDate < dataMin) errors.end = `End is before ${owner} first data (${fmtEtLongDate(range.min)}).`
+    else if (range && dataMax && w.endDate > dataMax) errors.end = `End is after ${owner} last data (${fmtEtLongDate(range.max)}).`
     else if (range && end !== null) end = Math.min(end, range.max)
   }
 
@@ -70,6 +74,20 @@ export function resolveWindow(w: WindowInput): { errors: WindowErrors; window: R
   }
   const ok = !errors.start && !errors.end
   return { errors, window: ok && w.startDate && start !== null ? { start, end } : null }
+}
+
+// The data every selected asset has: the latest first bar to the earliest last bar
+// (the assets share one cursor, so a session can only run where all of them have data).
+export function combinedRange(ranges: Record<string, InstrumentRange> | undefined, assets: readonly string[]): InstrumentRange | undefined {
+  if (!ranges) return undefined
+  const picked = assets.map((a) => ranges[a])
+  if (picked.length === 0 || picked.some((r) => !r)) return undefined
+  return { min: Math.max(...picked.map((r) => r.min)), max: Math.min(...picked.map((r) => r.max)) }
+}
+
+// "MNQ" / "MNQ and MES"
+export function assetsLabel(assets: readonly string[]): string {
+  return assets.join(' and ')
 }
 
 // The +1D / +1W / +1M buttons: the end date that many days / weeks / calendar months after the start.
@@ -107,6 +125,8 @@ export interface RuleDraft {
   noOvernight: boolean
   noWeekend: boolean
   noNews: boolean
+  // Minutes either side of a high-impact event that are closed to entries (with noNews).
+  newsWindow: string
   closeTime: string
 }
 
@@ -127,11 +147,12 @@ export function draftFromRules(r: PropRules): RuleDraft {
     noOvernight: r.no_overnight,
     noWeekend: r.no_weekend,
     noNews: r.no_news,
+    newsWindow: num(r.news_window_minutes ?? 5),
     closeTime: r.close_time,
   }
 }
 
-export type RuleErrors = Partial<Record<'profitTarget' | 'maxLoss' | 'dailyLoss' | 'consistency' | 'cap' | 'closeTime', string>>
+export type RuleErrors = Partial<Record<'profitTarget' | 'maxLoss' | 'dailyLoss' | 'consistency' | 'cap' | 'newsWindow' | 'closeTime', string>>
 
 const positive = (s: string): number | null => {
   const n = Number(s)
@@ -170,6 +191,13 @@ export function rulesFromDraft(d: RuleDraft, balance: number): { rules: PropRule
     else cap = n
   }
 
+  let newsWindow = 5
+  if (d.noNews) {
+    const n = positive(d.newsWindow)
+    if (n === null || !Number.isInteger(n) || n > 120) errors.newsWindow = 'Enter a whole number of minutes from 1 to 120.'
+    else newsWindow = n
+  }
+
   if (d.noOvernight || d.noWeekend) {
     const minutes = parseCloseTime(d.closeTime)
     if (minutes === null || minutes < 9 * 60 + 30 || minutes > 17 * 60) {
@@ -191,6 +219,7 @@ export function rulesFromDraft(d: RuleDraft, balance: number): { rules: PropRule
       no_overnight: d.noOvernight,
       no_weekend: d.noWeekend,
       no_news: d.noNews,
+      news_window_minutes: newsWindow,
       close_time: d.closeTime,
     },
   }
@@ -217,7 +246,7 @@ export function describeRules(r: PropRules): string[] {
   if (r.max_contracts !== null) out.push(`Cap ${r.max_contracts} contracts`)
   if (r.no_overnight) out.push('No overnight holding')
   if (r.no_weekend) out.push('No weekend holding')
-  if (r.no_news) out.push('No news trading')
+  if (r.no_news) out.push(`No entries within ${r.news_window_minutes ?? 5} min of high-impact news`)
   return out
 }
 
@@ -229,7 +258,7 @@ export const rulesLabel = (ruleset: string | null | undefined): string =>
 export interface SetupInput {
   name: string
   balance: number
-  asset: string
+  assets: string[]
   window: ResolvedWindow | null
   random: { days: number } | null
   commissions: Record<string, number>
@@ -240,11 +269,11 @@ export interface SetupInput {
 
 export function buildCreateRequest(i: SetupInput): CreateSessionRequest {
   const base: CreateSessionRequest = {
-    assets: [i.asset],
+    assets: i.assets,
     name: i.name.trim() || null,
     base_timeframe: BASE_TIMEFRAME,
     starting_balance: i.balance,
-    commission_per_contract: i.commissions[i.asset] ?? 0,
+    commission_per_contract: i.commissions[i.assets[0]] ?? 0,
     commissions: i.commissions,
     discipline_lock: i.disciplineLock,
     checklist: i.checklist.map((c) => c.trim()).filter(Boolean),

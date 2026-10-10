@@ -29,6 +29,8 @@ export interface RunMeta extends RunSummary {
   source?: 'engine' | 'manual'
   prop_ruleset?: string | null
   session_ids?: string[]
+  // G7: the instruments the scope's trades are in (both, for a multi-asset session).
+  instruments?: string[]
 }
 
 export const MANUAL_RUN_PREFIX = 'bt:'
@@ -196,8 +198,9 @@ export interface PropRules {
   max_contracts: number | null
   no_overnight: boolean
   no_weekend: boolean
-  // Stored now, enforced from G7.
+  // G7: no entry within `news_window_minutes` either side of a high-impact event.
   no_news: boolean
+  news_window_minutes: number
   // "HH:MM" Eastern Time: when no-overnight / no-weekend flatten.
   close_time: string
 }
@@ -276,6 +279,9 @@ export interface SimAccount {
 // field -- see the backend model's own comment for why only the TIME
 // survives a reload, never a bars-array index.
 export interface PersistedPosition {
+  // G7: which of the session's assets (the server stamps the primary on a saved
+  // v1 position; one position per asset).
+  instrument?: string | null
   side: 'long' | 'short'
   contracts: number
   entry_price: number
@@ -305,6 +311,7 @@ export interface PersistedPosition {
 
 export interface PersistedWorkingOrder {
   id: string
+  instrument?: string | null
   side: 'long' | 'short'
   order_type: 'limit' | 'stop'
   price: number
@@ -363,7 +370,8 @@ export interface BacktestSessionSummary {
   cursor_time: number
   status: 'active' | 'archived'
   account: SimAccount
-  position: PersistedPosition | null
+  // G7: at most one open position per asset; they share the one cursor and account.
+  positions: PersistedPosition[]
   working_orders: PersistedWorkingOrder[]
   // FXR_SPEC.md section C, phase F5: session-level journal notes.
   notes: string | null
@@ -440,7 +448,7 @@ export interface CreateSessionRequest {
 // already is) by every position-changing action, not just replay steps.
 export interface UpdateSessionStateRequest {
   cursor_time: number
-  position?: PersistedPosition | null
+  positions?: PersistedPosition[]
   working_orders?: PersistedWorkingOrder[]
 }
 
@@ -561,4 +569,12 @@ export interface AiStatusResponse {
 
 export interface SummarizeResponse {
   summary: string
+}
+
+// FXR_V2_SPEC.md section 6 (G7): the economic calendar -- the SCHEDULE only (when,
+// which event, how important). The file carries nothing about an outcome.
+export interface NewsEvent {
+  time: number
+  event: string
+  impact: string
 }

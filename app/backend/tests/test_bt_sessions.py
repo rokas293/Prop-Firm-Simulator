@@ -274,12 +274,13 @@ def test_update_cursor_persists_position_and_survives_reload(bt_client):
         json={"cursor_time": cursor_time, "position": _position_payload()},
     )
     assert r.status_code == 200
-    assert r.json()["position"] == _position_payload()
+    # The server stamps the asset the position is in (the primary, here).
+    assert r.json()["position"] == {**_position_payload(), "instrument": "MES"}
 
     # The actual "reload" check: a FRESH GET (simulating a new page load)
     # must see the exact same position, not just the PATCH's own response.
     reloaded = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
-    assert reloaded["position"] == _position_payload()
+    assert reloaded["position"] == {**_position_payload(), "instrument": "MES"}
     assert reloaded["cursor_time"] == cursor_time
 
 
@@ -292,7 +293,7 @@ def test_update_cursor_persists_working_orders_and_survives_reload(bt_client):
         json={"cursor_time": cursor_time, "working_orders": [_working_order_payload()]},
     )
     reloaded = bt_client.get(f"/api/bt-sessions/{created['id']}").json()
-    assert reloaded["working_orders"] == [_working_order_payload()]
+    assert reloaded["working_orders"] == [{**_working_order_payload(), "instrument": "MES"}]
     assert reloaded["position"] is None  # unaffected, still flat
 
 
@@ -1039,8 +1040,8 @@ def test_position_roundtrips_trade_key_initial_size_and_ghosts(bt_client):
         f"/api/bt-sessions/{created['id']}/cursor",
         json={"cursor_time": created["start_time"] + 600, "position": payload},
     )
-    assert r.json()["position"] == payload
-    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] == payload
+    assert r.json()["position"] == {**payload, "instrument": "MES"}
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] == {**payload, "instrument": "MES"}
 
 
 # --- FXR_V2_SPEC.md 3.5 (G3): the Place Order dialog's session checklist, and
@@ -1103,7 +1104,7 @@ def test_working_order_roundtrips_dialog_choices(bt_client):
         f"/api/bt-sessions/{created['id']}/cursor",
         json={"cursor_time": created["start_time"] + 600, "working_orders": [order]},
     )
-    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["working_orders"] == [order]
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["working_orders"] == [{**order, "instrument": "MES"}]
 
 
 def test_position_roundtrips_tags_checklist_and_journal_draft(bt_client):
@@ -1114,7 +1115,7 @@ def test_position_roundtrips_tags_checklist_and_journal_draft(bt_client):
         f"/api/bt-sessions/{created['id']}/cursor",
         json={"cursor_time": created["start_time"] + 600, "position": payload},
     )
-    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] == payload
+    assert bt_client.get(f"/api/bt-sessions/{created['id']}").json()["position"] == {**payload, "instrument": "MES"}
 
 
 def test_record_trade_stores_dialog_tags_checklist_and_notes_on_the_new_trade(bt_client):
