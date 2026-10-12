@@ -41,5 +41,5 @@ export function positionCapMessage(
   if (openElsewhere === 0) {
     return `${what} of ${contracts} contracts is over this session's ${cap}-contract position limit. Reduce the size (or widen the stop distance so auto-sizing fits) and try again.`
   }
-  return `${what} of ${contracts} would make ${contracts + openElsewhere} open${elsewhereLabel ? ` (${openElsewhere} already in ${elsewhereLabel})` : ''}, over the ${cap}-contract limit, which counts every instrument together.`
+  return `${what} of ${contracts} would make ${contracts + openElsewhere} open${elsewhereLabel ? ` (${openElsewhere} already in ${elsewhereLabel})` : ''}, over the ${cap}-contract limit that every instrument shares.`
 }

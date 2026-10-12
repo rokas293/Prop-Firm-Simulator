@@ -87,8 +87,9 @@ export default function PropRulesPopover({
       )}
       {rules && (
         <ul className="flex flex-col gap-1 text-xs text-text-muted" aria-label="Rules">
+          {/* One cap for the account, counted across every instrument it trades. */}
           {describeRules(rules).map((line) => (
-            <li key={line}>{line}</li>
+            <li key={line}>{line.startsWith('Cap ') ? `${line} across instruments` : line}</li>
           ))}
           {(rules.no_overnight || rules.no_weekend) && <li>Flat by {rules.close_time} ET</li>}
         </ul>
@@ -97,7 +98,7 @@ export default function PropRulesPopover({
       {!rules && (
         <div className="flex items-baseline justify-between text-xs">
           <span className="micro-label">Position cap</span>
-          <span className="tabular-nums text-text">{maxContracts !== null ? `${maxContracts} contracts` : 'None'}</span>
+          <span className="tabular-nums text-text">{maxContracts !== null ? `${maxContracts} contracts across instruments` : 'None'}</span>
         </div>
       )}
       <button

@@ -39,5 +39,5 @@ export function newsWindowRefusal(events: readonly NewsEvent[] | undefined, rule
   if (!rule || !events || events.length === 0) return null
   const hit = eventInWindow(events, rule.windowMinutes, barTime) ?? eventInWindow(events, rule.windowMinutes, barTime + 60)
   if (!hit) return null
-  return `No entries within ${rule.windowMinutes} min of ${hit.event} (${fmtEtTime(hit.time)} ET): this session's rules close the window around high-impact news.`
+  return `No new trades within ${rule.windowMinutes} min of ${hit.event} (${fmtEtTime(hit.time)} ET). This session's rules close entries around major news.`
 }

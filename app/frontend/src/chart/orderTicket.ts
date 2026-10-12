@@ -33,6 +33,11 @@ export interface OrderContext {
   balances: { initial: number; current: number }
   // The session's position limit (Topstep: 5); null = a practice session, uncapped.
   cap: number | null
+  // G7: `cap` is the ROOM left under the account's one limit, which counts every
+  // instrument. These say how much of it the other instrument(s) already use, and
+  // which, so a refusal reads as the account's limit rather than "0 contracts".
+  openElsewhere?: number
+  elsewhereLabel?: string
   // The Quick quantity: the size when there is no stop to size from.
   quickQuantity: number
   // ATR up to the cursor, for the default stop/target distance (null = unknown).
@@ -482,7 +487,8 @@ export function validate(form: OrderForm, ctx: OrderContext): OrderIssue[] {
     issues.push({ field: 'contracts', message: 'Enter a whole number of contracts (1 or more).' })
   } else {
     // The Topstep position limit: refused here, with the reason, not after submit.
-    const cap = positionCapMessage(n, ctx.cap, 'This order')
+    const elsewhere = ctx.openElsewhere ?? 0
+    const cap = positionCapMessage(n, ctx.cap === null ? null : ctx.cap + elsewhere, 'This order', elsewhere, ctx.elsewhereLabel ?? '')
     if (cap) issues.push({ field: 'contracts', message: cap })
   }
   const risk = parseNumber(form.riskUsd)
@@ -509,7 +515,9 @@ export function actualRiskNote(form: OrderForm, summary: OrderSummary, ctx: Orde
   const sizing = summary.sizing
   if (form.contractsManual || !sizing) return `At this size the stop risks ${actualText} (${pct}%).`
   if (sizing.cappedAt !== null) {
-    return `Capped at ${sizing.cappedAt} contracts, this session's position limit. Risks ${actualText} (${pct}%) instead of ${targetText}.`
+    const other = ctx.openElsewhere ?? 0
+    const why = other > 0 ? `what is left of the account's limit (${other} already open in ${ctx.elsewhereLabel || 'the other instrument'})` : "this session's position limit"
+    return `Capped at ${sizing.cappedAt} contracts, ${why}. Risks ${actualText} (${pct}%) instead of ${targetText}.`
   }
   if (sizing.belowOne) return `One contract is the smallest order. It risks ${actualText} (${pct}%), above your ${targetText} target.`
   return `Rounded down from ${sizing.exactContracts.toFixed(2)} contracts. Risks ${actualText} (${pct}%) instead of ${targetText}.`

@@ -46,6 +46,8 @@ interface JournalPanelProps {
   trades: ManualTrade[]
   // The open trade's entry, until its first exit creates the journaled trade.
   openEntry?: OpenJournalEntry | null
+  // A multi-asset session: rows and headers name the instrument.
+  showInstrument?: boolean
   onUpdateOpenEntry?: (patch: { notes?: string; tags?: string[] }) => void
   // The session's strategy rules (for showing which were ticked).
   checklistRules?: string[]
@@ -65,6 +67,7 @@ interface JournalPanelProps {
 export default function JournalPanel({
   trades,
   openEntry = null,
+  showInstrument = false,
   onUpdateOpenEntry,
   checklistRules = [],
   sessionNotes,
@@ -398,7 +401,7 @@ export default function JournalPanel({
             className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-xs hover:bg-surface ${selectedId === OPEN_ENTRY_ID ? 'bg-surface-2' : ''}`}
           >
             <span className="whitespace-nowrap tabular-nums text-text-muted">{fmtEtShort(openEntry.entryTime)}</span>
-            <span className="text-text-muted">{openEntry.side}</span>
+            <span className="text-text-muted">{showInstrument ? `${openEntry.instrument} ` : ''}{openEntry.side}</span>
             <span className="num ml-auto text-text-muted">
               {openEntry.contracts} @ {fmtPrice(openEntry.entryPrice, openEntry.instrument)}
             </span>
@@ -432,7 +435,7 @@ export default function JournalPanel({
                 }`}
               >
                 <span className="whitespace-nowrap tabular-nums text-text-muted">{fmtEtShort(t.entry_time)}</span>
-                <span className="text-text-muted">{t.side}</span>
+                <span className="text-text-muted">{showInstrument ? `${t.instrument} ` : ''}{t.side}</span>
                 <span className={`num ml-auto ${t.pnl_usd >= 0 ? 'text-positive-fg' : 'text-negative-fg'}`}>{fmtUsd(t.pnl_usd)}</span>
                 <span className="num w-12 text-text-muted">{fmtR(t.r_multiple)}</span>
                 <span className="w-4 text-center text-text-muted">{t.grade ?? ''}</span>
@@ -446,7 +449,7 @@ export default function JournalPanel({
         {openSelected ? (
           <div className="flex flex-col gap-3 p-3 text-xs" aria-label="Open trade entry">
             <div className="text-text-muted">
-              {openSelected.side} {openSelected.contracts} @ <span className="tabular-nums text-text">{fmtPrice(openSelected.entryPrice, openSelected.instrument)}</span>
+              {showInstrument ? `${openSelected.instrument} ` : ''}{openSelected.side} {openSelected.contracts} @ <span className="tabular-nums text-text">{fmtPrice(openSelected.entryPrice, openSelected.instrument)}</span>
               {openSelected.slPrice !== null && (
                 <>
                   {' · SL '}
@@ -471,7 +474,7 @@ export default function JournalPanel({
           <div className="flex flex-col gap-3 p-3 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-text-muted">
-                {selected.side} {selected.size_contracts} @ <span className="tabular-nums text-text">{selected.entry_price.toFixed(2)}</span>
+                {showInstrument ? `${selected.instrument} ` : ''}{selected.side} {selected.size_contracts} @ <span className="tabular-nums text-text">{selected.entry_price.toFixed(2)}</span>
                 {' → '}
                 <span className="tabular-nums text-text">{selected.exit_price.toFixed(2)}</span>
               </span>

@@ -40,6 +40,7 @@ const EMPTY_INDICATORS = { vwap: [], ema20: [], ema50: [], atr14: [] }
 const INDICATORS_OFF: IndicatorPrefs = {
   sessionShading: true,
   fairValue: true,
+  newsEvents: false,
   vwap: false,
   ema20: false,
   ema50: false,

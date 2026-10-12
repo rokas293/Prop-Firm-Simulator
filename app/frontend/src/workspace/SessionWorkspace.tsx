@@ -21,6 +21,7 @@ import ChartKL, { type ChartKLHandle, type OrderLineSpec, type PositionToolSpec 
 import { revealedSessionBands, type SessionBand } from '../chart/kl/sessionOverlay'
 import { capRoom, openContractsElsewhere, positionCapMessage } from '../chart/positionCap'
 import { entryRefusal, flattenNotice, holdingRule } from '../chart/holdingRestrictions'
+import { newsRule, newsWindowRefusal } from '../chart/newsWindow'
 import { defaultToolLevels } from '../chart/positionTool'
 import { balanceFor, riskPctFromUsd, type OrderContext, type OrderKind, type OrderRequest, type PositionToolLevels } from '../chart/orderTicket'
 import { DEFAULT_SCALPER, entryBrackets, fromScalperConfig, scalperPreview, toScalperConfig, type ScalperBrackets } from '../chart/scalper'
@@ -112,6 +113,7 @@ import {
   useDeleteTradeScreenshot,
   useIndicators,
   useSessions,
+  useNewsEvents,
   useStats,
   useUpdateBtSessionCursor,
   useUpdateBtSessionNotes,
@@ -128,6 +130,7 @@ import {
   type CreateManualTradeRequest,
   type IndicatorName,
   type ManualTrade,
+  type NewsEvent,
   type TradeRecord,
   type UpdateTradeJournalRequest,
 } from '../api/types'
@@ -423,6 +426,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const banner = combineBanner(propStats?.result)
   // G6: the no-overnight / no-weekend rule the sim broker enforces (null = none).
   const holding = useMemo(() => holdingRule(session?.account.prop_rules), [session?.account.prop_rules])
+  // G7: the no-news window (null = the session does not restrict news trading).
+  const newsGate = useMemo(() => newsRule(session?.account.prop_rules), [session?.account.prop_rules])
+  // The calendar's schedule for the loaded window (set where it is fetched, below);
+  // what advanceTo and the entry paths judge a news window against.
+  const newsEventsRef = useRef<NewsEvent[] | undefined>(undefined)
   // The completion card's own dismissal, per session.
   const [completeDismissedFor, setCompleteDismissedFor] = useState<string | null>(null)
   // FXR_SPEC.md phase F6: "Open in journal" from the analytics workspace
@@ -433,7 +441,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [journalInitialTrade, setJournalInitialTrade] = useState<number | null>(null)
   // "Save & Journal": the open trade's entry (it has no journaled trade until its
   // first exit) -- open the drawer on it.
-  const openOpenEntryInJournal = () => {
+  // The open entry belongs to the charted instrument's position -- or, when a journaled
+  // order filled in the OTHER instrument, to that one (`journalSymbol`, until the chart
+  // is switched).
+  const [journalSymbol, setJournalSymbol] = useState<string | null>(null)
+  const openOpenEntryInJournal = (symbol?: string) => {
+    setJournalSymbol(symbol ?? null)
     setJournalInitialTrade(OPEN_ENTRY_ID)
     setJournalOpen(true)
   }
@@ -934,6 +947,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       if (!f || f.length === 0) return
       feedMap[a] = f
     }
+    // With a no-news rule the step needs the calendar: stepping without it would let a
+    // resting order fill inside a window. It loads with the bars; wait for it.
+    if (newsGate && newsEventsRef.current === undefined) return
     const active = activeRef.current
     const booksBefore = booksRef.current
     const positionBefore = booksBefore[active]?.position ?? null
@@ -948,6 +964,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       commissions,
       holding,
       cap: session.account.max_contracts ?? null,
+      newsRefusal: (barTime) => newsWindowRefusal(newsEventsRef.current, newsGate, barTime),
       capMessage: (contracts, elsewhere) =>
         positionCapMessage(contracts, session.account.max_contracts, 'Order', elsewhere, elsewhereLabel(booksBefore, undefined)) ??
         `This fill would take the account over its ${session.account.max_contracts}-contract limit.`,
@@ -966,7 +983,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
     // "Save & Journal" on a limit/stop order: the journal entry opens when it fills
     // (when it is the charted instrument's: the drawer reads that position).
-    const journalFill = (booksBefore[active]?.workingOrders ?? []).some((o) => o.journalOnFill && result.filledOrderIds.includes(o.id))
+    // The instrument (charted one first) whose journaled order filled in this step.
+    const journalFillSymbol =
+      [active, ...session.assets.filter((a) => a !== active)].find(
+        (a) =>
+          (result.books[a]?.position ?? null) !== null &&
+          (booksBefore[a]?.workingOrders ?? []).some((o) => o.journalOnFill && result.filledOrderIds.includes(o.id)),
+      ) ?? null
     booksRef.current = result.books
     setBooks(result.books)
     // Auto break-even just moved the stop to the entry (this step, not before).
@@ -981,9 +1004,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     ) {
       setToast(`Stop moved to break-even at ${fmtPrice(after.entryPrice, active)}`)
     }
-    if (journalFill && after) {
+    if (journalFillSymbol) {
       setIsPlaying(false)
-      openOpenEntryInJournal()
+      openOpenEntryInJournal(journalFillSymbol === active ? undefined : journalFillSymbol)
     }
 
     cursorIndexRef.current = newIndex
@@ -1055,6 +1078,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return Math.floor(earliest / 86400) * 86400
   }, [barsWindow?.from, barsWindow?.to, chartHistory?.from])
   const { data: sessionsInView } = useSessions(activeInstrumentOrNull, sessionsFrom, barsWindow?.to ?? null)
+  // G7: the economic calendar over the same span -- schedule only. The chart draws it
+  // (ahead of the cursor too: a scheduled release is public in advance) and, with a
+  // no-news rule, the broker gate and the entry buttons read it.
+  const newsFrom = sessionsFrom
+  const newsTo = barsWindow ? Math.ceil(barsWindow.to / 86400) * 86400 + 86400 : null
+  const { data: newsEvents } = useNewsEvents(newsFrom, newsTo)
+  newsEventsRef.current = newsEvents
   const sessionBands: SessionBand[] = useMemo(
     () =>
       (sessionsInView ?? []).map((s) => ({
@@ -1168,12 +1198,17 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // most one position-in-progress at a time, same single-position
   // simplification F2 already established.
   const flat = !position && workingOrders.length === 0
+  // G7: why a new entry on the bar opening at `barTime` is refused by the session's
+  // no-news rule (a high-impact event within its window), or null.
+  const newsEntryRefusal = (barTime: number): string | null => newsWindowRefusal(newsEventsRef.current, newsGate, barTime)
   // Why trading is refused right now (null = open): the end date, a no-overnight /
   // no-weekend close, an open trade, or no bars yet. Buy, Sell, Place order and the
   // position tool dim with this as their tooltip.
   const tradeBlock: string | null = sessionEnded
     ? 'The session has ended'
     : (bars && bars[cursorIndex] ? entryRefusal(holding, bars[cursorIndex].time) : null) ??
+      (bars && bars[cursorIndex] ? newsEntryRefusal(bars[cursorIndex].time) : null) ??
+      (newsGate && newsEvents === undefined ? 'Loading the economic calendar' : null) ??
       (!flat ? 'Close or cancel the open trade first' : !bars || bars.length === 0 ? 'Waiting for bars' : null)
   // A position tool is a plan for the NEXT trade: once any trade is open or
   // working (a Quick Buy/Sell, a right-click order) it has nothing left to plan.
@@ -1216,7 +1251,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setOrderNotice(capMsg)
       return
     }
-    const holdMsg = entryRefusal(holding, bars[cursorIndex].time)
+    const holdMsg = entryRefusal(holding, bars[cursorIndex].time) ?? newsEntryRefusal(bars[cursorIndex].time)
     if (holdMsg) {
       setOrderNotice(holdMsg)
       return
@@ -1409,6 +1444,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       mark: bars[cursorIndex].close,
       balances,
       cap: positionCap,
+      openElsewhere: openContractsElsewhere(books, activeInstrument),
+      elsewhereLabel: elsewhereLabel(books, activeInstrument),
       quickQuantity: quickQty,
       atr: averageTrueRange(bars, cursorIndex),
     }
@@ -1457,7 +1494,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setOrderNotice(capMsg)
       return
     }
-    const holdMsg = entryRefusal(holding, bars[cursorIndex].time)
+    const holdMsg = entryRefusal(holding, bars[cursorIndex].time) ?? newsEntryRefusal(bars[cursorIndex].time)
     if (holdMsg) {
       setOrderNotice(holdMsg)
       return
@@ -1545,7 +1582,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           setOrderNotice(capMsg)
           return
         }
-        const holdMsg = entryRefusal(holding, bars[cursorIndex].time)
+        const holdMsg = entryRefusal(holding, bars[cursorIndex].time) ?? newsEntryRefusal(bars[cursorIndex].time)
         if (holdMsg) {
           setOrderNotice(holdMsg)
           return
@@ -1744,28 +1781,29 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // (record_trade): notes and tags written now ride on the position and land on
   // that trade. After a partial close the real trade exists and the drawer
   // shows it instead.
+  const journalInstrument = journalSymbol && session?.assets.includes(journalSymbol) ? journalSymbol : activeInstrument
+  const journalPosition = books[journalInstrument]?.position ?? null
   const journalOpenEntry: OpenJournalEntry | null =
-    position && session && !(manualTrades ?? []).some((t) => t.trade_key === position.tradeKey)
+    journalPosition && session && !(manualTrades ?? []).some((t) => t.trade_key === journalPosition.tradeKey)
       ? {
-          tradeKey: position.tradeKey,
-          instrument: activeInstrument,
-          side: position.side,
-          contracts: position.initialContracts,
-          entryTime: position.entryTime,
-          entryPrice: position.entryPrice,
-          slPrice: position.slPrice,
-          tpPrice: position.tpPrice,
-          tags: position.journal?.tags ?? [],
-          checklist: position.journal?.checklist ?? [],
-          notes: position.journal?.notes ?? '',
+          tradeKey: journalPosition.tradeKey,
+          instrument: journalInstrument,
+          side: journalPosition.side,
+          contracts: journalPosition.initialContracts,
+          entryTime: journalPosition.entryTime,
+          entryPrice: journalPosition.entryPrice,
+          slPrice: journalPosition.slPrice,
+          tpPrice: journalPosition.tpPrice,
+          tags: journalPosition.journal?.tags ?? [],
+          checklist: journalPosition.journal?.checklist ?? [],
+          notes: journalPosition.journal?.notes ?? '',
         }
       : null
   const handleUpdateOpenEntry = (patch: Partial<Pick<OrderJournal, 'notes' | 'tags'>>) => {
-    const pos = positionRef.current
+    const pos = booksRef.current[journalInstrument]?.position ?? null
     if (!pos) return
     const next: OpenPosition = { ...pos, journal: { ...(pos.journal ?? NO_JOURNAL), ...patch } }
-    positionRef.current = next
-    setPosition(next)
+    writeBook(journalInstrument, { position: next })
     persist()
   }
 
@@ -1811,6 +1849,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setOrderDialogOpen(false)
     activeRef.current = symbol
     setActiveSymbol(symbol)
+    setJournalSymbol(null)
     setLineNonce((n) => n + 1)
   }
 
@@ -2079,6 +2118,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onGoTo: handleGoTo,
           onBackToCursor: () => klChartRef.current?.scrollToLatest(),
         }}
+        calendar={{
+          cursorTime,
+          showEvents: indicatorPrefs.newsEvents,
+          onShowEventsChange: () => indicatorPrefs.toggle('newsEvents'),
+          windowMinutes: newsGate?.windowMinutes ?? null,
+        }}
         indicatorCount={activeIndicatorCount}
         onOpenIndicators={() => setIndicatorDialogOpen(true)}
         candleType={prefs.candleType}
@@ -2126,6 +2171,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             selectedTrade={prefs.hideTrades ? null : openPositionRecord}
             indicators={indicators}
             sessionBands={chartBands}
+            newsEvents={newsEvents}
             prefs={indicatorPrefs}
             loading={barsFetching}
             preserveViewOnWindowChange
@@ -2220,6 +2266,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               key={journalInitialTrade ?? 'journal'}
               trades={manualTrades ?? []}
               openEntry={journalOpenEntry}
+              showInstrument={session.assets.length > 1}
               onUpdateOpenEntry={handleUpdateOpenEntry}
               checklistRules={session.checklist ?? []}
               sessionNotes={session.notes}

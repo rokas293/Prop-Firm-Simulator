@@ -36,6 +36,7 @@ export function IconButton({
   disabled,
   pressed,
   expanded,
+  haspopup = 'menu',
   children,
 }: {
   label: string
@@ -43,6 +44,7 @@ export function IconButton({
   disabled?: boolean
   pressed?: boolean
   expanded?: boolean
+  haspopup?: 'menu' | 'dialog'
   children: ReactNode
 }) {
   return (
@@ -51,7 +53,7 @@ export function IconButton({
       title={label}
       aria-label={label}
       aria-pressed={expanded === undefined ? pressed : undefined}
-      aria-haspopup={expanded === undefined ? undefined : 'menu'}
+      aria-haspopup={expanded === undefined ? undefined : haspopup}
       aria-expanded={expanded}
       disabled={disabled}
       onClick={onClick}

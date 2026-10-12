@@ -4,6 +4,7 @@ import { useIndicatorStore } from './indicatorStore'
 const DEFAULTS = {
   sessionShading: true,
   fairValue: true,
+  newsEvents: true,
   vwap: true,
   ema20: false,
   ema50: false,

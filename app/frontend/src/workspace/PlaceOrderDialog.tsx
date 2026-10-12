@@ -234,7 +234,13 @@ export default function PlaceOrderDialog({
     : note
       ? { text: note, refusal: false }
       : ctx.cap !== null
-        ? { text: `Up to ${ctx.cap} contracts${capLabel ? ` (${capLabel} limit)` : ''}.`, refusal: false }
+        ? {
+            text:
+              (ctx.openElsewhere ?? 0) > 0
+                ? `Up to ${ctx.cap} more contracts: ${ctx.openElsewhere} already open in ${ctx.elsewhereLabel || 'the other instrument'}, and the limit counts every instrument together.`
+                : `Up to ${ctx.cap} contracts${capLabel ? ` (${capLabel} limit)` : ''}.`,
+            refusal: false,
+          }
         : null
   const canSave = issues.length === 0
 

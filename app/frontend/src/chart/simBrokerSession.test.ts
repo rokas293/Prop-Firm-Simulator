@@ -16,6 +16,7 @@ import {
 } from './simBroker'
 import { openContractsElsewhere, capRoom, positionCapMessage } from './positionCap'
 import type { HoldingRule } from './holdingRestrictions'
+import { newsWindowRefusal } from './newsWindow'
 import type { Bar } from '../api/types'
 
 // 2024-03-06 13:00 UTC = 08:00 ET (Wednesday, EST).
@@ -225,7 +226,7 @@ describe('the position cap counts contracts across instruments', () => {
     const msg = positionCapMessage(3, 5, 'Order', 3, 'MNQ')
     expect(msg).toContain('6 open')
     expect(msg).toContain('3 already in MNQ')
-    expect(msg).toContain('every instrument together')
+    expect(msg).toContain('every instrument shares')
     expect(capRoom(null, 3)).toBeNull()
   })
 
@@ -312,5 +313,124 @@ describe('sessionUnrealizedPnl', () => {
     const books = { MNQ: { position: position({ contracts: 1, entryPrice: 18000 }), workingOrders: [] }, MES: EMPTY_BOOK }
     expect(sessionUnrealizedPnl(books, { MES: 5000 })).toBe(0)
     expect(sessionUnrealizedPnl(books, { MNQ: 18005 })).toBe(10)
+  })
+})
+
+describe('the no-news window gates a resting order at its fill', () => {
+  // A 1-minute feed from 08:00 ET; CPI is scheduled at 08:30 ET (30 bars in), 5 min window.
+  const CPI = T0 + 30 * 60
+  const events = [{ time: CPI, event: 'CPI', impact: 'high' }]
+  const refusal = (barTime: number) => newsWindowRefusal(events, { windowMinutes: 5 }, barTime)
+
+  // Flat at 5000 except the bar at `dipAt`, which trades down to 4990.
+  const barsWithDip = (dipAt: number): Bar[] => {
+    const out: Bar[] = []
+    for (let i = 0; i < 60; i++) {
+      const t = T0 + i * 60
+      out.push(i === dipAt ? bar(t, 5000, 5000.5, 4990, 4995) : bar(t, 5000, 5000.5, 4999.5, 5000))
+    }
+    return out
+  }
+  const run = (dipAt: number, news: typeof refusal | undefined) => {
+    const feedBars = barsWithDip(dipAt)
+    return advanceSession({
+      feeds: { MES: feedBars },
+      books: { MES: { position: null, workingOrders: [order({ id: 'lim', price: 4992, placedTime: T0 })] } },
+      fromTime: T0,
+      toTime: feedBars[feedBars.length - 1].time,
+      commissions: { MES: 0 },
+      holding: null,
+      cap: null,
+      newsRefusal: news,
+    })
+  }
+
+  it('cancels a limit that would fill inside the window, with the event as the reason', () => {
+    const r = run(29, refusal) // 08:29, inside [08:25, 08:35]
+    expect(r.books.MES.position).toBeNull()
+    expect(r.books.MES.workingOrders).toEqual([])
+    expect(r.filledOrderIds).toEqual([])
+    expect(r.rejectedOrders).toHaveLength(1)
+    expect(r.rejectedOrders[0]).toMatchObject({ instrument: 'MES', id: 'lim' })
+    expect(r.rejectedOrders[0].reason).toContain('CPI')
+  })
+
+  it('fills the same order outside the window', () => {
+    const r = run(10, refusal) // 08:10
+    expect(r.rejectedOrders).toEqual([])
+    expect(r.filledOrderIds).toEqual(['lim'])
+    expect(r.books.MES.position?.entryPrice).toBe(4992)
+  })
+
+  it('fills it after the window has closed', () => {
+    const r = run(45, refusal) // 08:45
+    expect(r.rejectedOrders).toEqual([])
+    expect(r.books.MES.position?.entryPrice).toBe(4992)
+  })
+
+  it('without a news rule the same order fills inside the window', () => {
+    const r = run(29, undefined)
+    expect(r.rejectedOrders).toEqual([])
+    expect(r.books.MES.position?.entryPrice).toBe(4992)
+  })
+
+  it('does not touch a position that is already open: only entries are gated', () => {
+    const feedBars = barsWithDip(29)
+    const r = advanceSession({
+      feeds: { MES: feedBars },
+      books: { MES: { position: position({ entryPrice: 5000, slPrice: 4991, entryTime: T0, entryIndex: 0 }), workingOrders: [] } },
+      fromTime: T0,
+      toTime: feedBars[feedBars.length - 1].time,
+      commissions: { MES: 0 },
+      holding: null,
+      cap: null,
+      newsRefusal: refusal,
+    })
+    // The stop is hit by the 08:29 bar, inside the window, and exits normally.
+    expect(r.rejectedOrders).toEqual([])
+    expect(r.closedTrades).toHaveLength(1)
+    expect(r.closedTrades[0].exitType).toBe('stop_loss')
+  })
+
+  it('is per instrument: an order filling outside the window is not cancelled by another instrument being inside it', () => {
+    // MNQ dips inside the window (08:29), MES outside it (08:10); both rest a limit.
+    const k = 3.6
+    const mnqBars: Bar[] = barsWithDip(29).map((b) => ({ ...b, open: b.open * k, high: b.high * k, low: b.low * k, close: b.close * k }))
+    const mesBars = barsWithDip(10)
+    const r = advanceSession({
+      feeds: { MES: mesBars, MNQ: mnqBars },
+      books: {
+        MES: { position: null, workingOrders: [order({ id: 'mes', price: 4992, placedTime: T0 })] },
+        MNQ: { position: null, workingOrders: [order({ id: 'mnq', price: 4992 * k, placedTime: T0 })] },
+      },
+      fromTime: T0,
+      toTime: mesBars[mesBars.length - 1].time,
+      commissions: { MES: 0, MNQ: 0 },
+      holding: null,
+      cap: null,
+      newsRefusal: refusal,
+    })
+    expect(r.books.MES.position?.entryPrice).toBe(4992)
+    expect(r.books.MNQ.position).toBeNull()
+    expect(r.rejectedOrders.map((x) => `${x.instrument}:${x.id}`)).toEqual(['MNQ:mnq'])
+  })
+
+  it('the cap is judged first: an order the cap refuses reports the cap, not the news', () => {
+    const feedBars = barsWithDip(29)
+    const r = advanceSession({
+      feeds: { MES: feedBars, MNQ: feedBars },
+      books: {
+        MNQ: { position: position({ contracts: 5, entryPrice: 5000, entryTime: T0 }), workingOrders: [] },
+        MES: { position: null, workingOrders: [order({ id: 'lim', price: 4992, placedTime: T0 })] },
+      },
+      fromTime: T0,
+      toTime: feedBars[feedBars.length - 1].time,
+      commissions: { MES: 0, MNQ: 0 },
+      holding: null,
+      cap: 5,
+      newsRefusal: refusal,
+      capMessage: () => 'over the cap',
+    })
+    expect(r.rejectedOrders[0].reason).toBe('over the cap')
   })
 })

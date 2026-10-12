@@ -373,6 +373,24 @@ describe('Topstep position cap', () => {
     expect(buildOrder(setContracts(f, '5'), ctx).ok).toBe(true)
   })
 
+  it('with contracts open in the other instrument the refusal names the account limit, not "0 contracts"', () => {
+    // 3 MNQ open under a 3-contract account limit: this instrument has no room (cap 0).
+    const ctx = ctxWith({ cap: 0, openElsewhere: 3, elsewhereLabel: 'MNQ' })
+    const f = setContracts(initialForm(ctx, { ...OPTS, tool: LONG_TOOL }), '1')
+    const issue = validate(f, ctx).find((i) => i.field === 'contracts')
+    expect(issue?.message).toContain('would make 4 open')
+    expect(issue?.message).toContain('3 already in MNQ')
+    expect(issue?.message).toContain('3-contract limit')
+    expect(issue?.message).toContain('every instrument')
+    expect(issue?.message).not.toContain('0-contract')
+  })
+
+  it('a size that fits beside the other instrument is allowed', () => {
+    const ctx = ctxWith({ cap: 2, openElsewhere: 3, elsewhereLabel: 'MNQ' })
+    const f = setContracts(initialForm(ctx, { ...OPTS, tool: LONG_TOOL }), '2')
+    expect(validate(f, ctx).find((i) => i.field === 'contracts')).toBeUndefined()
+  })
+
   it('no stop: the Quick quantity is clamped to the cap rather than refused', () => {
     const ctx = ctxWith({ cap: 2, quickQuantity: 4 })
     const f = toggleLevel(initialForm(ctx, { ...OPTS, tool: LONG_TOOL }), ctx, 'sl', false)

@@ -4,6 +4,8 @@ import { persist } from 'zustand/middleware'
 export interface IndicatorPrefs {
   sessionShading: boolean
   fairValue: boolean
+  // G7: the economic calendar's scheduled events as markers on the time axis.
+  newsEvents: boolean
   vwap: boolean
   ema20: boolean
   ema50: boolean
@@ -27,6 +29,7 @@ export type ColorableIndicatorKey = 'vwap' | 'ema20' | 'ema50' | 'atr14'
 const DEFAULT_PREFS: IndicatorPrefs = {
   sessionShading: true,
   fairValue: true,
+  newsEvents: true,
   vwap: true,
   ema20: false,
   ema50: false,

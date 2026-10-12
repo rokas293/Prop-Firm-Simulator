@@ -8,6 +8,7 @@ import type { KLCandleType } from '../chart/kl/ChartKL'
 import { SESSION_TIMEFRAMES } from '../chart/replayBars'
 import { POPOVER_FORM_PADDING, POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
 import { etWallTimeToUnix, fmtEtInput } from '../timeFormat'
+import NewsCalendarMenu, { type NewsCalendarProps } from './NewsCalendarMenu'
 import { IconButton } from './SessionTopBar'
 
 export const CHART_TYPES: { id: KLCandleType; label: string }[] = [
@@ -126,6 +127,7 @@ function GoToMenu({ goTo }: { goTo: GoToProps }) {
         }}
         pressed={open}
         expanded={open}
+        haspopup="dialog"
       >
         <CalendarSearch size={16} aria-hidden />
       </IconButton>
@@ -181,6 +183,7 @@ export default function SessionChartToolbar({
   chartTimeframe,
   onChartTimeframeChange,
   goTo,
+  calendar,
   indicatorCount,
   onOpenIndicators,
   candleType,
@@ -202,6 +205,7 @@ export default function SessionChartToolbar({
   chartTimeframe: string
   onChartTimeframeChange: (id: string) => void
   goTo: GoToProps
+  calendar: NewsCalendarProps
   indicatorCount: number
   onOpenIndicators: () => void
   candleType: KLCandleType
@@ -281,6 +285,7 @@ export default function SessionChartToolbar({
       </IconButton>
 
       <div className="ml-auto flex items-center gap-1">
+        <NewsCalendarMenu {...calendar} />
         <GoToMenu goTo={goTo} />
         <IconButton label="Download a screenshot of the chart" onClick={onScreenshot}>
           <Camera size={16} aria-hidden />

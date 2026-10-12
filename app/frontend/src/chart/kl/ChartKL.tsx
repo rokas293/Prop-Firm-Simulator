@@ -41,6 +41,7 @@ import {
   ensureSessionBandOverlayRegistered,
   type SessionBand,
 } from './sessionOverlay'
+import { buildNewsMarkerOverlays, ensureNewsMarkerOverlayRegistered, NEWS_MARKER_GROUP } from './newsOverlay'
 import {
   cameraRestoreIndex,
   captureTimeframeAnchor,
@@ -73,7 +74,9 @@ import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingS
 import { KL_DEFAULT_INDICATOR_LINES, ON_ACCENT_DARK, ON_ACCENT_LIGHT, useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
 import { MIN_TEXT_CONTRAST, ensureContrast, ensureTextVariant, pickOnAccent } from '../../state/contrast'
 import { useIndicatorStore, type ColorableIndicatorKey, type IndicatorPrefs } from '../../state/indicatorStore'
-import type { Bar, IndicatorPoint, TradeRecord } from '../../api/types'
+import type { Bar, IndicatorPoint, NewsEvent, TradeRecord } from '../../api/types'
+
+const NO_NEWS_EVENTS: NewsEvent[] = []
 import { filterBarsForReplay, filterTradesForReplay, type ReplayTradeView } from '../replay'
 import { computeMeasure, formatDuration, type MeasurePoint, type MeasureResult } from '../measure'
 import LoadingBar from '../../components/LoadingBar'
@@ -158,6 +161,9 @@ interface ChartKLProps {
   selectedTrade: TradeRecord | null
   indicators: IndicatorData
   sessionBands: SessionBand[]
+  // The economic calendar's scheduled events (G7): when and what only, drawn when
+  // prefs.newsEvents is on. May lie ahead of the cursor; carries no outcome.
+  newsEvents?: NewsEvent[]
   prefs: IndicatorPrefs
   // All-trades bracket density (PART_A_REVISED_klinecharts.md parity audit
   // -- ported from PriceChart.tsx's TradeBracketPrimitive/Brackets toolbar,
@@ -519,6 +525,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     selectedTrade,
     indicators,
     sessionBands,
+    newsEvents = NO_NEWS_EVENTS,
     prefs,
     bracketDensity = 'auto',
     loading = false,
@@ -730,6 +737,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   indicatorsRef.current = indicators
   const sessionBandsRef = useRef(sessionBands)
   sessionBandsRef.current = sessionBands
+  const newsEventsRef = useRef(newsEvents)
+  newsEventsRef.current = newsEvents
   const prefsRef = useRef(prefs)
   prefsRef.current = prefs
   const bracketDensityRef = useRef(bracketDensity)
@@ -951,6 +960,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     withReadyChart(chart, loadedBarsRef.current.length > 0, (chart) => {
       chart.removeOverlay({ groupId: SESSION_BAND_GROUP })
       chart.removeOverlay({ groupId: FAIR_VALUE_GROUP })
+      chart.removeOverlay({ groupId: NEWS_MARKER_GROUP })
       const p = prefsRef.current
       const bands = sessionBandsRef.current
       const overlays: OverlayCreate[] = []
@@ -961,6 +971,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           if (fv) overlays.push(fv)
         }
       }
+      if (p.newsEvents) overlays.push(...buildNewsMarkerOverlays(newsEventsRef.current, baseRef.current.textMuted))
       if (overlays.length > 0) chart.createOverlay(overlays)
     })
   }
@@ -1235,6 +1246,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     ensureDrawingOverlaysRegistered()
     ensureIndicatorsRegistered()
     ensureSessionBandOverlayRegistered()
+    ensureNewsMarkerOverlayRegistered()
     ensurePositionToolOverlayRegistered()
     ensureOrderLabelOverlayRegistered()
     if (!containerRef.current) return
@@ -1799,7 +1811,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
 
   useEffect(() => {
     rebuildSessionOverlaysRef.current()
-  }, [sessionBands, prefs])
+  }, [sessionBands, newsEvents, prefs])
 
   // Replay cursor moved (Phase A4): reslice the already-fetched bars
   // rather than treating it as a fresh window -- resetData() is v10's only
