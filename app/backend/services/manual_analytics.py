@@ -8,6 +8,8 @@ that starts with "bt:" --
 
     bt:<session_id>        one manual session
     bt:all:<INSTRUMENT>    every session of one instrument, pooled
+    bt:all                 every session, every instrument (the Analytics page;
+                           it filters by instrument itself)
 
 -- and bundle_reader dispatches to this module for those ids, so every
 /api/runs/{id}/... endpoint (and therefore every panel already built on
@@ -44,10 +46,11 @@ from propbt.reporting import run_bundle as rb
 
 MANUAL_PREFIX = "bt:"
 ALL_PREFIX = "bt:all:"
+ALL_RUN_ID = "bt:all"
 
 # `exits` is the trade's exit list (FXR_V2_SPEC.md 3.6): the journal shows ONE trade, but the
 # prop replay and the equity timeline walk its exits (see _legs).
-EXTRA_COLUMNS = ["source", "session_id", "session_trade_id", "tags", "setup_name", "grade", "exits"]
+EXTRA_COLUMNS = ["source", "session_id", "session_trade_id", "tags", "setup_name", "grade", "exits", "entry_sl_price", "entry_tp_price"]
 FRAME_COLUMNS = rb.TRADE_COLUMNS + EXTRA_COLUMNS
 
 
@@ -63,6 +66,8 @@ class Scope:
 
 
 def parse_scope(run_id: str) -> Scope:
+    if run_id == ALL_RUN_ID:
+        return Scope(kind="all", instrument=None)
     if run_id.startswith(ALL_PREFIX):
         instrument = run_id[len(ALL_PREFIX):]
         if instrument not in bts.ALLOWED_INSTRUMENTS:
@@ -83,7 +88,11 @@ def _sessions_in_scope(run_id: str) -> List[models.BacktestSessionDetail]:
             raise RunNotFound(run_id)
     summaries = bts.list_sessions(include_archived=True)
     # A multi-asset session belongs to the pool of each of its assets (G7).
-    return [bts.get_session(s.id) for s in summaries if scope.instrument in (s.assets or [s.instrument])]
+    return [
+        bts.get_session(s.id)
+        for s in summaries
+        if scope.instrument is None or scope.instrument in (s.assets or [s.instrument])
+    ]
 
 
 def _empty_frame() -> pd.DataFrame:
@@ -100,7 +109,7 @@ def _build_frame(run_id: str, sessions: List[models.BacktestSessionDetail]) -> p
     for s in sessions:
         for t in bts.list_trades(s.id):
             # A pooled scope plots one instrument's price scale: only that instrument's trades.
-            if scope.kind == "all" and t.instrument != scope.instrument:
+            if scope.kind == "all" and scope.instrument is not None and t.instrument != scope.instrument:
                 continue
             d = t.model_dump()
             ts = pd.Timestamp(d["entry_time"], unit="s", tz="UTC")
@@ -117,6 +126,8 @@ def _build_frame(run_id: str, sessions: List[models.BacktestSessionDetail]) -> p
             row["setup_name"] = d.get("setup_name")
             row["grade"] = d.get("grade")
             row["exits"] = list(d.get("exits") or [])
+            row["entry_sl_price"] = d.get("entry_sl_price")
+            row["entry_tp_price"] = d.get("entry_tp_price")
             rows.append(row)
     if not rows:
         return _empty_frame()
@@ -168,6 +179,18 @@ def _legs(t) -> List[Leg]:
         ))
     return legs
 
+@dataclass(frozen=True)
+class LiveState:
+    mll_floor: float
+    mll_frozen: bool
+    day_start_balance: float
+    daily_locked: bool
+    daily_pnls: Dict
+    in_day: bool
+    target_hit: bool
+    consistency_passed: Optional[bool]
+
+
 @dataclass
 class PropReplay:
     combine: CombineResult
@@ -178,6 +201,10 @@ class PropReplay:
     trades_to_result: Optional[int] = None
     equity_at_result: Optional[float] = None
     mll_floor_at_result: Optional[float] = None
+    # PropRulesTracker's state after the walk (and the optional `mark`), read
+    # before the day is closed out: what the prop-rules modal reports.
+    live: Optional["LiveState"] = None
+    balance: float = 0.0
 
 
 def _unix(ts: pd.Timestamp) -> int:
@@ -227,7 +254,12 @@ def _minute_marks(instrument: str, start: pd.Timestamp, end: pd.Timestamp) -> Op
     return raw.loc[start:end, ["high", "low", "close"]]
 
 
-def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -> PropReplay:
+def replay_prop_rules(
+    df: pd.DataFrame,
+    instrument: str,
+    cfg: PropRulesConfig,
+    mark: Optional[Tuple[pd.Timestamp, float]] = None,
+) -> PropReplay:
     """Feeds a session's manual trades through the SAME PropRulesTracker the
     automated backtest uses (propbt/engine/prop_rules.py) -- no rule is
     re-implemented here.
@@ -264,6 +296,13 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -
     own MAE says nothing about what the other position was doing then, so a unit
     of overlapping trades is walked minute by minute on the 1m bars
     (`_replay_overlap`), adding both positions' open P&L into the account's equity.
+
+    `mark` = (time, open P&L): once every journaled trade has been walked and the
+    Combine is still open, the account is observed ONE more time at that moment
+    with the open position's float added to the realized balance -- the live
+    reading the prop-rules modal shows mid-session. The float is the sim broker's
+    own number; the tracker judges it (a floor breach or a daily-loss lock
+    included).
     """
     specs = load_contracts()
     tracker = PropRulesTracker(cfg)
@@ -355,7 +394,27 @@ def replay_prop_rules(df: pd.DataFrame, instrument: str, cfg: PropRulesConfig) -
             replay.mll_floor_at_result = float(last["mll_floor"])
             break
 
+    if mark is not None and replay.resolved_time is None and not (tracker.failed or tracker.passed):
+        ts, open_pnl = mark
+        observe(ts, trading_day_of(ts, sessions_cfg), balance, balance + open_pnl, keep_row=False)
+        if tracker.failed:
+            replay.resolved_time = _unix(ts)
+
+    # `finalize` closes the open trading day (trailing the floor, logging it), which
+    # is right for the verdict but would misreport "where things stand right now":
+    # snapshot the live state first.
+    replay.live = LiveState(
+        mll_floor=tracker.mll_floor,
+        mll_frozen=tracker.mll_frozen,
+        day_start_balance=tracker.day_start_balance,
+        daily_locked=tracker.daily_locked,
+        daily_pnls=dict(tracker.daily_pnls),
+        in_day=tracker.current_trading_day is not None,
+        target_hit=tracker.target_hit,
+        consistency_passed=tracker.consistency_passed,
+    )
     replay.combine = tracker.finalize(balance)
+    replay.balance = balance
     return replay
 
 
@@ -500,10 +559,10 @@ def get_meta(run_id: str) -> models.RunMetaResponse:
 
     if scope.kind == "session" and sessions:
         s = sessions[0]
-        name = f"Manual session {s.instrument} {s.base_timeframe}"
+        name = s.name or f"Manual session {'/'.join(s.assets or [s.instrument])} {s.base_timeframe}"
         created_at, timeframe = s.created_at, s.base_timeframe
     else:
-        name = f"All {scope.instrument} manual sessions"
+        name = f"All {scope.instrument} manual sessions" if scope.instrument else "All manual sessions"
         created_at = max((s.updated_at for s in sessions), default="")
         timeframe = sessions[0].base_timeframe if sessions else "5min"
 
@@ -522,7 +581,11 @@ def get_meta(run_id: str) -> models.RunMetaResponse:
         source="manual",
         prop_ruleset=session.account.prop_ruleset if session else None,
         session_ids=[s.id for s in sessions],
-        instruments=list(sessions[0].assets or [sessions[0].instrument]) if scope.kind == "session" and sessions else ([scope.instrument] if scope.instrument else []),
+        instruments=(
+            list(sessions[0].assets or [sessions[0].instrument])
+            if scope.kind == "session" and sessions
+            else ([scope.instrument] if scope.instrument else sorted({a for x in sessions for a in (x.assets or [x.instrument])}))
+        ),
     )
 
 
@@ -668,4 +731,219 @@ def get_stats(
         by_grade=_breakdown(df, df["grade"].fillna("ungraded")) if len(df) else {},
         by_backtest_session=_breakdown(df, df["session_id"]) if multi_session else {},
         result=result,
+    )
+
+
+# ------------------------ the Analytics page (G8) ---------------------------
+
+MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+
+def _scoped_frame(run_id: str, instrument: Optional[str]) -> pd.DataFrame:
+    df = load_trades_frame(run_id)
+    if instrument and len(df):
+        df = df[df["instrument"] == instrument].reset_index(drop=True)
+    return df
+
+
+def _bucket(trades: int, wins: int, pnl: float, key: str, label: str) -> models.PeriodBucket:
+    return models.PeriodBucket(
+        key=key, label=label, trades=trades, wins=wins, net_pnl_usd=pnl,
+        win_rate=(wins / trades) if trades else None,
+    )
+
+
+def _period_average(total: float, periods: int) -> models.PeriodAverage:
+    return models.PeriodAverage(value=(total / periods) if periods else None, periods=periods)
+
+
+def analytics_summary(run_id: str, instrument: Optional[str] = None) -> models.AnalyticsSummary:
+    """Everything the Analytics page's stat tiles and charts show, aggregated
+    server-side from the same trades frame `/trades` serves -- so the page and
+    the trades table can never disagree.
+
+    Day / week / month are the CME trading day of the trade's ENTRY (the label the
+    journal frame already carries), so every trade sits in exactly one bucket and
+    the buckets sum to the total. An "average gain per period" is the total net
+    P&L over the periods that have at least one trade (a day with no trade is not
+    a day of the sample)."""
+    sessions = _sessions_in_scope(run_id)
+    df = _scoped_frame(run_id, instrument)
+    base = rb.compute_run_stats(df)["overall"]
+
+    stats = models.AnalyticsStats(
+        trades=base["trades"],
+        net_pnl_usd=base["net_pnl_usd"],
+        win_rate=base["win_rate"],
+        profit_factor=base["profit_factor"],
+        avg_r=base["expectancy_r"],
+    )
+    monthly: List[models.PeriodBucket] = []
+    weekday: List[models.PeriodBucket] = [
+        _bucket(0, 0, 0.0, str(i), label) for i, label in enumerate(WEEKDAY_LABELS)
+    ]
+    heat = models.HeatOnWinners()
+    equity: List[models.EquityStep] = []
+
+    if len(df):
+        pnl = df["pnl_usd"].astype(float)
+        wins_mask = pnl > 0
+        stats.wins = int(wins_mask.sum())
+        stats.losses = int((pnl < 0).sum())
+        stats.gross_profit_usd = float(pnl[wins_mask].sum())
+        stats.gross_loss_usd = float(-pnl[pnl < 0].sum())
+        stats.avg_win_usd = float(pnl[wins_mask].mean()) if stats.wins else None
+        stats.avg_loss_usd = float(pnl[pnl < 0].mean()) if stats.losses else None
+        stats.r_trades = int(df["r_multiple"].notna().sum())
+        # Planned R:R at entry, from the stop AND target the position was opened with
+        # (a level moved or added later is not an entry level). A level on the wrong
+        # side of the entry is not a plan and is left out.
+        both = df.dropna(subset=["entry_sl_price", "entry_tp_price"])
+        if len(both):
+            sign = both["side"].map({"long": 1.0, "short": -1.0})
+            risk = sign * (both["entry_price"] - both["entry_sl_price"].astype(float))
+            reward = sign * (both["entry_tp_price"].astype(float) - both["entry_price"])
+            ok = (risk > 0) & (reward > 0)
+            if ok.any():
+                stats.planned_rr_trades = int(ok.sum())
+                stats.avg_planned_rr = float((reward[ok] / risk[ok]).mean())
+
+        days = pd.to_datetime(df["trading_day"], errors="coerce")
+        dated = df.assign(_day=days, _pnl=pnl, _win=wins_mask).dropna(subset=["_day"])
+        total_dated = float(dated["_pnl"].sum())
+        stats.avg_gain_day = _period_average(total_dated, int(dated["_day"].nunique()))
+        iso = dated["_day"].dt.isocalendar()
+        stats.avg_gain_week = _period_average(total_dated, int(len(set(zip(iso["year"], iso["week"])))))
+        months = dated["_day"].dt.strftime("%Y-%m")
+        stats.avg_gain_month = _period_average(total_dated, int(months.nunique()))
+
+        for key, g in dated.groupby(months, sort=True):
+            y, m = str(key).split("-")
+            monthly.append(_bucket(len(g), int(g["_win"].sum()), float(g["_pnl"].sum()), str(key), f"{MONTH_LABELS[int(m) - 1]} {y}"))
+        for wd, g in dated.groupby(dated["_day"].dt.weekday):
+            if 0 <= wd < 5:
+                weekday[int(wd)] = _bucket(len(g), int(g["_win"].sum()), float(g["_pnl"].sum()), str(int(wd)), WEEKDAY_LABELS[int(wd)])
+
+        winners_heat = df.loc[wins_mask & df["mae_r"].notna(), "mae_r"].astype(float)
+        if len(winners_heat):
+            heat = models.HeatOnWinners(
+                sample=int(len(winners_heat)), avg_r=float(winners_heat.mean()),
+                max_r=float(winners_heat.max()), min_r=float(winners_heat.min()),
+            )
+
+        # Cumulative realized P&L, one step per exit (a partial exit steps on its own time).
+        steps = sorted((l.ts, l.pnl_usd) for t in df.itertuples(index=False) for l in _legs(t))
+        running = 0.0
+        for ts, p in steps:
+            running += p
+            equity.append(models.EquityStep(time=_unix(ts), pnl_usd=running))
+
+    instruments = sorted({a for s in sessions for a in (s.assets or [s.instrument])})
+    scope = parse_scope(run_id)
+    return models.AnalyticsSummary(
+        run_id=run_id,
+        instrument=instrument,
+        instruments=instruments,
+        sessions=[
+            models.AnalyticsSession(id=s.id, name=s.name or f"{'/'.join(s.assets or [s.instrument])} · {s.id[:6]}", assets=list(s.assets or [s.instrument]))
+            for s in sessions
+        ],
+        starting_balance=sessions[0].account.starting_balance if scope.kind == "session" and sessions else None,
+        stats=stats,
+        equity=equity,
+        monthly=monthly,
+        weekday=weekday,
+        heat=heat,
+    )
+
+
+def rr_simulation(run_id: str, instrument: Optional[str] = None) -> models.RrSimulatorResponse:
+    from app.backend.services import rr_simulator
+
+    return rr_simulator.simulate(_sessions_in_scope(run_id), instrument=instrument, scope=run_id)
+
+
+# ---------------------- the prop-rules modal (G8) ---------------------------
+
+class NotAPropSession(Exception):
+    pass
+
+
+def prop_rules_status(session_id: str, open_pnl: float = 0.0, cursor_time: Optional[int] = None) -> models.PropRulesStatus:
+    """The session's standing against its rules, read from PropRulesTracker after
+    replaying the journaled trades, plus one observation at the cursor with
+    `open_pnl` (the open position's float, a sim-broker number) added to the
+    realized balance. `used` / `left` are differences of tracker values -- the
+    floor, the day's starting balance, the realized balance -- computed here so the
+    frontend only draws them."""
+    session = bts.get_session(session_id)
+    acct = session.account
+    if acct.prop_rules is None:
+        raise NotAPropSession(session_id)
+    cfg = session_engine_config(session)
+    df = load_trades_frame(MANUAL_PREFIX + session_id)
+    at = cursor_time if cursor_time is not None else session.cursor_time
+    replay = replay_prop_rules(df, session.instrument, cfg, mark=(pd.Timestamp(at, unit="s", tz="UTC"), float(open_pnl)))
+    combine, live = replay.combine, replay.live
+    assert live is not None
+
+    start = cfg.start_balance
+    balance = replay.balance
+    # A resolved Combine stops being marked: the float no longer counts.
+    live_open = 0.0 if combine.status != "incomplete" else float(open_pnl)
+    equity = balance + live_open
+
+    profit_used = balance - start
+    loss_budget = float(cfg.mll_initial_offset)
+    to_floor = max(0.0, equity - live.mll_floor)
+    loss_used = min(loss_budget, max(0.0, loss_budget - to_floor))
+    if combine.status == "failed":
+        loss_used, to_floor = loss_budget, 0.0
+
+    daily_limit = cfg.daily_loss_limit
+    if daily_limit is None:
+        daily = models.PropProgress()
+    else:
+        used = min(float(daily_limit), max(0.0, live.day_start_balance - equity))
+        daily = models.PropProgress(
+            limit=float(daily_limit), used=used, left=float(daily_limit) - used, fraction=used / daily_limit,
+        )
+
+    best_day = None
+    if live.daily_pnls or live.in_day:
+        today = balance - live.day_start_balance if live.in_day else 0.0
+        best_day = max([today, *live.daily_pnls.values()])
+
+    return models.PropRulesStatus(
+        status=combine.status,
+        fail_reason=combine.fail_reason,
+        label="Topstep $50k Combine" if acct.prop_ruleset == prop_presets.TOPSTEP_50K else "Custom prop rules",
+        starting_balance=start,
+        balance=balance,
+        open_pnl=live_open,
+        equity=equity,
+        profit=models.PropProgress(
+            limit=float(cfg.profit_target),
+            used=profit_used,
+            left=max(0.0, cfg.profit_target - profit_used),
+            fraction=min(1.0, max(0.0, profit_used / cfg.profit_target)),
+        ),
+        max_loss=models.PropProgress(
+            limit=loss_budget, used=loss_used, left=to_floor, fraction=(loss_used / loss_budget) if loss_budget else 0.0,
+        ),
+        max_loss_floor=float(live.mll_floor),
+        max_loss_type=cfg.mll_type,
+        max_loss_frozen=bool(live.mll_frozen),
+        daily_loss=daily,
+        daily_locked=bool(live.daily_locked),
+        day_start_balance=float(live.day_start_balance),
+        target_hit=bool(live.target_hit),
+        consistency_pct=None if cfg.consistency_max_pct is None else cfg.consistency_max_pct * 100,
+        consistency_passed=live.consistency_passed,
+        best_day_pnl=best_day,
+        best_day_share=(best_day / profit_used) if best_day is not None and profit_used > 0 else None,
+        trading_days=len(combine.day_logs),
+        rules=prop_presets.rules_rows(cfg, acct.prop_rules),
+        restrictions=prop_presets.restriction_rows(acct.prop_rules),
     )

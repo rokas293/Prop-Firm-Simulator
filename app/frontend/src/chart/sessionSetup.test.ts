@@ -4,6 +4,7 @@ import type { PropPreset, PropRules } from '../api/types'
 import { etWallTimeToUnix } from '../timeFormat'
 import {
   buildCreateRequest,
+  buildRetryRequest,
   combinedRange,
   describeRules,
   draftFromRules,
@@ -12,11 +13,13 @@ import {
   matchingPreset,
   moneyRaw,
   normalizeClock,
+  originalLengthDays,
   randomLengthError,
   rangeHint,
   resolveWindow,
   rulesFromDraft,
   typeClock,
+  type RetrySource,
   type WindowInput,
 } from './sessionSetup'
 
@@ -338,5 +341,68 @@ describe('resolveWindow over a shared range', () => {
   it('names the shared data in its refusals', () => {
     const r = resolveWindow({ ...input({ startDate: '2021-07-01' }), asset: 'MNQ and MES', dataOf: 'the shared MNQ and MES' })
     expect(r.errors.start).toBe('Start is before the shared MNQ and MES first data (15 Jul 2021).')
+  })
+})
+
+describe('Try again (G8): a new session on the same rules', () => {
+  const START = et('2024-03-04T09:30')
+  const SOURCE: RetrySource = {
+    name: 'March drill',
+    assets: ['MNQ', 'MES'],
+    instrument: 'MNQ',
+    start_time: START,
+    end_date: START + 5 * 86400,
+    discipline_lock: true,
+    checklist: ['Trend aligned', 'Stop under swing'],
+    account: {
+      starting_balance: 50000,
+      commissions: { MNQ: 1.1, MES: 0.62 },
+      commission_per_contract: 1.1,
+      prop_ruleset: 'topstep_50k',
+      prop_rules: TOPSTEP,
+    },
+  }
+
+  it('carries the rules, balance, assets, commissions, lock and checklist; the window is the new one', () => {
+    const window = { start: et('2023-01-09T09:30'), end: et('2023-01-13T23:59') }
+    const req = buildRetryRequest(SOURCE, { kind: 'pick', window }, [PRESET], 'March drill - retry')
+    expect(req.assets).toEqual(['MNQ', 'MES'])
+    expect(req.starting_balance).toBe(50000)
+    expect(req.commissions).toEqual({ MNQ: 1.1, MES: 0.62 })
+    expect(req.prop_rules).toEqual(TOPSTEP)
+    expect(req.prop_ruleset).toBe('topstep_50k') // the same preset id, since the rules are that preset's
+    expect(req.discipline_lock).toBe(true)
+    expect(req.checklist).toEqual(['Trend aligned', 'Stop under swing'])
+    expect(req.name).toBe('March drill - retry')
+    expect(req.start_time).toBe(window.start)
+    expect(req.end_date).toBe(window.end)
+    expect(req.random_start).toBeUndefined()
+  })
+
+  it('a random start sends no date: the server picks it and keeps it hidden', () => {
+    const req = buildRetryRequest(SOURCE, { kind: 'random', days: 10 }, [PRESET], 'r')
+    expect(req.random_start).toBe(true)
+    expect(req.start_time).toBeNull()
+    expect(req.random_duration_seconds).toBe(10 * 86400)
+    expect(req.end_date).toBeUndefined()
+    expect(req.prop_rules).toEqual(TOPSTEP)
+  })
+
+  it('custom rules stay custom, and a session without commissions falls back to its per-contract rate', () => {
+    const custom = { ...TOPSTEP, profit_target: 1500, no_news: true, news_window_minutes: 10 }
+    const src: RetrySource = {
+      ...SOURCE,
+      account: { starting_balance: 25000, commission_per_contract: 0.9, prop_ruleset: 'custom', prop_rules: custom },
+    }
+    const req = buildRetryRequest(src, { kind: 'random', days: 7 }, [PRESET], 'r')
+    expect(req.prop_ruleset).toBe('custom')
+    expect(req.prop_rules).toEqual(custom)
+    expect(req.starting_balance).toBe(25000)
+    expect(req.commissions).toEqual({ MNQ: 0.9, MES: 0.9 })
+  })
+
+  it('the original length, in days, is the default', () => {
+    expect(originalLengthDays(SOURCE)).toBe(5)
+    expect(originalLengthDays({ start_time: START, end_date: null })).toBe(7)
   })
 })

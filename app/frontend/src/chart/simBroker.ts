@@ -137,6 +137,12 @@ export interface OpenPosition {
   riskUsd: number | null
   slPrice: number | null
   tpPrice: number | null
+  // G8: the stop the position carried at the moment it FILLED. `slPrice` moves
+  // (break-even, trail, drag, "Add stop loss"); this never does, so the journal can
+  // tell what was risked at entry from a stop added later. null = no stop at entry.
+  entrySlPrice?: number | null
+  // G8: the target at the fill, likewise never updated afterwards (a drag moves tpPrice only).
+  entryTpPrice?: number | null
   // F4 optional toggles -- see applyBreakevenAndTrailing.
   autoBreakeven: boolean
   trailingPoints: number | null
@@ -173,6 +179,8 @@ export function toPersistedPosition(position: OpenPosition): PersistedPosition {
     risk_usd: position.riskUsd,
     sl_price: position.slPrice,
     tp_price: position.tpPrice,
+    entry_sl_price: position.entrySlPrice ?? null,
+    entry_tp_price: position.entryTpPrice ?? null,
     auto_breakeven: position.autoBreakeven,
     trailing_points: position.trailingPoints,
     breakeven_r: position.breakevenR ?? null,
@@ -197,6 +205,9 @@ export function fromPersistedPosition(p: PersistedPosition, entryIndex: number):
     riskUsd: p.risk_usd,
     slPrice: p.sl_price,
     tpPrice: p.tp_price,
+    // A position saved before G8 cannot say what it was opened with.
+    entrySlPrice: p.entry_sl_price ?? null,
+    entryTpPrice: p.entry_tp_price ?? null,
     autoBreakeven: p.auto_breakeven,
     trailingPoints: p.trailing_points,
     breakevenR: p.breakeven_r ?? undefined,
@@ -228,6 +239,9 @@ export interface ClosedTradeResult {
   // review/charting, same as the automated engine's own trade schema.
   slPrice: number | null
   tpPrice: number | null
+  // G8: the stop at the position's fill (OpenPosition.entrySlPrice).
+  entrySlPrice: number | null
+  entryTpPrice: number | null
   pnlUsd: number // net of commission
   commissionUsd: number
   rMultiple: number | null
@@ -293,6 +307,8 @@ function closePositionAt(
     exitType,
     slPrice: position.slPrice,
     tpPrice: position.tpPrice,
+    entrySlPrice: position.entrySlPrice ?? null,
+    entryTpPrice: position.entryTpPrice ?? null,
     pnlUsd,
     commissionUsd,
     rMultiple,
@@ -675,6 +691,8 @@ export function advanceReplay(
           riskUsd: order.riskUsd,
           slPrice: order.slPrice,
           tpPrice: order.tpPrice,
+          entrySlPrice: order.slPrice,
+          entryTpPrice: order.tpPrice,
           autoBreakeven: order.autoBreakeven,
           trailingPoints: order.trailingPoints,
           breakevenR: order.breakevenR,

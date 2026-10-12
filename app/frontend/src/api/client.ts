@@ -1,6 +1,7 @@
 import type {
   AddScreenshotRequest,
   AiStatusResponse,
+  AnalyticsSummary,
   Bar,
   BacktestSessionDetail,
   BacktestSessionSummary,
@@ -15,8 +16,10 @@ import type {
   NewsEvent,
   PersistedPosition,
   PersistedWorkingOrder,
+  PropRulesStatus,
   RecordTradeResponse,
   RunMeta,
+  RrSimulatorResponse,
   RunSummary,
   SessionSetupOptions,
   SessionWindow,
@@ -153,6 +156,14 @@ export const api = {
       positions,
       working_orders: workingOrders,
     }),
+  // G8: the Analytics page's aggregates and RR simulator (any manual run id), and
+  // the prop-rules modal's live status (`open_pnl` is the sim broker's float).
+  getAnalyticsSummary: (runId: string, instrument?: string | null) =>
+    request<AnalyticsSummary>(`/manual-analytics/${runId}/summary`, { instrument: instrument ?? undefined }),
+  getRrSimulator: (runId: string, instrument?: string | null) =>
+    request<RrSimulatorResponse>(`/manual-analytics/${runId}/rr-simulator`, { instrument: instrument ?? undefined }),
+  getPropRulesStatus: (sessionId: string, params: { open_pnl: number; cursor_time?: number }) =>
+    request<PropRulesStatus>(`/manual-analytics/sessions/${sessionId}/prop-rules`, params),
   // G7: the economic calendar's schedule.
   getNewsEvents: (params: QueryParams) => request<NewsEvent[]>('/news-events', params),
   archiveBtSession: (sessionId: string) => postRequest<BacktestSessionDetail>(`/bt-sessions/${sessionId}/archive`),

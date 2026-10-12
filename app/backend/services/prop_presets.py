@@ -104,3 +104,60 @@ def legacy_rules(prop_ruleset: str) -> models.PropRules:
     if prop_ruleset == TOPSTEP_50K:
         return topstep_50k().rules
     raise UnknownPreset(f"cannot resolve rules for saved prop_ruleset {prop_ruleset!r}")
+
+
+# ---- G8: the prop-rules modal's rules table and restrictions checklist ----
+
+_LOSS_TYPE_LABEL = {
+    "static": "Static",
+    "eod_trailing": "End-of-day trailing",
+    "intraday_trailing": "Intraday trailing",
+}
+
+
+def _usd(v: float) -> str:
+    return f"${v:,.0f}" if float(v).is_integer() else f"${v:,.2f}"
+
+
+def rules_rows(cfg: PropRulesConfig, rules: models.PropRules) -> List[models.PropRuleRow]:
+    """The rules table, read from the tracker's own config (`cfg`), so the
+    modal shows exactly the numbers the verdict is judged by."""
+    max_loss = f"{_usd(cfg.mll_initial_offset)} · {_LOSS_TYPE_LABEL.get(cfg.mll_type, cfg.mll_type)}"
+    if cfg.mll_freeze_floor is not None:
+        max_loss += f", locks at {_usd(cfg.mll_freeze_floor)}"
+    return [
+        models.PropRuleRow(key="profit_target", label="Profit target", value=_usd(cfg.profit_target)),
+        models.PropRuleRow(key="max_loss", label="Max loss", value=max_loss),
+        models.PropRuleRow(
+            key="daily_loss", label="Max daily loss",
+            value="Off" if cfg.daily_loss_limit is None else _usd(cfg.daily_loss_limit),
+        ),
+        models.PropRuleRow(
+            key="consistency", label="Consistency",
+            value="Off" if cfg.consistency_max_pct is None else f"Best day at most {cfg.consistency_max_pct * 100:g}% of profit",
+        ),
+        models.PropRuleRow(
+            key="position_cap", label="Position cap",
+            value="None" if cfg.max_open_contracts is None else f"{cfg.max_open_contracts} contracts, all instruments",
+        ),
+    ]
+
+
+def restriction_rows(rules: models.PropRules) -> List[models.PropRestriction]:
+    return [
+        models.PropRestriction(
+            key="no_news", label="News trading",
+            detail=f"No entries within {rules.news_window_minutes} min of a high-impact event" if rules.no_news else "Allowed",
+            on=rules.no_news,
+        ),
+        models.PropRestriction(
+            key="no_overnight", label="Holding overnight",
+            detail=f"Flat by {rules.close_time} ET every trading day" if rules.no_overnight else "Allowed",
+            on=rules.no_overnight,
+        ),
+        models.PropRestriction(
+            key="no_weekend", label="Holding over the weekend",
+            detail=f"Flat by {rules.close_time} ET on Fridays" if rules.no_weekend else "Allowed",
+            on=rules.no_weekend,
+        ),
+    ]

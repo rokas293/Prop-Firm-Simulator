@@ -138,3 +138,37 @@ describe('useSessionHotkeys: when a hotkey may act', () => {
     for (const fn of Object.values(h)) expect(fn).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('useSessionHotkeys: Tab opens the prop rules (G8)', () => {
+  it('acts when nothing is focused, and cancels the browser default', () => {
+    const open = vi.fn()
+    mount({ sessionPropRules: open })
+    const e = press({ key: 'Tab' })
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(e.defaultPrevented).toBe(true)
+  })
+
+  it('acts from the chart (a focusable div, not a control)', () => {
+    const open = vi.fn()
+    mount({ sessionPropRules: open })
+    const chart = document.body.appendChild(document.createElement('div'))
+    chart.tabIndex = 1
+    press({ key: 'Tab' }, chart)
+    expect(open).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves Tab alone on a focused control, so keyboard navigation still works', () => {
+    const open = vi.fn()
+    mount({ sessionPropRules: open })
+    const button = document.body.appendChild(document.createElement('button'))
+    const e = press({ key: 'Tab' }, button)
+    expect(open).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(false)
+  })
+
+  it('does nothing without a handler (a practice session)', () => {
+    mount({})
+    const e = press({ key: 'Tab' })
+    expect(e.defaultPrevented).toBe(false)
+  })
+})

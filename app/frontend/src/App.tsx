@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { useRun } from './api/hooks'
 import ComparePage from './pages/ComparePage'
 import RunsListPage from './pages/RunsListPage'
 import HomePage from './pages/HomePage'
 import Workspace from './workspace/Workspace'
+import Skeleton from './components/Skeleton'
 import SessionWorkspace from './workspace/SessionWorkspace'
 import CommandPalette from './workspace/CommandPalette'
 import KeyboardShortcuts from './workspace/KeyboardShortcuts'
@@ -13,10 +14,14 @@ import { OnboardingDialog } from './components/OnboardingGuide'
 import SettingsPanel from './components/SettingsPanel'
 import LiveRegion from './components/LiveRegion'
 import { useUiStore } from './state/uiStore'
-import { isManualRunId } from './api/types'
+import { MANUAL_ALL_SESSIONS_RUN_ID, isManualRunId } from './api/types'
 import { usePerfStore } from './state/perfStore'
 import { applyThemeToDocument, useThemeBase, useThemeStore } from './state/themeStore'
 import { isShortcut, isTypingTarget } from './keyboard/shortcuts'
+
+// A manual session's analytics is a page of its own (FXR_V2_SPEC.md section 6); the
+// dock workspace is for automated propbt runs. Loaded on first use with its charts.
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 
 export default function App() {
   const selectedRunId = useUiStore((s) => s.selectedRunId)
@@ -30,7 +35,10 @@ export default function App() {
   const distractionFree = useUiStore((s) => s.distractionFree)
   const { data: run } = useRun(selectedRunId)
   // A single manual session's analytics: where its back button goes.
-  const backToSessionId = run?.source === 'manual' && run.session_ids?.length === 1 ? run.session_ids[0] : null
+  const backToSessionId =
+    run?.source === 'manual' && run.session_ids?.length === 1 && selectedRunId !== MANUAL_ALL_SESSIONS_RUN_ID
+      ? run.session_ids[0]
+      : null
   const perfEnabled = usePerfStore((s) => s.enabled)
   const togglePerf = usePerfStore((s) => s.toggle)
 
@@ -107,7 +115,7 @@ export default function App() {
               ) : (
                 <span className="font-mono text-xs text-text-muted">{selectedRunId}</span>
               )}
-              {run && <span className="text-xs text-text-muted">{run.instrument}</span>}
+              {run && <span className="text-xs text-text-muted">{(run.instruments?.length ? run.instruments.join(' + ') : run.instrument)}</span>}
             </>
           )}
           <button
@@ -174,7 +182,13 @@ export default function App() {
         // relies on exactly that), so this only fades in on the
         // runs-list -> workspace mount transition, not on every run switch.
         <div className="propbt-fade-in">
-          <Workspace />
+          {isManualRunId(selectedRunId) ? (
+            <Suspense fallback={<Skeleton className="m-6 h-24" />}>
+              <AnalyticsPage />
+            </Suspense>
+          ) : (
+            <Workspace />
+          )}
         </div>
       )}
       {!compareRunIds && selectedSessionId && (

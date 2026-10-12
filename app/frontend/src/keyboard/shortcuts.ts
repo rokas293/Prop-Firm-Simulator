@@ -139,6 +139,7 @@ export const SESSION_SHORTCUT_IDS = [
   'sessionNewMarket',
   'sessionNewLimit',
   'sessionNewStop',
+  'sessionPropRules',
 ] as const
 export type SessionHotkeyAction = (typeof SESSION_SHORTCUT_IDS)[number]
 
@@ -164,6 +165,8 @@ const SESSION_SHORTCUTS: ShortcutDef[] = [
   { id: 'sessionNewMarket', combos: [{ key: 'm', ...TRADE_MODS }], label: 'Shift+M', description: 'New market order: open the order dialog on Market', category: 'Session' },
   { id: 'sessionNewLimit', combos: [{ key: 'l', ...TRADE_MODS }], label: 'Shift+L', description: 'New limit order: open the order dialog on Limit', category: 'Session' },
   { id: 'sessionNewStop', combos: [{ key: 't', ...TRADE_MODS }], label: 'Shift+T', description: 'New stop order: open the order dialog on Stop', category: 'Session' },
+  // Tab only acts off a control (useSessionHotkeys), so keyboard navigation keeps working.
+  { id: 'sessionPropRules', combos: [{ key: 'Tab', ...PLAIN_MODS }], label: 'Tab', description: 'Open the prop rules (prop sessions)', category: 'Session' },
 ]
 
 export function sessionHotkeyAction(e: KeyboardEvent): SessionHotkeyAction | null {

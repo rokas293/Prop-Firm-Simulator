@@ -82,7 +82,9 @@ import { canRedo, canUndo, emptyHistory, recordDrawings, redo, undo, type Drawin
 import { useKLDrawingStore } from '../state/klDrawingStore'
 import { DRAWING_SHORTCUTS, isTypingTarget } from '../keyboard/shortcuts'
 import TradePanel, { type PositionRow, type WorkingOrderRow } from './TradePanel'
-import PropRulesPopover from './PropRulesPopover'
+import PropRulesModal from './PropRulesModal'
+import PropOutcomeScreen from './PropOutcomeScreen'
+import TryAgainDialog from './TryAgainDialog'
 import SessionCompleteCard from './SessionCompleteCard'
 import { isSessionEnded, lastAllowedIndex, sessionDisplayName } from '../chart/sessionEnd'
 import {
@@ -433,6 +435,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const newsEventsRef = useRef<NewsEvent[] | undefined>(undefined)
   // The completion card's own dismissal, per session.
   const [completeDismissedFor, setCompleteDismissedFor] = useState<string | null>(null)
+  // G8: the pass / fail screen of a prop session, dismissed per session; "Try again" is its own dialog.
+  const [outcomeDismissedFor, setOutcomeDismissedFor] = useState<string | null>(null)
+  const [tryAgainOpen, setTryAgainOpen] = useState(false)
   // FXR_SPEC.md phase F6: "Open in journal" from the analytics workspace
   // lands here with one trade to show -- opens the drawer on it, once.
   const selectRun = useUiStore((s) => s.selectRun)
@@ -513,6 +518,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const lastReanchoredAtBarTimeRef = useRef<number | null>(null)
   const [cursorIndex, setCursorIndexState] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
+  // G8: a prop session whose Combine has just passed or failed stops playing -- the
+  // outcome screen is what you are meant to look at.
+  const resolvedStatus = propStats?.result?.status
+  useEffect(() => {
+    if (resolvedStatus === 'passed' || resolvedStatus === 'failed') setIsPlaying(false)
+  }, [resolvedStatus])
   const [speed, setSpeed] = useState(1)
   // ON by default in a REPLAY session (ChartKL's own prop defaults to off,
   // which is right for reviewing a finished backtest where nothing moves).
@@ -865,6 +876,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       entry_price: trade.entryPrice,
       exit_price: trade.exitPrice,
       sl_price: trade.slPrice,
+      entry_sl_price: trade.entrySlPrice,
+      entry_tp_price: trade.entryTpPrice,
       tp_price: trade.tpPrice,
       sl_points: slPoints,
       tp_points: tpPoints,
@@ -1275,6 +1288,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       riskUsd: sc?.riskUsd ?? accountRiskUsd(),
       slPrice: sc?.slPrice ?? null,
       tpPrice: sc?.tpPrice ?? null,
+      entrySlPrice: sc?.slPrice ?? null,
+      entryTpPrice: sc?.tpPrice ?? null,
       autoBreakeven: (sc?.autoBreakeven ?? false) || armedAutoBreakeven,
       breakevenR: sc?.breakevenR ?? null,
       breakevenPoints: sc?.breakevenPoints ?? null,
@@ -1518,6 +1533,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         riskUsd: order.riskUsd,
         slPrice: order.slPrice,
         tpPrice: order.tpPrice,
+        entrySlPrice: order.slPrice,
+        entryTpPrice: order.tpPrice,
         autoBreakeven: order.autoBreakeven,
         trailingPoints: armedTrailingPoints,
         tradeKey: crypto.randomUUID(),
@@ -2010,6 +2027,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     sessionPlayPause: () => setIsPlaying((v) => !v),
     sessionSpeedUp: () => setSpeed((s) => stepSpeed(s, 1)),
     sessionSpeedDown: () => setSpeed((s) => stepSpeed(s, -1)),
+    // G8: Tab opens the prop-rules modal (a prop session only).
+    sessionPropRules: session?.account.prop_ruleset ? () => setPropRulesOpen(true) : undefined,
   })
 
   // A refusal notice is informational: it clears itself after a few seconds
@@ -2244,7 +2263,17 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               )}
             </div>
           )}
-          {sessionEnded && completeDismissedFor !== session.id && (
+          {propStats?.result && (propStats.result.status === 'passed' || propStats.result.status === 'failed') && outcomeDismissedFor !== session.id && !tryAgainOpen && (
+            <PropOutcomeScreen
+              name={sessionDisplayName(session, fmtEtLongDate)}
+              result={propStats.result}
+              stats={propStats}
+              onTryAgain={() => setTryAgainOpen(true)}
+              onAnalytics={() => selectRun(manualRunId(session.id))}
+              onDismiss={() => setOutcomeDismissedFor(session.id)}
+            />
+          )}
+          {sessionEnded && completeDismissedFor !== session.id && !(propStats?.result && propStats.result.status !== 'incomplete') && (
             <SessionCompleteCard
               name={sessionDisplayName(session, fmtEtLongDate)}
               endDate={session.end_date}
@@ -2282,6 +2311,29 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </Suspense>
         )}
       </div>
+
+      {propRulesOpen && session.account.prop_ruleset && (
+        <PropRulesModal
+          sessionId={session.id}
+          openPnl={unrealizedPnl}
+          cursorTime={cursorTime}
+          tradeCount={manualTrades?.length ?? 0}
+          ended={sessionEnded}
+          onOpenAnalytics={() => selectRun(manualRunId(session.id))}
+          onClose={() => setPropRulesOpen(false)}
+        />
+      )}
+
+      {tryAgainOpen && (
+        <TryAgainDialog
+          session={session}
+          onClose={() => setTryAgainOpen(false)}
+          onCreated={(id) => {
+            setTryAgainOpen(false)
+            selectSession(id)
+          }}
+        />
+      )}
 
       {orderDialogOpen &&
         (() => {
@@ -2340,18 +2392,6 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       )}
 
       <div className="relative">
-        {propRulesOpen && session.account.prop_ruleset && (
-          <PropRulesPopover
-            result={propStats?.result}
-            totalTrades={manualTrades?.length ?? 0}
-            rulesetLabel={session.account.prop_ruleset === 'topstep_50k' ? 'Topstep $50k Combine' : 'Custom prop rules'}
-            rules={session.account.prop_rules ?? null}
-            ended={sessionEnded}
-            maxContracts={session.account.max_contracts ?? null}
-            onOpenAnalytics={() => selectRun(manualRunId(session.id))}
-            onClose={() => setPropRulesOpen(false)}
-          />
-        )}
         <SessionBottomBar
           hideTrades={prefs.hideTrades}
           onToggleHideTrades={() => prefs.setHideTrades(!prefs.hideTrades)}

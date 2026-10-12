@@ -36,6 +36,8 @@ export interface RunMeta extends RunSummary {
 export const MANUAL_RUN_PREFIX = 'bt:'
 export const manualRunId = (sessionId: string) => `${MANUAL_RUN_PREFIX}${sessionId}`
 export const manualAllRunId = (instrument: string) => `${MANUAL_RUN_PREFIX}all:${instrument}`
+// G8: every session of every instrument -- the Analytics page filters by instrument itself.
+export const MANUAL_ALL_SESSIONS_RUN_ID = `${MANUAL_RUN_PREFIX}all`
 export const isManualRunId = (runId: string | null): runId is string => runId !== null && runId.startsWith(MANUAL_RUN_PREFIX)
 
 export interface TradeRecord {
@@ -51,6 +53,9 @@ export interface TradeRecord {
   entry_price: number
   exit_price: number
   sl_price: number | null
+  // G8: the stop at the position's fill (sl_price is the stop at close). null on trades with no stop at entry and on trades journaled before G8.
+  entry_sl_price?: number | null
+  entry_tp_price?: number | null
   tp_price: number | null
   sl_points: number | null
   tp_points: number | null
@@ -288,6 +293,8 @@ export interface PersistedPosition {
   entry_time: number
   risk_usd: number | null
   sl_price: number | null
+  entry_sl_price?: number | null
+  entry_tp_price?: number | null
   tp_price: number | null
   auto_breakeven: boolean
   trailing_points: number | null
@@ -524,6 +531,8 @@ export interface CreateManualTradeRequest {
   entry_price: number
   exit_price: number
   sl_price: number | null
+  entry_sl_price?: number | null
+  entry_tp_price?: number | null
   tp_price: number | null
   sl_points: number | null
   tp_points: number | null
@@ -577,4 +586,111 @@ export interface NewsEvent {
   time: number
   event: string
   impact: string
+}
+
+
+// --- FXR_V2_SPEC.md section 6 (G8): the Analytics page and the prop-rules modal.
+// Mirrors models.py; every number is computed server-side.
+
+export interface RrRow {
+  n: number | null
+  trades: number
+  wins: number
+  win_rate: number | null
+  net_pnl_usd: number
+  profit_factor: number | null
+  avg_drawdown_usd: number | null
+  avg_drawdown_r: number | null
+}
+
+export interface RrSimulatorResponse {
+  scope: string
+  instrument: string | null
+  total_trades: number
+  qualified: number
+  excluded: Record<string, number>
+  min_trades: number
+  enough: boolean
+  rows: RrRow[]
+  actual: RrRow | null
+}
+
+export interface PeriodAverage {
+  value: number | null
+  periods: number
+}
+
+export interface AnalyticsStats {
+  trades: number
+  wins: number
+  losses: number
+  win_rate: number | null
+  net_pnl_usd: number
+  gross_profit_usd: number
+  gross_loss_usd: number
+  profit_factor: number | null
+  avg_win_usd: number | null
+  avg_loss_usd: number | null
+  avg_r: number | null
+  r_trades: number
+  avg_planned_rr: number | null
+  planned_rr_trades: number
+  avg_gain_month: PeriodAverage
+  avg_gain_week: PeriodAverage
+  avg_gain_day: PeriodAverage
+}
+
+export interface PeriodBucket {
+  key: string
+  label: string
+  trades: number
+  wins: number
+  net_pnl_usd: number
+  win_rate: number | null
+}
+
+export interface AnalyticsSummary {
+  run_id: string
+  instrument: string | null
+  instruments: string[]
+  sessions: { id: string; name: string; assets: string[] }[]
+  starting_balance: number | null
+  stats: AnalyticsStats
+  equity: { time: number; pnl_usd: number }[]
+  monthly: PeriodBucket[]
+  weekday: PeriodBucket[]
+  heat: { sample: number; avg_r: number | null; max_r: number | null; min_r: number | null }
+}
+
+export interface PropProgress {
+  limit: number | null
+  used: number
+  left: number | null
+  fraction: number
+}
+
+export interface PropRulesStatus {
+  status: 'passed' | 'failed' | 'incomplete'
+  fail_reason: string | null
+  label: string
+  starting_balance: number
+  balance: number
+  open_pnl: number
+  equity: number
+  profit: PropProgress
+  max_loss: PropProgress
+  max_loss_floor: number
+  max_loss_type: string
+  max_loss_frozen: boolean
+  daily_loss: PropProgress
+  daily_locked: boolean
+  day_start_balance: number
+  target_hit: boolean
+  consistency_pct: number | null
+  consistency_passed: boolean | null
+  best_day_pnl: number | null
+  best_day_share: number | null
+  trading_days: number
+  rules: { key: string; label: string; value: string }[]
+  restrictions: { key: string; label: string; detail: string; on: boolean }[]
 }

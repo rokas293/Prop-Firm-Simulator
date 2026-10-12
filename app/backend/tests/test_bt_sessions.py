@@ -218,6 +218,9 @@ def _position_payload(**overrides):
         "risk_usd": 500.0,
         "sl_price": 5000.0,
         "tp_price": 5030.0,
+        # G8: the stop at the fill, kept even when sl_price later moves or is removed.
+        "entry_sl_price": 5000.0,
+        "entry_tp_price": 5030.0,
         "auto_breakeven": False,
         "trailing_points": None,
         "breakeven_r": None,

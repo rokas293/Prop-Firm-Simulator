@@ -322,3 +322,55 @@ export function normalizeClock(text: string): string {
   const m = /^(\d{1,2}):(\d{2})$/.exec(text)
   return m ? `${m[1].padStart(2, '0')}:${m[2]}` : text
 }
+
+// ---------------------------------------------------------------- try again
+
+// FXR_V2_SPEC.md section 6 (G8): after a failed prop session, "Try again" opens a new
+// session on the SAME rules -- account balance, assets, commissions, rule set,
+// discipline lock and strategy checklist carry over, and only where it starts is
+// chosen again (a date, or a random start the server hides).
+export type RetryStart =
+  | { kind: 'pick'; window: ResolvedWindow }
+  | { kind: 'random'; days: number }
+
+export interface RetrySource {
+  name: string | null
+  assets: string[]
+  instrument: string
+  start_time: number
+  end_date: number | null
+  discipline_lock: boolean
+  checklist: string[]
+  account: {
+    starting_balance: number
+    commissions?: Record<string, number>
+    commission_per_contract: number
+    prop_ruleset?: string | null
+    prop_rules?: PropRules | null
+  }
+}
+
+// How long the original ran, in whole days (what the retry defaults to).
+export function originalLengthDays(s: Pick<RetrySource, 'start_time' | 'end_date'>): number {
+  if (s.end_date === null || s.end_date <= s.start_time) return DEFAULT_RANDOM_LENGTH_DAYS
+  return Math.max(1, Math.round((s.end_date - s.start_time) / 86400))
+}
+
+export function buildRetryRequest(source: RetrySource, start: RetryStart, presets: PropPreset[], name: string): CreateSessionRequest {
+  const assets = source.assets.length > 0 ? source.assets : [source.instrument]
+  const commissions: Record<string, number> = {}
+  for (const sym of assets) commissions[sym] = source.account.commissions?.[sym] ?? source.account.commission_per_contract
+  const rules = source.account.prop_rules ?? null
+  const preset = rules ? matchingPreset(rules, source.account.starting_balance, presets) : null
+  return buildCreateRequest({
+    name,
+    balance: source.account.starting_balance,
+    assets,
+    window: start.kind === 'pick' ? start.window : null,
+    random: start.kind === 'random' ? { days: start.days } : null,
+    commissions,
+    disciplineLock: source.discipline_lock,
+    checklist: source.checklist,
+    prop: rules ? { rules, preset } : null,
+  })
+}

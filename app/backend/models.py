@@ -58,6 +58,14 @@ class TradeRecord(BaseModel):
     exit_price: float
     sl_price: Optional[float] = None
     tp_price: Optional[float] = None
+    # G8: the stop the position carried when it FILLED. `sl_price` above is
+    # the stop at close, which break-even, a trail or an "Add stop loss" later
+    # may have moved; only this one says what was risked at entry (the RR
+    # simulator's 1R). None on a trade with no stop at entry, on every engine
+    # trade, and on manual trades journaled before G8 (not knowable).
+    entry_sl_price: Optional[float] = None
+    # The target at the fill (same rules as entry_sl_price; tp_price is the target at close).
+    entry_tp_price: Optional[float] = None
     sl_points: Optional[float] = None
     tp_points: Optional[float] = None
     rr_planned: Optional[float] = None
@@ -331,6 +339,12 @@ class PersistedPosition(BaseModel):
     risk_usd: Optional[float] = None
     sl_price: Optional[float] = None
     tp_price: Optional[float] = None
+    # G8: the stop at the moment of the fill, never updated afterwards (sl_price
+    # moves with break-even / trail / edits). None = it filled with no stop (or
+    # a position saved before G8, which cannot say).
+    entry_sl_price: Optional[float] = None
+    # The target at the fill (same rules as entry_sl_price; tp_price is the target at close).
+    entry_tp_price: Optional[float] = None
     # F4 optional toggles -- carried on the position so they survive a
     # reload same as everything else about it.
     auto_breakeven: bool = False
@@ -551,6 +565,10 @@ class CreateManualTradeRequest(BaseModel):
     exit_price: float
     sl_price: Optional[float] = None
     tp_price: Optional[float] = None
+    # G8: the stop the position carried at its fill (see TradeRecord.entry_sl_price).
+    entry_sl_price: Optional[float] = None
+    # The target at the fill (same rules as entry_sl_price; tp_price is the target at close).
+    entry_tp_price: Optional[float] = None
     sl_points: Optional[float] = None
     tp_points: Optional[float] = None
     rr_planned: Optional[float] = None
@@ -724,3 +742,154 @@ class NewsEvent(BaseModel):
     time: int  # unix seconds, the scheduled release
     event: str
     impact: str  # "high" (the only grade the calendar file lists)
+
+
+# --- FXR_V2_SPEC.md section 6 (G8): the Analytics page and the prop-rules modal. ---
+
+class RrRow(BaseModel):
+    """One line of the RR simulator: every qualifying trade replayed with a
+    target at `n` x its entry risk (n is None on the "as taken" line)."""
+    n: Optional[int] = None
+    trades: int
+    wins: int
+    win_rate: Optional[float] = None
+    net_pnl_usd: float
+    # None when there is no losing trade (an infinite factor).
+    profit_factor: Optional[float] = None
+    # Mean worst open loss before the trade ended, per trade.
+    avg_drawdown_usd: Optional[float] = None
+    avg_drawdown_r: Optional[float] = None
+
+
+class RrSimulatorResponse(BaseModel):
+    scope: str
+    instrument: Optional[str] = None
+    total_trades: int
+    qualified: int
+    # reason -> trades left out (no_stop_at_entry, still_open, ...)
+    excluded: Dict[str, int] = Field(default_factory=dict)
+    min_trades: int
+    enough: bool
+    rows: List[RrRow] = Field(default_factory=list)
+    actual: Optional[RrRow] = None
+
+
+class PeriodAverage(BaseModel):
+    value: Optional[float] = None
+    periods: int = 0
+
+
+class AnalyticsStats(BaseModel):
+    trades: int = 0
+    wins: int = 0
+    losses: int = 0
+    win_rate: Optional[float] = None
+    net_pnl_usd: float = 0.0
+    gross_profit_usd: float = 0.0
+    gross_loss_usd: float = 0.0
+    profit_factor: Optional[float] = None
+    avg_win_usd: Optional[float] = None
+    avg_loss_usd: Optional[float] = None
+    # Mean realized R per trade, over the trades that have one (a stop defined 1R).
+    avg_r: Optional[float] = None
+    r_trades: int = 0
+    # Mean planned R:R at entry: target distance / stop distance, over the trades
+    # that recorded both an entry stop and an entry target.
+    avg_planned_rr: Optional[float] = None
+    planned_rr_trades: int = 0
+    avg_gain_month: PeriodAverage = Field(default_factory=PeriodAverage)
+    avg_gain_week: PeriodAverage = Field(default_factory=PeriodAverage)
+    avg_gain_day: PeriodAverage = Field(default_factory=PeriodAverage)
+
+
+class EquityStep(BaseModel):
+    time: int
+    pnl_usd: float  # cumulative net P&L after this exit
+
+
+class PeriodBucket(BaseModel):
+    key: str        # "2025-04" for a month, "0".."4" (Mon..Fri) for a weekday
+    label: str
+    trades: int
+    wins: int
+    net_pnl_usd: float
+    win_rate: Optional[float] = None
+
+
+class HeatOnWinners(BaseModel):
+    """How far winning trades went against the entry before they won, in R
+    (mae_r from the sim broker)."""
+    sample: int = 0
+    avg_r: Optional[float] = None
+    max_r: Optional[float] = None
+    min_r: Optional[float] = None
+
+
+class AnalyticsSession(BaseModel):
+    id: str
+    name: str
+    assets: List[str]
+
+
+class AnalyticsSummary(BaseModel):
+    run_id: str
+    instrument: Optional[str] = None
+    instruments: List[str] = Field(default_factory=list)
+    sessions: List[AnalyticsSession] = Field(default_factory=list)
+    starting_balance: Optional[float] = None
+    stats: AnalyticsStats
+    equity: List[EquityStep] = Field(default_factory=list)
+    monthly: List[PeriodBucket] = Field(default_factory=list)
+    weekday: List[PeriodBucket] = Field(default_factory=list)
+    heat: HeatOnWinners = Field(default_factory=HeatOnWinners)
+
+
+class PropRuleRow(BaseModel):
+    key: str
+    label: str
+    value: str
+
+
+class PropRestriction(BaseModel):
+    key: str
+    label: str
+    detail: str
+    on: bool
+
+
+class PropProgress(BaseModel):
+    """One progress card: `used` of `limit`, `left` to go. All dollars."""
+    limit: Optional[float] = None
+    used: float = 0.0
+    left: Optional[float] = None
+    fraction: float = 0.0   # used / limit, 0..1
+
+
+class PropRulesStatus(BaseModel):
+    """Where a prop session stands against its rules RIGHT NOW. Every number is
+    read from propbt's PropRulesTracker after replaying the journaled trades (and
+    the open position's float, passed in as `open_pnl`); the frontend renders it."""
+    status: str                       # passed | failed | incomplete
+    fail_reason: Optional[str] = None
+    label: str
+    starting_balance: float
+    balance: float                    # realized
+    open_pnl: float
+    equity: float                     # realized + open
+    profit: PropProgress              # target: used = realized profit
+    max_loss: PropProgress            # used = how much of the loss budget is gone
+    max_loss_floor: float
+    max_loss_type: str
+    max_loss_frozen: bool
+    daily_loss: PropProgress
+    daily_locked: bool
+    day_start_balance: float
+    target_hit: bool
+    consistency_pct: Optional[float] = None
+    consistency_passed: Optional[bool] = None
+    best_day_pnl: Optional[float] = None
+    # best_day_pnl / realized profit, the ratio the consistency rule limits (None until in profit).
+    best_day_share: Optional[float] = None
+    trading_days: int = 0
+    rules: List[PropRuleRow] = Field(default_factory=list)
+    restrictions: List[PropRestriction] = Field(default_factory=list)

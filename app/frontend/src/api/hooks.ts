@@ -295,6 +295,7 @@ export function useCreateManualTrade() {
       void queryClient.invalidateQueries({ queryKey: ['bt-session-trades', sessionId] })
       // A closed trade can resolve a Topstep Combine -- refresh its verdict.
       void queryClient.invalidateQueries({ queryKey: ['stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['manual-analytics'] })
       void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
     },
   })
@@ -395,6 +396,35 @@ export function useDeleteTradeScreenshot() {
 
 // FXR_V2_SPEC.md section 6 (G7): the economic calendar's schedule between two times
 // (unix seconds). Only when / which / how important -- never an outcome.
+// G8: the Analytics page. Both are keyed by the scope's run id and the instrument
+// filter; a new journaled trade invalidates them through ['manual-analytics'].
+export function useAnalyticsSummary(runId: string | null, instrument: string | null) {
+  return useQuery({
+    queryKey: ['manual-analytics', 'summary', runId, instrument],
+    queryFn: () => api.getAnalyticsSummary(runId as string, instrument),
+    enabled: runId !== null,
+  })
+}
+
+export function useRrSimulator(runId: string | null, instrument: string | null) {
+  return useQuery({
+    queryKey: ['manual-analytics', 'rr', runId, instrument],
+    queryFn: () => api.getRrSimulator(runId as string, instrument),
+    enabled: runId !== null,
+  })
+}
+
+// The prop-rules modal's numbers. `openPnl` is the sim broker's float at `cursorTime`;
+// the server judges it (PropRulesTracker). Refetched when either changes.
+export function usePropRulesStatus(sessionId: string | null, openPnl: number, cursorTime: number | null, tradeCount: number) {
+  return useQuery({
+    queryKey: ['manual-analytics', 'prop-rules', sessionId, openPnl, cursorTime, tradeCount],
+    queryFn: () => api.getPropRulesStatus(sessionId as string, { open_pnl: openPnl, cursor_time: cursorTime ?? undefined }),
+    enabled: sessionId !== null,
+    placeholderData: (previous) => previous,
+  })
+}
+
 export function useNewsEvents(from: number | null, to: number | null) {
   return useQuery({
     queryKey: ['news-events', from, to],

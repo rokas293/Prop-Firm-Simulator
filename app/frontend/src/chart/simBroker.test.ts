@@ -156,6 +156,8 @@ describe('closePosition -- deterministic fill reproducibility', () => {
       exitType: 'manual_close' as const,
       slPrice: null,
       tpPrice: null,
+      entrySlPrice: null,
+      entryTpPrice: null,
       pnlUsd: 197.4,
       commissionUsd: 2.6,
       rMultiple: 1.974,
@@ -386,6 +388,8 @@ describe('advanceReplay -- deterministic order fills in replay', () => {
       autoBreakeven: false,
       trailingPoints: null,
       slPrice: null,
+      entrySlPrice: null,
+      entryTpPrice: null,
       tpPrice: null,
       // A position that came from a working order journals under that order's id.
       tradeKey: 'limit-1',
@@ -673,6 +677,57 @@ describe('advanceReplay -- auto break-even and trailing stop (F4)', () => {
     expect(r4.closedTrades[0].rMultiple).toBe(0)
   })
 
+  it('G8: the stop at entry survives the stop moving, and is what the journaled trade carries', () => {
+    const withStop: OpenPosition = { ...bePosition, slPrice: 4990, entrySlPrice: 4990 }
+    const r1 = advanceReplay(BE_BARS, 0, 1, withStop, [], CONTRACT_SPECS.MES, 0)
+    const r2 = advanceReplay(BE_BARS, 1, 2, r1.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r2.position?.slPrice).toBe(5000) // moved to break-even ...
+    expect(r2.position?.entrySlPrice).toBe(4990) // ... the stop it was opened with is not
+    const r4 = advanceReplay(BE_BARS, 2, 4, r2.position, [], CONTRACT_SPECS.MES, 0)
+    expect(r4.closedTrades[0].slPrice).toBe(5000)
+    expect(r4.closedTrades[0].entrySlPrice).toBe(4990)
+  })
+
+  it('G8: the target at entry survives the target being dragged, and journals as entry_tp_price', () => {
+    const opened: OpenPosition = { ...bePosition, autoBreakeven: false, slPrice: 4990, entrySlPrice: 4990, tpPrice: 5100, entryTpPrice: 5100 }
+    const dragged: OpenPosition = { ...opened, tpPrice: 5018 }
+    const result = advanceReplay(BE_BARS, 0, 3, dragged, [], CONTRACT_SPECS.MES, 0)
+    const closed = result.closedTrades[0]
+    expect(closed.tpPrice).toBe(5018)
+    expect(closed.entryTpPrice).toBe(5100)
+    expect(toPersistedPosition(dragged).entry_tp_price).toBe(5100)
+  })
+
+  it('G8: a stop added after entry is not an entry stop', () => {
+    // Opened with no stop; the user later drags one in (slPrice only, as the workspace does).
+    const opened: OpenPosition = { ...bePosition, autoBreakeven: false, slPrice: null, entrySlPrice: null }
+    const edited: OpenPosition = { ...opened, slPrice: 4995 }
+    const result = advanceReplay(BE_BARS, 0, 4, edited, [], CONTRACT_SPECS.MES, 0)
+    const closed = result.closedTrades[0]
+    expect(closed.slPrice).toBe(4995)
+    expect(closed.entrySlPrice).toBeNull()
+  })
+
+  it('G8: a working order fills into a position whose entry stop is the order stop', () => {
+    const order: WorkingOrder = {
+      id: 'o1',
+      side: 'long',
+      orderType: 'limit',
+      price: 4996,
+      contracts: 1,
+      slPrice: 4990,
+      tpPrice: null,
+      riskUsd: 30,
+      placedTime: 0,
+      placedIndex: 0,
+      autoBreakeven: false,
+      trailingPoints: null,
+    }
+    const result = advanceReplay(BE_BARS, 0, 1, null, [order], CONTRACT_SPECS.MES, 0)
+    expect(result.position?.entryPrice).toBe(4996)
+    expect(result.position?.entrySlPrice).toBe(4990)
+  })
+
   const TRAIL_BARS: Bar[] = [
     { time: 0, open: 5000, high: 5000, low: 5000, close: 5000, volume: 100 },
     // sets the first trail: high 5020 - 10pt trail = 5010.
@@ -755,6 +810,8 @@ describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder 
     riskUsd: 250,
     slPrice: 5030,
     tpPrice: 4990,
+    entrySlPrice: 5030,
+    entryTpPrice: 4990,
     autoBreakeven: true,
     trailingPoints: 8,
     tradeKey: 'k9',
@@ -779,6 +836,8 @@ describe('toPersistedPosition / fromPersistedPosition / toPersistedWorkingOrder 
       risk_usd: 250,
       sl_price: 5030,
       tp_price: 4990,
+      entry_sl_price: 5030,
+      entry_tp_price: 4990,
       auto_breakeven: true,
       trailing_points: 8,
       breakeven_r: null,
