@@ -1,57 +1,26 @@
-"""The bar loop. Nothing in here changes fills, PnL, or prop-rule
-decisions -- `equity_log` (added for the run-bundle/viz layer) only
-RECORDS per-bar bookkeeping that already exists in `status`/`prop_rules`
-at the point it's captured; it doesn't feed back into any decision.
+"""The offline backtest: tag a whole frame of bars, then step the engine over
+it until the Combine resolves or the data ends.
 
-This is where the no-look-ahead guarantee lives end to end:
-
-For each bar t (in increasing timestamp order):
-  1. broker.process_bar(t) resolves fills for orders/positions decided on
-     STRICTLY earlier bars, using only bar t's own OHLC (this is what makes
-     a decision made at bar t-1 execute "at bar t", i.e. that order's t+1).
-  2. Portfolio marks to market as of bar t's close -> balance & equity.
-  3. PropRulesTracker.on_bar consumes that balance/equity (MLL breach,
-     daily loss lock, target/consistency).
-  4. Only THEN does the strategy see bar t (via `history = bars[:i+1]`, a
-     slice that cannot physically contain bar t+1 or later) and return
-     orders, which are submitted for the NEXT bar's process_bar call.
-
-Steps 1-3 for bar t never depend on anything the strategy decides at step 4
-for bar t (that's next iteration's problem), and step 4 never sees data
-past bar t's own close. Both directions of the no-look-ahead guarantee are
-structural, not just convention -- see tests/test_backtester.py.
+The bar loop itself -- and with it the end-to-end no-look-ahead guarantee
+(fills for decisions on STRICTLY earlier bars, then mark-to-market, then prop
+rules, and only then the strategy, which sees `history = bars[: i+1]`) -- lives
+in `propbt.engine.stepper.EngineStepper`, so that Autopilot's replay session
+and this function are one computation. See that module's docstring, and
+tests/test_backtester.py for the structural tests.
 """
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from propbt.config import ContractSpec, PropRulesConfig, SessionsConfig
-from propbt.data.sessions import tag_sessions
-from propbt.engine.broker import Broker, Rejection
-from propbt.engine.events import Bar, Fill, FillType
-from propbt.engine.portfolio import Portfolio
-from propbt.engine.prop_rules import CombineResult, PropRulesTracker
-from propbt.strategy.base import BarState, Strategy
-
-
-@dataclass(frozen=True)
-class EquityLogRow:
-    """Per-bar prop-rule bookkeeping, for the run-bundle/viz layer only --
-    nothing here is read back by the engine. `daily_loss_floor` and
-    `target_level` aren't stored (they're trivial derivations from
-    day_start_balance/PropRulesConfig); the bundle writer computes them."""
-    ts: pd.Timestamp
-    balance: float
-    equity: float
-    mll_floor: float
-    trading_day: dt.date
-    day_start_balance: float
-    breached: bool         # True only on the exact bar a newly_failed MLL breach occurred
-    daily_locked: bool
+from propbt.engine.broker import Rejection
+from propbt.engine.events import Fill
+from propbt.engine.prop_rules import CombineResult
+from propbt.engine.stepper import EngineStepper, EquityLogRow  # noqa: F401 -- EquityLogRow is re-exported
+from propbt.strategy.base import Strategy
 
 
 @dataclass
@@ -80,78 +49,19 @@ def run_backtest(
     -- but they still count as `history` once trading does start, since
     that's legitimate already-happened market data, not a look-ahead.
     """
-    tagged = tag_sessions(df, sessions_config)
-
-    broker = Broker(
-        contracts=contracts,
-        slippage_ticks=slippage_ticks,
-        commissions=prop_rules_config.commissions,
-        max_open_contracts=prop_rules_config.max_open_contracts,
+    stepper = EngineStepper(
+        symbol=symbol, contracts=contracts, prop_rules_config=prop_rules_config,
+        sessions_config=sessions_config, slippage_ticks=slippage_ticks,
+        strategy=strategy, trading_start_ts=trading_start_ts,
     )
-    portfolio = Portfolio(contracts=contracts, start_balance=prop_rules_config.start_balance)
-    prop_rules = PropRulesTracker(prop_rules_config)
-    equity_log: List[EquityLogRow] = []
+    stepper.append(df)
+    stepper.run()
 
-    n = len(tagged)
-    start_i = 0 if trading_start_ts is None else tagged.index.searchsorted(trading_start_ts, side="left")
-    for i in range(start_i, n):
-        row = tagged.iloc[i]
-        trading_day = row["trading_day"]
-        if trading_day is None:
-            continue  # maintenance-halt bar -- not a real trading bar
-
-        bar = Bar(
-            symbol=symbol, ts=tagged.index[i], open=row["open"], high=row["high"],
-            low=row["low"], close=row["close"], volume=int(row["volume"]),
-            trading_day=trading_day, session=row["session"],
-        )
-
-        # 1. fills for decisions made on earlier bars, using only bar i's OHLC
-        for f in broker.process_bar(bar):
-            portfolio.apply_fill(f)
-
-        # 2. mark to market as of this bar's close
-        balance = portfolio.balance
-        equity = portfolio.mark_to_market(bar.ts, {symbol: bar.close}, broker.open_positions)
-
-        # 3. prop rules
-        status = prop_rules.on_bar(bar.ts, bar.trading_day, balance, equity)
-
-        equity_log.append(EquityLogRow(
-            ts=bar.ts, balance=balance, equity=equity, mll_floor=status.mll_floor,
-            trading_day=trading_day, day_start_balance=prop_rules.day_start_balance,
-            breached=status.newly_failed, daily_locked=status.is_daily_locked,
-        ))
-
-        if status.newly_failed:
-            for f in broker.flatten(bar, FillType.MLL_BREACH_FLATTEN):
-                portfolio.apply_fill(f)
-            break
-
-        if status.newly_daily_locked:
-            for f in broker.flatten(bar, FillType.DAILY_LOCK_FLATTEN):
-                portfolio.apply_fill(f)
-
-        if status.newly_passed:
-            break
-
-        # 4. strategy sees bar i (and everything before it) only
-        if not status.is_daily_locked:
-            history = tagged.iloc[: i + 1]
-            state = BarState(
-                symbol=symbol, i=i, bar=bar, history=history,
-                open_positions=dict(broker.open_positions),
-                balance=portfolio.balance, equity=equity,
-                daily_locked=status.is_daily_locked, trading_day=trading_day,
-            )
-            for order in strategy.on_bar(state):
-                broker.submit_order(order)
-
-    combine_result = prop_rules.finalize(final_balance=portfolio.balance)
+    combine_result = stepper.finalize()
     return BacktestResult(
         combine=combine_result,
-        fills=portfolio.fills,
-        equity_curve=portfolio.equity_curve,
-        rejections=broker.rejections,
-        equity_log=equity_log,
+        fills=stepper.portfolio.fills,
+        equity_curve=stepper.portfolio.equity_curve,
+        rejections=stepper.rejections,
+        equity_log=stepper.equity_log,
     )

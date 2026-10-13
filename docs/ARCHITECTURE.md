@@ -23,7 +23,10 @@ propbt/
     broker.py        # fills, slippage (ticks), commissions, position & contract limits
     portfolio.py     # equity curve (realized + intraday unrealized)
     prop_rules.py    # Topstep MLL trail, daily loss lock, target, consistency
-    backtester.py    # the bar loop; enforces execute-at-t+1
+    stepper.py       # EngineStepper: the per-bar loop (fills -> mark -> prop rules -> strategy),
+                     # fed bars in batches; enforces execute-at-t+1. Shared by the offline
+                     # backtest and Autopilot, so they are one computation
+    backtester.py    # run_backtest = tag the frame, then step the engine until done
   strategy/
     base.py          # Strategy interface: on_bar(state) -> orders
     session_open.py  # continuation + mean-reversion legs

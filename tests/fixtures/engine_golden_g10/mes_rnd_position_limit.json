@@ -1,0 +1,1427 @@
+{
+ "meta": {
+  "base_timeframe": "1m",
+  "config_hash": "6b3732998d774689cf2e91ef1b4788cbd2e7075d4eea668019135f1688d285c6",
+  "config_name": "engine_golden",
+  "date_from": "2024-02-05",
+  "date_to": "2024-02-07",
+  "instrument": "MES",
+  "is_oos_split_date": "2024-10-14",
+  "params_count": 0,
+  "result": {
+   "days_to_fail": null,
+   "fail_reason": null,
+   "passed": false
+  }
+ },
+ "provenance": {
+  "git_dirty_engine_files": "",
+  "git_head": "9c1c9c93337d84cc583b97686ae2b647fd98bd4b",
+  "recorded_with": "monolithic run_backtest loop (pre-G10 stepper extraction)"
+ },
+ "stats": {
+  "by_leg": {},
+  "by_session": {},
+  "overall": {
+   "expectancy_r": null,
+   "expectancy_usd": null,
+   "max_drawdown_usd": 0.0,
+   "net_pnl_usd": 0.0,
+   "net_r": null,
+   "profit_factor": null,
+   "trades": 0,
+   "win_rate": null
+  },
+  "result": {
+   "consistency_passed": null,
+   "fail_reason": null,
+   "final_balance": 50000.0,
+   "status": "incomplete",
+   "target_hit": false,
+   "trading_days": 4
+  }
+ },
+ "summary": {
+  "case": {
+   "bundle": true,
+   "combine_attempt_from": null,
+   "end": "2024-02-07",
+   "max_calendar_days": null,
+   "name": "mes_rnd_position_limit",
+   "note": "every entry over the 5-contract cap: position_limit rejections, no fills",
+   "prop": "topstep",
+   "random": {
+    "contracts": 6,
+    "prob": 0.05,
+    "seed": 1,
+    "sl": 6.0,
+    "tp": 12.0
+   },
+   "start": "2024-02-05",
+   "strategy": "random",
+   "symbol": "MES"
+  },
+  "combine": {
+   "consistency_passed": null,
+   "day_logs": [
+    {
+     "daily_loss_locked": false,
+     "daily_pnl": 0.0,
+     "end_balance": 50000.0,
+     "mll_floor_after": 48000.0,
+     "mll_frozen_after": false,
+     "start_balance": 50000.0,
+     "trading_day": "2024-02-05"
+    },
+    {
+     "daily_loss_locked": false,
+     "daily_pnl": 0.0,
+     "end_balance": 50000.0,
+     "mll_floor_after": 48000.0,
+     "mll_frozen_after": false,
+     "start_balance": 50000.0,
+     "trading_day": "2024-02-06"
+    },
+    {
+     "daily_loss_locked": false,
+     "daily_pnl": 0.0,
+     "end_balance": 50000.0,
+     "mll_floor_after": 48000.0,
+     "mll_frozen_after": false,
+     "start_balance": 50000.0,
+     "trading_day": "2024-02-07"
+    },
+    {
+     "daily_loss_locked": false,
+     "daily_pnl": 0.0,
+     "end_balance": 50000.0,
+     "mll_floor_after": 48000.0,
+     "mll_frozen_after": false,
+     "start_balance": 50000.0,
+     "trading_day": "2024-02-08"
+    }
+   ],
+   "fail_reason": null,
+   "fail_ts": null,
+   "final_balance": 50000.0,
+   "pass_ts": null,
+   "status": "incomplete",
+   "target_hit": false,
+   "target_hit_ts": null
+  },
+  "equity_curve_n": 4140,
+  "equity_curve_sha256": "20d7f4c2803d47e9c5e081526398338524555dd62080c6f4dabf3974d78a0ca6",
+  "fills": [],
+  "rejections": [
+   {
+    "order_ts": "2024-02-05T00:09:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T00:10:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T00:12:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T00:13:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T00:17:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T00:18:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T00:23:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T00:24:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T00:31:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T00:32:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T00:51:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T00:52:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T01:05:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T01:06:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T01:24:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T01:25:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T01:44:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T01:45:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T01:55:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T01:56:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T02:10:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T02:11:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T02:19:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T02:20:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T02:47:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T02:48:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T02:48:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T02:49:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T03:09:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T03:10:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T03:42:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T03:43:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T04:01:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T04:02:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T04:05:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T04:06:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T04:22:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T04:23:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T05:02:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T05:03:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T05:29:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T05:30:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T05:52:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T05:53:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T06:05:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T06:06:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T06:21:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T06:22:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T06:50:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T06:51:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T07:19:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T07:20:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T07:21:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T07:22:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T07:56:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T07:57:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T08:06:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T08:07:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T08:22:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T08:23:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T08:53:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T08:54:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T08:58:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T08:59:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T09:30:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T09:31:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T10:04:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T10:05:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T10:27:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T10:28:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T10:38:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T10:39:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T10:46:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T10:47:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T10:48:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T10:49:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T10:51:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T10:52:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T11:31:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T11:32:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T11:37:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T11:38:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T11:41:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T11:42:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T12:14:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T12:15:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T13:13:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T13:14:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T13:39:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T13:40:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T13:44:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T13:45:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T14:28:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T14:29:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T14:49:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T14:50:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T15:39:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T15:40:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T16:35:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T16:36:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T16:45:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T16:46:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T16:50:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T16:51:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T16:55:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T16:56:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T17:41:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T17:42:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T18:02:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T18:03:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T18:17:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T18:18:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T18:18:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T18:19:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T19:01:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T19:02:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T19:25:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T19:26:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T19:35:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T19:36:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T19:41:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T19:42:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T20:11:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T20:12:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T21:47:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T21:48:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T23:08:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T23:09:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T23:15:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T23:16:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-05T23:35:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-05T23:36:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T00:06:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T00:07:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T00:18:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T00:19:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T00:30:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T00:31:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T01:02:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T01:03:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T01:05:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T01:06:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T01:24:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T01:25:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T01:25:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T01:26:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T01:27:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T01:28:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T01:30:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T01:31:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T01:44:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T01:45:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T02:16:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T02:17:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T02:29:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T02:30:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T02:32:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T02:33:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T03:11:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T03:12:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T03:15:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T03:16:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T03:25:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T03:26:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T03:43:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T03:44:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T03:47:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T03:48:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T03:49:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T03:50:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T04:03:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T04:04:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T04:15:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T04:16:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T04:32:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T04:33:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T05:00:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T05:01:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T05:39:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T05:40:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T05:48:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T05:49:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T05:50:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T05:51:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T06:16:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T06:17:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T06:28:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T06:29:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T06:30:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T06:31:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T06:48:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T06:49:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T06:58:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T06:59:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T07:21:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T07:22:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T07:28:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T07:29:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T07:51:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T07:52:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T08:17:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T08:18:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T08:35:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T08:36:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T09:21:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T09:22:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T11:12:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T11:13:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T11:13:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T11:14:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T11:36:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T11:37:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T11:43:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T11:44:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T11:52:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T11:53:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T12:02:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T12:03:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T12:05:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T12:06:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T12:41:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T12:42:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T13:32:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T13:33:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T13:50:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T13:51:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T14:07:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T14:08:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T14:14:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T14:15:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T14:37:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T14:38:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T14:45:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T14:46:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T15:26:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T15:27:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T15:35:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T15:36:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T15:42:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T15:43:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T15:50:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T15:51:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T15:51:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T15:52:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T16:10:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T16:11:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T16:26:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T16:27:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T16:41:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T16:42:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T16:52:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T16:53:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T16:55:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T16:56:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:06:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:07:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:07:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:08:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:11:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:12:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:12:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:13:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:17:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:18:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:29:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:30:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:44:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:45:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:48:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:49:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T17:58:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T17:59:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T18:00:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T18:01:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T18:56:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T18:57:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T19:13:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T19:14:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T19:14:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T19:15:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T19:18:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T19:19:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T19:24:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T19:25:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T19:30:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T19:31:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T20:10:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T20:11:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T20:17:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T20:18:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T21:12:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T21:13:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T21:29:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T21:30:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T21:45:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T21:46:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T23:09:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T23:10:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T23:15:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T23:16:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T23:52:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-06T23:53:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-06T23:59:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T00:00:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T00:02:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T00:03:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T00:03:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T00:04:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T00:25:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T00:26:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T00:30:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T00:31:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T01:39:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T01:40:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T02:10:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T02:11:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T02:34:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T02:35:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T02:59:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T03:00:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T03:09:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T03:10:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T03:14:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T03:15:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T03:25:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T03:26:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T04:04:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T04:05:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T04:05:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T04:06:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T04:06:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T04:07:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T04:18:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T04:19:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T04:48:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T04:49:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T05:19:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T05:20:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T05:20:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T05:21:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T06:04:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T06:05:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T07:23:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T07:24:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T07:31:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T07:32:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T07:40:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T07:41:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T07:45:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T07:46:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T07:58:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T07:59:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T08:38:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T08:39:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T08:54:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T08:55:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T08:57:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T08:58:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T09:04:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T09:05:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T09:16:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T09:17:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T09:39:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T09:40:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T09:41:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T09:42:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T09:55:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T09:56:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T10:01:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T10:02:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T11:40:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T11:41:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T11:48:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T11:49:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T11:50:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T11:51:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T12:18:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T12:19:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T12:32:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T12:33:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T13:32:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T13:33:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T14:12:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T14:13:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T14:17:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T14:18:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T14:18:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T14:19:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T14:23:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T14:24:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T14:28:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T14:29:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T14:36:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T14:37:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T15:15:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T15:16:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T16:00:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T16:01:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T16:19:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T16:20:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T16:35:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T16:36:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T16:38:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T16:39:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T17:19:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T17:20:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T17:34:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T17:35:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T17:37:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T17:38:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T18:44:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T18:45:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T19:13:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T19:14:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T19:21:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T19:22:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T19:28:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T19:29:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T19:32:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T19:33:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T20:04:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T20:05:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T20:49:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T20:50:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T21:09:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T21:10:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T21:10:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T21:11:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T21:38:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T21:39:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T23:54:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T23:55:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T23:57:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T23:58:00+00:00"
+   },
+   {
+    "order_ts": "2024-02-07T23:58:00+00:00",
+    "reason": "position_limit",
+    "symbol": "MES",
+    "ts": "2024-02-07T23:59:00+00:00"
+   }
+  ],
+  "trades": []
+ }
+}

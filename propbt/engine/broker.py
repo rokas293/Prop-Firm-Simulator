@@ -52,7 +52,7 @@ class Broker:
         contracts: Dict[str, ContractSpec],
         slippage_ticks: int,
         commissions: Dict[str, float],
-        max_open_contracts: int,
+        max_open_contracts: Optional[int],   # None = no position cap (a custom rule set may have none)
     ):
         self.contracts = contracts
         self.slippage_ticks = slippage_ticks
@@ -126,7 +126,9 @@ class Broker:
         if bar.symbol in self.open_positions:
             self.rejections.append(Rejection(bar.ts, bar.symbol, order.ts, "position_already_open"))
             return []
-        if self.total_open_contracts + order.contracts > self.max_open_contracts:
+        if self.max_open_contracts is not None and (
+            self.total_open_contracts + order.contracts > self.max_open_contracts
+        ):
             self.rejections.append(Rejection(bar.ts, bar.symbol, order.ts, "position_limit"))
             return []
 

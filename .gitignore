@@ -19,6 +19,8 @@ app/frontend/dist/
 
 # Market data and secrets stay out of git (supply your own data; see README)
 *.parquet
+# ...except the recorded engine reference (derived results, not market data)
+!tests/fixtures/engine_golden_g10/*.parquet
 *.dbn
 *.csv
 data/
