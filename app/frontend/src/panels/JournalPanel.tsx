@@ -32,6 +32,7 @@ import { useTradeStore } from '../state/tradeStore'
 import { fmtPrice, fmtR, fmtUsd } from '../format'
 import { fmtEtShort } from '../timeFormat'
 import EmptyState from '../components/EmptyState'
+import CsvExportMenu from '../components/CsvExportMenu'
 import { OPEN_ENTRY_ID, type OpenJournalEntry } from './journalEntry'
 import { FILTER_SELECT, FilterChips, FilterField, FiltersPopover } from '../components/FilterBar'
 import { activeFilterChips } from '../compass/filterChips'
@@ -59,6 +60,8 @@ interface JournalPanelProps {
   onAddScreenshot: (tradeId: number, body: AddScreenshotRequest) => void
   onDeleteScreenshot: (tradeId: number, screenshotId: string) => void
   onClose: () => void
+  // The session the journal is of (the CSV export's "this session").
+  sessionId?: string | null
   // Opens with this trade selected (handed over from the analytics
   // workspace's "Open in journal") -- applied once, on mount/when it changes.
   initialSelectedId?: number | null
@@ -78,6 +81,7 @@ export default function JournalPanel({
   onAddScreenshot,
   onDeleteScreenshot,
   onClose,
+  sessionId = null,
   initialSelectedId = null,
 }: JournalPanelProps) {
   const filters = useTradeStore((s) => s.filters)
@@ -274,6 +278,9 @@ export default function JournalPanel({
     <div className="flex h-full w-[360px] flex-none flex-col border-l border-border bg-bg">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-[13px] font-medium text-text">Journal</span>
+        <span className="ml-auto mr-1">
+          <CsvExportMenu sessionId={sessionId} />
+        </span>
         <button
           onClick={onClose}
           aria-label="Close journal"

@@ -10,10 +10,12 @@ import { POPOVER_FORM_PADDING, POPOVER_MENU_ROW, POPOVER_SHELL } from '../compon
 import { etWallTimeToUnix, fmtEtInput } from '../timeFormat'
 import NewsCalendarMenu, { type NewsCalendarProps } from './NewsCalendarMenu'
 import { IconButton } from './SessionTopBar'
+import LayoutsMenu, { type LayoutsProps } from './LayoutsMenu'
 
 export const CHART_TYPES: { id: KLCandleType; label: string }[] = [
   { id: 'candle_solid', label: 'Candles' },
   { id: 'candle_stroke', label: 'Hollow candles' },
+  { id: 'heikin_ashi', label: 'Heikin Ashi' },
   { id: 'ohlc', label: 'Bars' },
   { id: 'area', label: 'Line' },
 ]
@@ -186,6 +188,7 @@ export default function SessionChartToolbar({
   calendar,
   indicatorCount,
   onOpenIndicators,
+  layouts,
   candleType,
   onCandleTypeChange,
   canUndo,
@@ -208,6 +211,7 @@ export default function SessionChartToolbar({
   calendar: NewsCalendarProps
   indicatorCount: number
   onOpenIndicators: () => void
+  layouts: LayoutsProps
   candleType: KLCandleType
   onCandleTypeChange: (t: KLCandleType) => void
   canUndo: boolean
@@ -274,6 +278,7 @@ export default function SessionChartToolbar({
         Indicators
         <span className="tabular-nums text-text-muted">{indicatorCount}</span>
       </button>
+      <LayoutsMenu {...layouts} />
 
       <div className="mx-2" aria-hidden />
 

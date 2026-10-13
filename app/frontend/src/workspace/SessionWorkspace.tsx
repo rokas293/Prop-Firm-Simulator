@@ -79,7 +79,7 @@ import KLDrawingToolbar from '../panels/KLDrawingToolbar'
 import IndicatorDialog from '../panels/IndicatorDialog'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import { canRedo, canUndo, emptyHistory, recordDrawings, redo, undo, type DrawingHistory } from '../chart/kl/drawingHistory'
-import { useKLDrawingStore } from '../state/klDrawingStore'
+import { cloneDrawings, useKLDrawingStore, type NamedLayout } from '../state/klDrawingStore'
 import { DRAWING_SHORTCUTS, isTypingTarget } from '../keyboard/shortcuts'
 import TradePanel, { type PositionRow, type WorkingOrderRow } from './TradePanel'
 import PropRulesModal from './PropRulesModal'
@@ -160,6 +160,7 @@ const BASE_TF_SECONDS: Record<string, number> = Object.fromEntries(SESSION_TIMEF
 // (so the user's view survives the swap), with a margin of lookahead so the
 // next trigger is a long way off. LOOKAHEAD must stay > TRIGGER.
 const NO_ORDERS: WorkingOrder[] = []
+const NO_LAYOUTS: NamedLayout[] = []
 const REANCHOR_TRIGGER_BARS = 20
 const REANCHOR_LOOKAHEAD_BARS = 200
 // The same, backwards (a rewind, G5): within REANCHOR_BACK_TRIGGER_BARS of the first
@@ -1971,9 +1972,50 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const applyHistoryStep = (step: ReturnType<typeof undo>) => {
     if (!step || !session) return
     drawingHistoryRef.current = step.history
-    useKLDrawingStore.getState().setOverlaysForInstrument(activeInstrument, step.restore)
+    useKLDrawingStore.getState().setOverlaysForSession(session.id, activeInstrument, step.restore)
     klChartRef.current?.reloadDrawings()
     setHistoryVersion((v) => v + 1)
+  }
+  // G9: this session's own drawings (the shared layer is read-only and shown only when
+  // switched on), and its named layouts.
+  const sharedVisible = useKLDrawingStore((s) => !!s.sharedVisibleBySession[session?.id ?? ''])
+  const sharedCount = useKLDrawingStore((s) => s.overlaysByInstrument[activeInstrument]?.length ?? 0)
+  const savedLayouts = useKLDrawingStore((s) => s.layoutsBySession[session?.id ?? ''] ?? NO_LAYOUTS)
+  const saveCurrentLayout = (name: string) => {
+    if (!session) return
+    const prefsNow = useIndicatorStore.getState()
+    const store = useKLDrawingStore.getState()
+    const layout: NamedLayout = {
+      id: `layout-${crypto.randomUUID()}`,
+      name,
+      indicators: {
+        sessionShading: prefsNow.sessionShading,
+        fairValue: prefsNow.fairValue,
+        newsEvents: prefsNow.newsEvents,
+        vwap: prefsNow.vwap,
+        ema20: prefsNow.ema20,
+        ema50: prefsNow.ema50,
+        atr14: prefsNow.atr14,
+        volume: prefsNow.volume,
+      },
+      candleType: prefs.candleType,
+      timeframe: chartTf,
+      drawings: cloneDrawings(store.overlaysBySession[session.id] ?? {}),
+      sharedVisible: !!store.sharedVisibleBySession[session.id],
+    }
+    store.saveLayout(session.id, layout)
+  }
+  const loadLayout = (id: string) => {
+    if (!session) return
+    const store = useKLDrawingStore.getState()
+    const layout = (store.layoutsBySession[session.id] ?? []).find((l) => l.id === id)
+    if (!layout) return
+    useIndicatorStore.setState({ ...layout.indicators })
+    prefs.setCandleType(layout.candleType as typeof prefs.candleType)
+    handleChartTimeframeChange(layout.timeframe)
+    store.setSessionDrawings(session.id, cloneDrawings(layout.drawings))
+    store.setSharedVisible(session.id, layout.sharedVisible)
+    klChartRef.current?.reloadDrawings()
   }
   const handleUndo = () => applyHistoryStep(undo(drawingHistoryRef.current))
   const handleRedo = () => applyHistoryStep(redo(drawingHistoryRef.current))
@@ -2145,6 +2187,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         }}
         indicatorCount={activeIndicatorCount}
         onOpenIndicators={() => setIndicatorDialogOpen(true)}
+        layouts={{
+          layouts: savedLayouts.map((l) => ({ id: l.id, name: l.name })),
+          onSave: saveCurrentLayout,
+          onLoad: loadLayout,
+          onDelete: (id) => session && useKLDrawingStore.getState().deleteLayout(session.id, id),
+        }}
         candleType={prefs.candleType}
         onCandleTypeChange={prefs.setCandleType}
         canUndo={canUndo(drawingHistoryRef.current)}
@@ -2159,6 +2207,11 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         <KLDrawingToolbar
           klChartRef={klChartRef}
           drawings={klDrawings}
+          sharedLayer={{
+            count: sharedCount,
+            visible: sharedVisible,
+            onToggle: (v) => session && useKLDrawingStore.getState().setSharedVisible(session.id, v),
+          }}
           armedTool={armedTool}
           positionTools={{
             onStart: startPositionTool,
@@ -2223,6 +2276,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
             onDrawingsChange={handleDrawingsChange}
             onDrawingArmedChange={setArmedTool}
             candleType={prefs.candleType}
+            drawingScope={{ sessionId: session.id, showShared: sharedVisible }}
           />
           {/* Transient messages float over the chart's upper edge (clear of the
               volume pane and time axis) so they never shift the chart's size: why an order
@@ -2296,6 +2350,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
               trades={manualTrades ?? []}
               openEntry={journalOpenEntry}
               showInstrument={session.assets.length > 1}
+              sessionId={session.id}
               onUpdateOpenEntry={handleUpdateOpenEntry}
               checklistRules={session.checklist ?? []}
               sessionNotes={session.notes}

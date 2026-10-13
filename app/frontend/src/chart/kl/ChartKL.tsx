@@ -70,7 +70,9 @@ import type { ContractSpec } from '../simBroker'
 import { KL_ORDER_LABEL, ensureOrderLabelOverlayRegistered, ghostStroke, isGhostRole, type OrderLabelData, type OrderLabelPalette } from './orderLabelOverlay'
 import { roundToTick, type OrderLineInfo, type OrderLineRole } from '../orderEntry'
 import { fmtPrice } from '../../format'
-import { useKLDrawingStore, overlaysForInstrument } from '../../state/klDrawingStore'
+import { useKLDrawingStore, overlaysForInstrument, drawingLayers } from '../../state/klDrawingStore'
+import { styleFromOverlayStyles, styleToOverlayStyles } from './drawingStyleTemplates'
+import { KL_HEIKIN_ASHI, ensureHeikinAshiRegistered, setHeikinAshiColors } from './heikinAshi'
 import { KL_DEFAULT_INDICATOR_LINES, ON_ACCENT_DARK, ON_ACCENT_LIGHT, useThemeStore, useThemeBase, type ThemeColors, type ThemeBase } from '../../state/themeStore'
 import { MIN_TEXT_CONTRAST, ensureContrast, ensureTextVariant, pickOnAccent } from '../../state/contrast'
 import { useIndicatorStore, type ColorableIndicatorKey, type IndicatorPrefs } from '../../state/indicatorStore'
@@ -296,6 +298,11 @@ interface ChartKLProps {
   // Fires when the view becomes parked away from the replay cursor by a Go To (true) or
   // returns to it (false), so the caller can offer the way back.
   onDetachedChange?: (detached: boolean) => void
+  // FXR_V2_SPEC.md section 7 (G9): the drawings belong to this session (not to the
+  // instrument), and `showShared` also draws the shared layer -- the per-instrument set that
+  // predates sessions -- locked and read-only. Unset (the automated-run review): the
+  // per-instrument set, as before.
+  drawingScope?: { sessionId: string; showShared: boolean } | null
 }
 
 // The 1-minute bars a replay chart is built from, and how far the cursor is
@@ -312,7 +319,42 @@ export interface OrderLineSpec {
   draggable: boolean
 }
 
-export type KLCandleType = 'candle_solid' | 'candle_stroke' | 'ohlc' | 'area'
+// 'heikin_ashi' is display only (chart/kl/heikinAshi.ts): the data list stays the real
+// candles, with their own drawing hidden under the smoothed ones.
+// The shared layer's overlays (display-only copies) live in their own group so the persistence
+// and the drawing manager, which read DRAWING_GROUP_ID, never see them.
+const SHARED_DRAWING_GROUP_ID = 'kl-shared-drawing'
+
+export type KLCandleType = 'candle_solid' | 'candle_stroke' | 'ohlc' | 'area' | 'heikin_ashi'
+
+// The klinecharts candle style for a chart type: the native series type plus, for Heikin
+// Ashi, transparent real candles (the indicator draws over them). Re-applied after every
+// themeStyles() so a theme switch cannot bring the real candles back.
+export function candleTypeStyles(type: KLCandleType, colors: ThemeColors) {
+  if (type === 'heikin_ashi') {
+    const hidden = hexToRgba(colors.upCandle, 0)
+    return {
+      candle: {
+        type: 'candle_solid' as const,
+        bar: {
+          upColor: hidden, downColor: hidden, noChangeColor: hidden,
+          upBorderColor: hidden, downBorderColor: hidden, noChangeBorderColor: hidden,
+          upWickColor: hidden, downWickColor: hidden, noChangeWickColor: hidden,
+        },
+      },
+    }
+  }
+  return {
+    candle: {
+      type,
+      bar: {
+        upColor: colors.upCandle, downColor: colors.downCandle, noChangeColor: colors.upCandle,
+        upBorderColor: colors.upCandle, downBorderColor: colors.downCandle, noChangeBorderColor: colors.upCandle,
+        upWickColor: colors.upCandle, downWickColor: colors.downCandle, noChangeWickColor: colors.upCandle,
+      },
+    },
+  }
+}
 
 // Matches Tailwind's default `font-sans` stack (index.css has no custom
 // @font-face override -- DESIGN_LANGUAGE.md §3: "Inter or the system UI
@@ -557,9 +599,12 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     smoothMs = 0,
     goTo = null,
     onDetachedChange,
+    drawingScope = null,
   },
   ref,
 ) {
+  const drawingScopeRef = useRef(drawingScope)
+  drawingScopeRef.current = drawingScope
   const colors = useThemeStore((s) => s.colors)
   const base = useThemeBase()
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
@@ -926,6 +971,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       chart.removeIndicator({ name: KL_EMA20 })
       chart.removeIndicator({ name: KL_EMA50 })
       chart.removeIndicator({ name: KL_ATR14 })
+      chart.removeIndicator({ name: KL_HEIKIN_ASHI })
       const p = prefsRef.current
       // `series: 'price'` on the template alone does NOT place these on
       // the main candle pane -- verified live that it creates a brand new
@@ -947,6 +993,9 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       if (p.ema20) chart.createIndicator({ name: KL_EMA20, precision, paneId: 'candle_pane' }, true)
       if (p.ema50) chart.createIndicator({ name: KL_EMA50, precision, paneId: 'candle_pane' }, true)
       if (p.atr14) chart.createIndicator({ name: KL_ATR14 }, false)
+      if (candleTypeRef.current === 'heikin_ashi') {
+        chart.createIndicator({ name: KL_HEIKIN_ASHI, paneId: 'candle_pane' }, true)
+      }
       applyIndicatorColors(chart, colorsRef.current, baseRef.current)
       applyIndicatorLegendFeatures(chart, p)
     })
@@ -1020,7 +1069,9 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
         visible: o.visible,
       }),
     )
-    useKLDrawingStore.getState().setOverlaysForInstrument(inst, persisted)
+    const scope = drawingScopeRef.current
+    if (scope) useKLDrawingStore.getState().setOverlaysForSession(scope.sessionId, inst, persisted)
+    else useKLDrawingStore.getState().setOverlaysForInstrument(inst, persisted)
     onDrawingsChangeRef.current?.(persisted)
   }
 
@@ -1135,10 +1186,36 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     suppressPersistRef.current = true
     try {
       chart.removeOverlay({ groupId: DRAWING_GROUP_ID })
-      const persisted = overlaysForInstrument(useKLDrawingStore.getState().overlaysByInstrument, inst)
+      chart.removeOverlay({ groupId: SHARED_DRAWING_GROUP_ID })
+      const store = useKLDrawingStore.getState()
+      const scope = drawingScopeRef.current
+      let persisted: PersistedOverlay[]
+      if (scope) {
+        const layers = drawingLayers(store, scope.sessionId, inst)
+        persisted = layers.own
+        // The shared layer: display-only copies (locked, no persistence hooks, ids of their
+        // own), so nothing a session does can edit or delete the originals.
+        if (scope.showShared) {
+          for (const p of layers.shared) {
+            if (p.visible === false) continue
+            // klinecharts deletes an overlay on right-click unless prevented.
+            const o = hydrateOverlay({ ...p, id: `shared:${p.id}`, lock: true }, {
+              onRightClick: (event: { preventDefault?: () => void }) => {
+                event.preventDefault?.()
+                return true
+              },
+            } as Parameters<typeof hydrateOverlay>[1])
+            chart.createOverlay({ ...o, groupId: SHARED_DRAWING_GROUP_ID, lock: true })
+          }
+        }
+      } else {
+        persisted = overlaysForInstrument(store.overlaysByInstrument, inst)
+      }
       for (const p of persisted) {
         chart.createOverlay(hydrateOverlay(p, drawingCallbacks()))
       }
+      // Diagnostics (read by the browser checks): the shared-layer copies on screen.
+      if (containerRef.current) containerRef.current.dataset.sharedDrawings = String(chart.getOverlays({ groupId: SHARED_DRAWING_GROUP_ID }).length)
       onDrawingsChangeRef.current?.(persisted)
     } finally {
       suppressPersistRef.current = false
@@ -1245,6 +1322,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     ensureTradeMarkerOverlayRegistered()
     ensureDrawingOverlaysRegistered()
     ensureIndicatorsRegistered()
+    ensureHeikinAshiRegistered()
     ensureSessionBandOverlayRegistered()
     ensureNewsMarkerOverlayRegistered()
     ensurePositionToolOverlayRegistered()
@@ -1254,7 +1332,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     if (!chart) return
     chartRef.current = chart
     chart.setStyles(themeStyles(colorsRef.current, baseRef.current))
-    chart.setStyles({ candle: { type: candleTypeRef.current } })
+    setHeikinAshiColors({ up: colorsRef.current.upCandle, down: colorsRef.current.downCandle })
+    chart.setStyles(candleTypeStyles(candleTypeRef.current, colorsRef.current))
     // VOL (a plain klinecharts built-in, Phase A3 -- just visualizes each
     // bar's own volume field, no derived calculation) used to be created
     // unconditionally right here. REPLICA_ROADMAP.md Batch 3 made it a
@@ -1777,13 +1856,26 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     const chart = chartRef.current
     if (!chart) return
     chart.setStyles(themeStyles(colors, base))
+    chart.setStyles(candleTypeStyles(candleTypeRef.current, colors))
+    setHeikinAshiColors({ up: colors.upCandle, down: colors.downCandle })
     applyIndicatorColors(chart, colors, base)
   }, [colors, base])
+
+  // A different session, or the shared layer switched on/off: redraw this instrument's
+  // drawings (same path as an instrument switch). Camera and data are untouched.
+  const scopeSessionId = drawingScope?.sessionId ?? null
+  const scopeShowShared = drawingScope?.showShared ?? false
+  useEffect(() => {
+    if (!chartRef.current || loadedBarsRef.current.length === 0) return
+    restoreDrawingsRef.current()
+  }, [scopeSessionId, scopeShowShared])
 
   // Chart type: a style switch on the existing bars only.
   useEffect(() => {
     candleTypeRef.current = candleType
-    chartRef.current?.setStyles({ candle: { type: candleType } })
+    chartRef.current?.setStyles(candleTypeStyles(candleType, colorsRef.current))
+    // Heikin Ashi is an indicator over the real candles: add or drop it.
+    rebuildIndicatorsRef.current()
   }, [candleType])
 
   // Indicator data/toggle changed but the window didn't -- redraw against
@@ -2516,6 +2608,24 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     })
     persistDrawingsRef.current()
   }
+  // The styles a new drawing is created with: the chosen style template's, or none (the
+  // theme default).
+  const newDrawingStyles = () => {
+    const state = useKLDrawingStore.getState()
+    const template = state.styleTemplates.find((t) => t.id === state.newDrawingTemplateId)
+    return template ? { styles: styleToOverlayStyles(template.style) } : {}
+  }
+  const currentDrawingStyle = (id: string) => {
+    const [o] = chartRef.current?.getOverlays({ id }) ?? []
+    const snapshot = hoverSnapshotRef.current.has(id) ? hoverSnapshotRef.current.get(id) : o?.styles
+    return styleFromOverlayStyles(snapshot, { color: colorsRef.current.accent, width: 1 })
+  }
+  const applyDrawingStyle = (id: string, style: { color: string; width: number }) => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.overrideOverlay({ id, styles: styleToOverlayStyles(style) })
+    persistDrawingsRef.current()
+  }
   const updateDrawingWidth = (id: string, size: number) => {
     const chart = chartRef.current
     if (!chart) return
@@ -2591,6 +2701,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
             groupId: DRAWING_GROUP_ID,
             extendData,
             mode: magnetModeRef.current,
+            // A style template chosen for new drawings (G9).
+            ...newDrawingStyles(),
             ...drawingCallbacks(),
           })
         })
@@ -2787,6 +2899,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
           colors={colors}
           onPickColor={(hex) => updateDrawingColor(styleEditor.id, hex)}
           onPickWidth={(size) => updateDrawingWidth(styleEditor.id, size)}
+          current={currentDrawingStyle(styleEditor.id)}
+          onApplyTemplate={(style) => applyDrawingStyle(styleEditor.id, style)}
           onClose={() => setStyleEditor(null)}
         />
       )}

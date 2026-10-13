@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ThemeColors } from '../../state/themeStore'
 import { POPOVER_FORM_PADDING, POPOVER_SHELL } from '../../components/popoverStyles'
+import { X } from 'lucide-react'
+import { useKLDrawingStore, type DrawingStyle } from '../../state/klDrawingStore'
 
 // The context menu's "Edit style" action (REPLICA_ROADMAP.md Batch 1) --
 // a compact swatch + line-width picker, not a full properties dialog
@@ -17,6 +19,8 @@ export default function DrawingStylePopover({
   colors,
   onPickColor,
   onPickWidth,
+  current,
+  onApplyTemplate,
   onClose,
 }: {
   x: number
@@ -24,8 +28,20 @@ export default function DrawingStylePopover({
   colors: ThemeColors
   onPickColor: (hex: string) => void
   onPickWidth: (size: number) => void
+  // The drawing's own colour and width (what "Save as template" stores).
+  current: DrawingStyle
+  onApplyTemplate: (style: DrawingStyle) => void
   onClose: () => void
 }) {
+  const templates = useKLDrawingStore((s) => s.styleTemplates)
+  const newTemplateId = useKLDrawingStore((s) => s.newDrawingTemplateId)
+  const [templateName, setTemplateName] = useState('')
+  const saveTemplate = () => {
+    const name = templateName.trim()
+    if (!name) return
+    useKLDrawingStore.getState().saveStyleTemplate({ id: `tpl-${crypto.randomUUID()}`, name, style: current })
+    setTemplateName('')
+  }
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
   const [measured, setMeasured] = useState(false)
@@ -77,7 +93,7 @@ export default function DrawingStylePopover({
       role="dialog"
       aria-label="Edit drawing style"
       style={{ position: 'fixed', left: pos.x, top: pos.y, visibility: measured ? 'visible' : 'hidden' }}
-      className={`${POPOVER_SHELL} z-40 w-48 ${POPOVER_FORM_PADDING}`}
+      className={`${POPOVER_SHELL} z-40 w-56 ${POPOVER_FORM_PADDING}`}
     >
       <div className="micro-label mb-2">Color</div>
       <div className="mb-3 flex items-center gap-2">
@@ -87,7 +103,7 @@ export default function DrawingStylePopover({
             aria-label={`Set color ${hex}`}
             onClick={() => onPickColor(hex)}
             style={{ background: hex }}
-            className="h-5 w-5 rounded-full border border-border hover:opacity-80"
+            className="h-5 w-5 rounded-full border border-border hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
         ))}
         <label className="relative h-5 w-5 cursor-pointer overflow-hidden rounded-full border border-border">
@@ -106,12 +122,72 @@ export default function DrawingStylePopover({
             key={w}
             aria-label={`${w}px`}
             onClick={() => onPickWidth(w)}
-            className="flex h-6 flex-1 items-center justify-center rounded bg-surface hover:bg-surface-2-hover"
+            className="flex h-6 flex-1 items-center justify-center rounded bg-surface hover:bg-surface-2-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             <span className="w-4 rounded-full bg-text-muted" style={{ height: w }} />
           </button>
         ))}
       </div>
+
+      <div className="micro-label mb-2 mt-3">Templates</div>
+      {templates.length === 0 ? (
+        <p className="mb-2 text-text-muted">Save this style to reuse it.</p>
+      ) : (
+        <div className="mb-2 flex flex-col">
+          {templates.map((t) => (
+            <div key={t.id} className="group flex items-center gap-1">
+              <button
+                onClick={() => onApplyTemplate(t.style)}
+                title="Apply to this drawing"
+                className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded px-1 text-left text-text hover:bg-surface-2-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <span className="h-3 w-3 flex-none rounded-full border border-border" style={{ background: t.style.color }} />
+                <span className="truncate">{t.name}</span>
+              </button>
+              <button
+                onClick={() => useKLDrawingStore.getState().setNewDrawingTemplateId(newTemplateId === t.id ? null : t.id)}
+                aria-pressed={newTemplateId === t.id}
+                title="Use this style for new drawings"
+                className={`h-7 flex-none rounded px-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+                  newTemplateId === t.id ? 'bg-surface text-text' : 'text-text-muted hover:bg-surface-2-hover hover:text-text'
+                }`}
+              >
+                {newTemplateId === t.id ? 'Default' : 'Set default'}
+              </button>
+              <button
+                onClick={() => useKLDrawingStore.getState().deleteStyleTemplate(t.id)}
+                aria-label={`Delete template ${t.name}`}
+                className="flex h-7 w-7 flex-none items-center justify-center rounded text-text-muted opacity-0 hover:bg-surface-2-hover hover:text-text focus-visible:opacity-100 group-hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <form
+        className="flex items-center gap-1"
+        onSubmit={(e) => {
+          e.preventDefault()
+          saveTemplate()
+        }}
+      >
+        <input
+          value={templateName}
+          onChange={(e) => setTemplateName(e.target.value)}
+          placeholder="Template name"
+          aria-label="Template name"
+          maxLength={40}
+          className="propbt-input propbt-input--well min-w-0 flex-1"
+        />
+        <button
+          type="submit"
+          disabled={!templateName.trim()}
+          className="h-7 flex-none rounded px-2 text-xs text-text-muted hover:bg-surface-2-hover hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Save
+        </button>
+      </form>
     </div>
   )
 }

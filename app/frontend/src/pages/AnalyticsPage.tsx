@@ -5,6 +5,7 @@
 // Engine-truth: every number here is the server's -- the summary endpoint
 // (services/manual_analytics.analytics_summary), the RR simulator, the same trade
 // list the table pages through, and the existing Monte Carlo. This file lays them out.
+import CsvExportMenu from '../components/CsvExportMenu'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useAnalyticsSummary, useBtSessions, useRun, useTrades } from '../api/hooks'
@@ -154,6 +155,8 @@ export default function AnalyticsPage() {
             ))}
           </div>
         )}
+
+        <CsvExportMenu sessionId={scopeIsAll ? null : runId.replace(/^bt:/, '')} align="left" />
 
         <nav aria-label="Sections" className="ml-auto flex flex-wrap items-center gap-1">
           {SECTIONS.map((s) => (

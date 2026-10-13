@@ -27,6 +27,7 @@ import type { Side } from '../chart/simBroker'
 import { DRAWING_SHORTCUTS } from '../keyboard/shortcuts'
 import { useKLDrawingStore } from '../state/klDrawingStore'
 import { POPOVER_MENU_ROW, POPOVER_SHELL } from '../components/popoverStyles'
+import Switch from '../components/Switch'
 
 const GROUP_ORDER: DrawingGroup[] = ['lines', 'fibonacci', 'shapes', 'annotations']
 const GROUP_LABELS: Record<DrawingGroup, string> = {
@@ -244,6 +245,7 @@ export default function KLDrawingToolbar({
   drawings,
   armedTool,
   positionTools,
+  sharedLayer,
 }: {
   klChartRef: RefObject<ChartKLHandle | null>
   drawings: PersistedOverlay[]
@@ -257,6 +259,9 @@ export default function KLDrawingToolbar({
   // The session workspace's Long / Short Position tools (the review chart has
   // none): a click arms ChartKL's one-click placement.
   positionTools?: { onStart: (side: Side) => void; disabled: boolean; disabledReason?: string }
+  // G9: a session's chart can also show the shared layer (drawings made before drawings
+  // belonged to a session). Absent on the automated-run review chart.
+  sharedLayer?: { count: number; visible: boolean; onToggle: (visible: boolean) => void }
 }) {
   const [openGroup, setOpenGroup] = useState<DrawingGroup | null>(null)
   const [manageOpen, setManageOpen] = useState(false)
@@ -264,6 +269,9 @@ export default function KLDrawingToolbar({
   const [lastUsedByGroup, setLastUsedByGroup] = useState<Record<DrawingGroup, string>>(initialLastUsedByGroup)
   const recentTools = useKLDrawingStore((s) => s.recentTools)
   const recordToolUsed = useKLDrawingStore((s) => s.recordToolUsed)
+  const styleTemplates = useKLDrawingStore((s) => s.styleTemplates)
+  const newDrawingTemplateId = useKLDrawingStore((s) => s.newDrawingTemplateId)
+  const setNewDrawingTemplateId = useKLDrawingStore((s) => s.setNewDrawingTemplateId)
   // Magnet/snap (REPLICA_ROADMAP.md Batch 2) -- local to this toolbar, not
   // a persisted preference (matches `openGroup`/`manageOpen` above, not
   // `followLatestBar`'s chartViewStore treatment): it's a "how the next
@@ -536,11 +544,40 @@ export default function KLDrawingToolbar({
 
           {manageOpen && (
             <div className={`${POPOVER_SHELL} absolute bottom-0 left-full z-30 ml-1 w-64 py-1`}>
+              {sharedLayer && (
+                <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-1">
+                  <span className="min-w-0 text-text" title="Drawings made before drawings belonged to a session. Read-only here; never deleted.">
+                    Shared drawings
+                    <span className="ml-1 tabular-nums text-text-muted">{sharedLayer.count}</span>
+                  </span>
+                  <Switch checked={sharedLayer.visible} onChange={sharedLayer.onToggle} label="Show shared drawings" tone="neutral" />
+                </div>
+              )}
+              {styleTemplates.length > 0 && (
+                <label className="flex items-center justify-between gap-2 px-3 pb-2">
+                  <span className="text-text-muted">New drawings</span>
+                  <select
+                    value={newDrawingTemplateId ?? ''}
+                    onChange={(e) => setNewDrawingTemplateId(e.target.value || null)}
+                    aria-label="Style template for new drawings"
+                    className="propbt-input propbt-input--well max-w-32"
+                  >
+                    <option value="">Default style</option>
+                    {styleTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {drawings.length === 0 ? (
                 // POLISH_ROADMAP Phase P6: a helpful empty state rather than
                 // an empty dropdown (previously this button was just
                 // `disabled` at 0, so there was nothing to open at all).
-                <div className="px-3 py-2 text-text-muted">No drawings yet – pick a tool above to start.</div>
+                <div className="px-3 py-2 text-text-muted">
+                  {sharedLayer ? 'No drawings in this session yet.' : 'No drawings yet – pick a tool above to start.'}
+                </div>
               ) : (
                 <>
                   {/* Bulk toggles (REPLICA_ROADMAP.md Batch 2) -- a

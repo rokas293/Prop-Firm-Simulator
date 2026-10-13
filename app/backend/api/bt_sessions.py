@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from app.backend import models
-from app.backend.services import bt_session_service, home_service
+from app.backend.services import bt_session_service, home_service, trades_csv
 
 # Routed under /api/bt-sessions, not /api/sessions -- that prefix already
 # means "trading-session windows" (see api/sessions.py, models.SessionWindow),
@@ -43,6 +43,24 @@ def setup_options() -> models.SessionSetupOptions:
 @router.get("/home", response_model=models.HomeOverview)
 def home_overview() -> models.HomeOverview:
     return home_service.home_overview()
+
+
+def _csv_response(session_id: Optional[str]) -> Response:
+    try:
+        body = trades_csv.render(session_id)
+    except bt_session_service.SessionNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{trades_csv.filename(session_id)}"'},
+    )
+
+
+# G9: every session's trades (declared before "/{session_id}"), or one session's below.
+@router.get("/export.csv")
+def export_all_trades_csv() -> Response:
+    return _csv_response(None)
 
 
 @router.get("/{session_id}", response_model=models.BacktestSessionDetail)
@@ -95,6 +113,11 @@ def list_trades(session_id: str) -> List[models.ManualTrade]:
         return bt_session_service.list_trades(session_id)
     except bt_session_service.SessionNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/{session_id}/trades.csv")
+def export_session_trades_csv(session_id: str) -> Response:
+    return _csv_response(session_id)
 
 
 @router.post("/{session_id}/trades", response_model=models.RecordTradeResponse)
