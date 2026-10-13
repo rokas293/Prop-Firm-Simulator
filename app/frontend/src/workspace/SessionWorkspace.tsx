@@ -79,6 +79,7 @@ import KLDrawingToolbar from '../panels/KLDrawingToolbar'
 import IndicatorDialog from '../panels/IndicatorDialog'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import { canRedo, canUndo, emptyHistory, recordDrawings, redo, undo, type DrawingHistory } from '../chart/kl/drawingHistory'
+import { flushDrawings, loadSessionDrawings } from '../state/drawingsSync'
 import { cloneDrawings, useKLDrawingStore, type NamedLayout } from '../state/klDrawingStore'
 import { DRAWING_SHORTCUTS, isTypingTarget } from '../keyboard/shortcuts'
 import TradePanel, { type PositionRow, type WorkingOrderRow } from './TradePanel'
@@ -393,6 +394,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scalper, session?.id])
   useEffect(() => () => saveScalperNowRef.current(), [])
+  // Whatever drawing edit is still waiting out its short delay goes out as the workspace closes.
+  useEffect(() => () => void flushDrawings(), [])
   const themeMode = useThemeStore((s) => s.mode)
   const setThemeMode = useThemeStore((s) => s.setMode)
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
@@ -600,6 +603,9 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     cursorTimeRef.current = session.cursor_time
     lockFloorRef.current = session.lock_floor_time
     drawingHistoryRef.current = emptyHistory()
+    // G9b: the session's drawings, layouts and shared-layer toggle live on the server;
+    // the chart redraws when they arrive (ChartKL watches the store's serverRevision).
+    loadSessionDrawings(session.id).catch((e) => console.error('drawings: could not load this session', e))
     setPropRulesOpen(false)
     if (quickQtySeededRef.current !== session.id) {
       quickQtySeededRef.current = session.id

@@ -1039,8 +1039,9 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   // NOT wrapped in this guard, so those still persist correctly.
   const suppressPersistRef = useRef(false)
 
-  // Reads the chart's current user-drawing overlays, saves them to
-  // localStorage keyed by instrument, and tells the toolbar. Attached as
+  // Reads the chart's current user-drawing overlays, saves them to the drawing store
+  // (keyed by session and instrument; drawingsSync sends them to the server), and tells
+  // the toolbar. Attached as
   // every drawing overlay's onDrawEnd/onPressedMoveEnd/onRemoved (both
   // freshly-placed ones and ones restored from storage), so anything that
   // changes what's on screen keeps storage and the toolbar in sync.
@@ -1072,6 +1073,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     const scope = drawingScopeRef.current
     if (scope) useKLDrawingStore.getState().setOverlaysForSession(scope.sessionId, inst, persisted)
     else useKLDrawingStore.getState().setOverlaysForInstrument(inst, persisted)
+    // Diagnostics (read by the browser checks): the drawings on screen.
+    if (containerRef.current) containerRef.current.dataset.ownDrawings = String(persisted.length)
     onDrawingsChangeRef.current?.(persisted)
   }
 
@@ -1214,7 +1217,8 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
       for (const p of persisted) {
         chart.createOverlay(hydrateOverlay(p, drawingCallbacks()))
       }
-      // Diagnostics (read by the browser checks): the shared-layer copies on screen.
+      // Diagnostics (read by the browser checks): the drawings and shared-layer copies on screen.
+      if (containerRef.current) containerRef.current.dataset.ownDrawings = String(persisted.length)
       if (containerRef.current) containerRef.current.dataset.sharedDrawings = String(chart.getOverlays({ groupId: SHARED_DRAWING_GROUP_ID }).length)
       onDrawingsChangeRef.current?.(persisted)
     } finally {
@@ -1861,14 +1865,17 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
     applyIndicatorColors(chart, colors, base)
   }, [colors, base])
 
-  // A different session, or the shared layer switched on/off: redraw this instrument's
-  // drawings (same path as an instrument switch). Camera and data are untouched.
+  // A different session, the shared layer switched on/off, or the server's drawings just
+  // arrived (G9b: they load after the chart may already have restored from an empty
+  // store): redraw this instrument's drawings (same path as an instrument switch).
+  // Camera and data are untouched.
   const scopeSessionId = drawingScope?.sessionId ?? null
   const scopeShowShared = drawingScope?.showShared ?? false
+  const drawingsRevision = useKLDrawingStore((s) => s.serverRevision)
   useEffect(() => {
     if (!chartRef.current || loadedBarsRef.current.length === 0) return
     restoreDrawingsRef.current()
-  }, [scopeSessionId, scopeShowShared])
+  }, [scopeSessionId, scopeShowShared, drawingsRevision])
 
   // Chart type: a style switch on the existing bars only.
   useEffect(() => {

@@ -203,8 +203,8 @@ export function ensureDrawingOverlaysRegistered(): void {
   })
 }
 
-// ---- persistence (localStorage, per instrument -- see klDrawingStore.ts)
-// ----
+// ---- persistence (saved on the server per session / shared layer -- see
+// klDrawingStore.ts and drawingsSync.ts) ----
 // klMeasure's label is computed live (measureLabel above), never stored --
 // functions/derived text don't round-trip through JSON, and re-deriving it
 // from the persisted points + whatever bars happen to be loaded on restore

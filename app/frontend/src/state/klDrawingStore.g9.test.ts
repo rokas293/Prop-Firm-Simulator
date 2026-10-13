@@ -56,18 +56,33 @@ describe('per-session drawings', () => {
     expect(useKLDrawingStore.getState().overlaysByInstrument.MNQ).toHaveLength(2)
   })
 
-  it('a store saved before G9 loads with its drawings intact, as the shared layer', async () => {
+  it('the blob an earlier version left in browser storage is not rehydrated into the store (G9b)', async () => {
     localStorage.setItem(
       'propbt-viz:kl-drawings',
       JSON.stringify({ state: { overlaysByInstrument: { MNQ: [line('legacy')] }, recentTools: ['segment'] }, version: 0 }),
     )
     await useKLDrawingStore.persist.rehydrate()
     const st = useKLDrawingStore.getState()
-    expect(st.overlaysByInstrument.MNQ.map((o) => o.id)).toEqual(['legacy'])
+    // Only the one-off migration reads that key (legacyDrawings.ts); the store never does.
+    expect(st.overlaysByInstrument).toEqual({})
     expect(st.overlaysBySession).toEqual({})
-    st.setSharedVisible('S', true)
-    expect(drawingLayers(useKLDrawingStore.getState(), 'S', 'MNQ').shared.map((o) => o.id)).toEqual(['legacy'])
+    expect(st.recentTools).toEqual([])
     localStorage.removeItem('propbt-viz:kl-drawings')
+  })
+
+  it('drawings, layouts and templates are never written to browser storage', () => {
+    localStorage.clear()
+    const s = useKLDrawingStore.getState()
+    s.setOverlaysForSession('A', 'MNQ', [line('a1')])
+    s.setOverlaysForInstrument('MNQ', [line('old')])
+    s.setSharedVisible('A', true)
+    s.saveStyleTemplate({ id: 't1', name: 'Key', style: { color: '#fff000', width: 2 } })
+    s.recordToolUsed('segment')
+    const written = Object.keys(localStorage).map((k) => [k, localStorage.getItem(k) ?? ''] as const)
+    // Only the favourites row (a view preference) is persisted, under its own key.
+    expect(written.map(([k]) => k)).toEqual(['propbt-viz:kl-recent-tools'])
+    expect(JSON.parse(written[0][1]).state).toEqual({ recentTools: ['segment'] })
+    localStorage.clear()
   })
 })
 

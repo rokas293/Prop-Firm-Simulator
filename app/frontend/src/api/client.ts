@@ -5,6 +5,8 @@ import type {
   Bar,
   BacktestSessionDetail,
   BacktestSessionSummary,
+  BrowserDrawingsImport,
+  BrowserDrawingsImportResult,
   CreateManualTradeRequest,
   CreateSessionRequest,
   DailyRiskPoint,
@@ -21,15 +23,19 @@ import type {
   RunMeta,
   RrSimulatorResponse,
   RunSummary,
+  SessionDrawingsDoc,
   SessionSetupOptions,
   SessionWindow,
   StatsResponse,
   SummarizeResponse,
   TradeRecord,
+  UpdateSessionDrawingsRequest,
   UpdateSessionNotesRequest,
   UpdateSessionSettingsRequest,
   UpdateSessionStateRequest,
   UpdateTradeJournalRequest,
+  UpdateWorkspaceDrawingsRequest,
+  WorkspaceDrawingsDoc,
 } from './types'
 import { usePerfStore } from '../state/perfStore'
 
@@ -81,12 +87,14 @@ async function postRequest<T, P extends QueryParams = QueryParams>(path: string,
 // site, summarizeRun, has no body). A separate pair rather than widening
 // postRequest, since every existing call site still expects query-params
 // semantics and this shouldn't risk changing them.
-async function sendJson<T, B>(path: string, method: 'POST' | 'PATCH', body: B): Promise<T> {
+async function sendJson<T, B>(path: string, method: 'POST' | 'PATCH', body: B, keepalive = false): Promise<T> {
   const startedAt = performance.now()
   const res = await fetch(`/api${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    // A save fired as the page is going away must outlive it (drawingsSync).
+    keepalive,
   })
   if (!res.ok) {
     const detail = await res.json().catch(() => null)
@@ -171,6 +179,16 @@ export const api = {
     sendJson<BacktestSessionDetail, UpdateSessionNotesRequest>(`/bt-sessions/${sessionId}/notes`, 'PATCH', { notes }),
   updateBtSessionSettings: (sessionId: string, body: UpdateSessionSettingsRequest) =>
     sendJson<BacktestSessionDetail, UpdateSessionSettingsRequest>(`/bt-sessions/${sessionId}/settings`, 'PATCH', body),
+  // G9b: a session's own drawings/layouts, the shared layer + style templates, and the
+  // one-off import of what the first G9 kept in browser storage.
+  getSessionDrawings: (sessionId: string) => request<SessionDrawingsDoc>(`/bt-sessions/${sessionId}/drawings`),
+  updateSessionDrawings: (sessionId: string, body: UpdateSessionDrawingsRequest, keepalive = false) =>
+    sendJson<SessionDrawingsDoc, UpdateSessionDrawingsRequest>(`/bt-sessions/${sessionId}/drawings`, 'PATCH', body, keepalive),
+  getWorkspaceDrawings: () => request<WorkspaceDrawingsDoc>('/drawings'),
+  updateWorkspaceDrawings: (body: UpdateWorkspaceDrawingsRequest, keepalive = false) =>
+    sendJson<WorkspaceDrawingsDoc, UpdateWorkspaceDrawingsRequest>('/drawings', 'PATCH', body, keepalive),
+  importBrowserDrawings: (body: BrowserDrawingsImport) =>
+    sendJson<BrowserDrawingsImportResult, BrowserDrawingsImport>('/drawings/import-browser', 'POST', body),
   getBtSessionTrades: (sessionId: string) => request<ManualTrade[]>(`/bt-sessions/${sessionId}/trades`),
   createManualTrade: (sessionId: string, body: CreateManualTradeRequest) =>
     sendJson<RecordTradeResponse, CreateManualTradeRequest>(`/bt-sessions/${sessionId}/trades`, 'POST', body),

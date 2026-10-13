@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from app.backend import models
-from app.backend.services import bt_session_service, home_service, trades_csv
+from app.backend.services import bt_session_service, drawings_service, home_service, trades_csv
 
 # Routed under /api/bt-sessions, not /api/sessions -- that prefix already
 # means "trading-session windows" (see api/sessions.py, models.SessionWindow),
@@ -104,6 +104,26 @@ def update_session_settings(session_id: str, req: models.UpdateSessionSettingsRe
     except bt_session_service.SessionNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except bt_session_service.InvalidSessionRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# G9b: a session's own drawings, named layouts and shared-layer toggle (its own file
+# beside session.json -- see drawings_service).
+@router.get("/{session_id}/drawings", response_model=models.SessionDrawings)
+def get_session_drawings(session_id: str) -> models.SessionDrawings:
+    try:
+        return drawings_service.get_session_drawings(session_id)
+    except bt_session_service.SessionNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.patch("/{session_id}/drawings", response_model=models.SessionDrawings)
+def update_session_drawings(session_id: str, req: models.UpdateSessionDrawingsRequest) -> models.SessionDrawings:
+    try:
+        return drawings_service.update_session_drawings(session_id, req)
+    except bt_session_service.SessionNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except drawings_service.InvalidDrawings as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 

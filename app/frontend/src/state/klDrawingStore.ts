@@ -3,18 +3,22 @@ import { persist } from 'zustand/middleware'
 import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
 import type { IndicatorPrefs } from './indicatorStore'
 
-// Persisted drawings for the KLineCharts engine (PART_A_REVISED_klinecharts.md
-// Phase A2), stored in localStorage via zustand's persist -- there's no backend
-// drawings endpoint and a client-only annotation feature doesn't need one;
-// VIZ_SPEC's "frontend does zero financial math" doesn't apply to what's purely
-// a visual note the user drew on their own screen.
+// Drawings for the KLineCharts engine (PART_A_REVISED_klinecharts.md Phase A2) and, since
+// FXR_V2_SPEC.md section 7 (G9), named layouts and drawing-style templates.
 //
-// FXR_V2_SPEC.md section 7 (G9): a session's drawings belong to THAT session
-// (`overlaysBySession`), so markings don't bleed between sessions. What used to
-// be stored per instrument (`overlaysByInstrument`, from before G9) is now the
-// "shared" layer: never deleted or rewritten by a session, and shown on a
-// session's chart only when that session's "Shared drawings" toggle is on. The
-// automated-run review chart (no session) keeps using the per-instrument set.
+// G9b: this store is the workspace's IN-MEMORY working copy. The backend is the source of
+// truth -- a session's drawings and layouts sit in its own folder, the shared layer and the
+// style templates in one file beside the sessions (app/backend/services/drawings_service.py).
+// state/drawingsSync.ts loads them into this store and saves every change back; nothing
+// here is read from or written to browser storage any more, except `recentTools` (a view
+// preference, like the indicator toggles) under its own key. What the first G9 left in
+// localStorage is moved to the server once, then removed (state/legacyDrawings.ts).
+//
+// A session's drawings belong to THAT session (`overlaysBySession`), so markings don't
+// bleed between sessions. `overlaysByInstrument` is the "shared" layer (what used to be
+// the only set, per instrument): a session never edits or deletes it, and shows it only
+// when that session's "Shared drawings" toggle is on. The automated-run review chart (no
+// session) draws on it directly.
 
 // REPLICA_ROADMAP.md Batch 4's drawing-toolbar favorites row: the last few
 // DISTINCT tool names armed, most-recent-first. Lives here (not new local
@@ -71,6 +75,9 @@ interface KLDrawingState {
   setNewDrawingTemplateId: (id: string | null) => void
   recentTools: string[]
   recordToolUsed: (name: string) => void
+  // Bumped each time drawingsSync loads server data into the store, so a chart that
+  // already restored (from what was then an empty store) draws again.
+  serverRevision: number
 }
 
 export const useKLDrawingStore = create<KLDrawingState>()(
@@ -131,8 +138,14 @@ export const useKLDrawingStore = create<KLDrawingState>()(
       recentTools: [],
       recordToolUsed: (name) =>
         set((s) => ({ recentTools: [name, ...s.recentTools.filter((t) => t !== name)].slice(0, MAX_RECENT_TOOLS) })),
+      serverRevision: 0,
     }),
-    { name: 'propbt-viz:kl-drawings' },
+    {
+      // A NEW key, and only the favourites row: the old 'propbt-viz:kl-drawings' blob is
+      // read by the one-off migration alone (legacyDrawings.ts), never rehydrated into here.
+      name: 'propbt-viz:kl-recent-tools',
+      partialize: (s) => ({ recentTools: s.recentTools }),
+    },
   ),
 )
 

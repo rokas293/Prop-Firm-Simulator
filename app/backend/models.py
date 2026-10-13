@@ -5,9 +5,9 @@ so nothing downstream has to think about timezones again.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 class RunResultModel(BaseModel):
@@ -893,3 +893,124 @@ class PropRulesStatus(BaseModel):
     trading_days: int = 0
     rules: List[PropRuleRow] = Field(default_factory=list)
     restrictions: List[PropRestriction] = Field(default_factory=list)
+
+
+# --- G9b: drawings, named layouts and style templates persisted with the session ----
+# Drawings are the user's own visual notes, never a source of trades or P&L, so the
+# backend stores them verbatim and validates only their envelope (id/name/points);
+# every other field the chart wrote (styles, lock, visible, extendDataText) passes through.
+
+class StoredOverlay(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=100)
+    points: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class IndicatorToggles(BaseModel):
+    session_shading: bool = False
+    fair_value: bool = False
+    news_events: bool = False
+    vwap: bool = False
+    ema20: bool = False
+    ema50: bool = False
+    atr14: bool = False
+    volume: bool = False
+
+
+class StoredLayout(BaseModel):
+    """A named chart layout: a snapshot of the chart's view (FXR_V2_SPEC.md section 7)."""
+    id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=80)
+    indicators: IndicatorToggles = Field(default_factory=IndicatorToggles)
+    candle_type: str = Field(default="candles", max_length=40)
+    timeframe: str = Field(default="5min", max_length=20)
+    # The session's own drawings per instrument at the time the layout was saved.
+    drawings: Dict[str, List[StoredOverlay]] = Field(default_factory=dict)
+    shared_visible: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
+
+
+class StyleTemplate(BaseModel):
+    """A drawing style (colour + line width) the user can reapply."""
+    id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=80)
+    color: str = Field(min_length=1, max_length=40)
+    width: float = Field(gt=0, le=20)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
+
+
+class SessionDrawings(BaseModel):
+    """What one session keeps beside session.json (drawings.json)."""
+    # The session's OWN drawings, per instrument. Never the shared layer.
+    drawings: Dict[str, List[StoredOverlay]] = Field(default_factory=dict)
+    layouts: List[StoredLayout] = Field(default_factory=list)
+    # Whether the session's chart shows the shared layer (off until switched on).
+    shared_visible: bool = False
+    # Set once this session's data left browser storage for the server (the one-off
+    # migration); a second import is then a no-op, so nothing is ever duplicated.
+    imported_from_browser: bool = False
+
+
+class UpdateSessionDrawingsRequest(BaseModel):
+    """Only the fields sent change. `drawings` replaces the listed instruments' sets
+    (an empty list clears one); instruments not listed are left alone."""
+    drawings: Optional[Dict[str, List[StoredOverlay]]] = None
+    layouts: Optional[List[StoredLayout]] = None
+    shared_visible: Optional[bool] = None
+
+
+class WorkspaceDrawings(BaseModel):
+    """Drawing state that belongs to no single session: the shared layer (per
+    instrument; also what the automated-run review chart draws on) and the style
+    templates."""
+    shared: Dict[str, List[StoredOverlay]] = Field(default_factory=dict)
+    style_templates: List[StyleTemplate] = Field(default_factory=list)
+    # The template new drawings are created with (None = the default style).
+    new_drawing_template_id: Optional[str] = None
+    imported_from_browser: bool = False
+
+
+class UpdateWorkspaceDrawingsRequest(BaseModel):
+    shared: Optional[Dict[str, List[StoredOverlay]]] = None
+    style_templates: Optional[List[StyleTemplate]] = None
+    new_drawing_template_id: Optional[str] = None
+
+
+class SessionDrawingsImport(BaseModel):
+    drawings: Dict[str, List[StoredOverlay]] = Field(default_factory=dict)
+    layouts: List[StoredLayout] = Field(default_factory=list)
+    shared_visible: bool = False
+
+
+class BrowserDrawingsImport(BaseModel):
+    """Everything the first G9 kept in browser storage, sent once."""
+    shared: Dict[str, List[StoredOverlay]] = Field(default_factory=dict)
+    style_templates: List[StyleTemplate] = Field(default_factory=list)
+    new_drawing_template_id: Optional[str] = None
+    sessions: Dict[str, SessionDrawingsImport] = Field(default_factory=dict)
+
+
+class BrowserDrawingsImportResult(BaseModel):
+    # Sessions whose data the server now holds (imported now, or already imported
+    # earlier) -- the browser may drop its copy of exactly these.
+    sessions_imported: List[str] = Field(default_factory=list)
+    # Sessions this server has no directory for: nothing was written, and the
+    # browser must keep its copy.
+    sessions_missing: List[str] = Field(default_factory=list)
+    # True once the shared layer and templates are on the server.
+    workspace_imported: bool = False

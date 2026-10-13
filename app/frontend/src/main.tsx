@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
+import { bootstrapDrawings } from './state/drawingsSync'
 import './index.css'
 
 // POLISH_ROADMAP Phase P4 perf pass: react-query's own default staleTime is
@@ -22,6 +23,10 @@ import './index.css'
 // periodically-changing availability) still take precedence over this
 // default.
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+
+// G9b: drawings, layouts and style templates live on the server; this moves anything an
+// older version left in this browser (once) and loads the shared layer and templates.
+bootstrapDrawings().catch((e) => console.error('drawings: could not load from the server', e))
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

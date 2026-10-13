@@ -2,6 +2,8 @@
 // now (VIZ_SPEC.md section 6: "generate/maintain matching TypeScript
 // types"). All times are UNIX seconds UTC.
 
+import type { PersistedOverlay } from '../chart/kl/drawingOverlays'
+
 export interface RunResult {
   passed: boolean
   fail_reason: string | null
@@ -422,6 +424,74 @@ export interface UpdateSessionSettingsRequest {
   scalper?: ScalperConfig | null
   chart_timeframe?: string
   step_size?: string
+}
+
+// G9b: drawings, named layouts and style templates, persisted with the session
+// (the wire form of state/klDrawingStore.ts; the mapping is state/drawingsWire.ts).
+export interface WireLayout {
+  id: string
+  name: string
+  indicators: {
+    session_shading: boolean
+    fair_value: boolean
+    news_events: boolean
+    vwap: boolean
+    ema20: boolean
+    ema50: boolean
+    atr14: boolean
+    volume: boolean
+  }
+  candle_type: string
+  timeframe: string
+  drawings: Record<string, PersistedOverlay[]>
+  shared_visible: boolean
+}
+
+export interface WireStyleTemplate {
+  id: string
+  name: string
+  color: string
+  width: number
+}
+
+export interface SessionDrawingsDoc {
+  drawings: Record<string, PersistedOverlay[]>
+  layouts: WireLayout[]
+  shared_visible: boolean
+  imported_from_browser: boolean
+}
+
+// Only the fields sent change; `drawings` replaces the listed instruments' sets.
+export interface UpdateSessionDrawingsRequest {
+  drawings?: Record<string, PersistedOverlay[]>
+  layouts?: WireLayout[]
+  shared_visible?: boolean
+}
+
+export interface WorkspaceDrawingsDoc {
+  shared: Record<string, PersistedOverlay[]>
+  style_templates: WireStyleTemplate[]
+  new_drawing_template_id: string | null
+  imported_from_browser: boolean
+}
+
+export interface UpdateWorkspaceDrawingsRequest {
+  shared?: Record<string, PersistedOverlay[]>
+  style_templates?: WireStyleTemplate[]
+  new_drawing_template_id?: string | null
+}
+
+export interface BrowserDrawingsImport {
+  shared: Record<string, PersistedOverlay[]>
+  style_templates: WireStyleTemplate[]
+  new_drawing_template_id: string | null
+  sessions: Record<string, { drawings: Record<string, PersistedOverlay[]>; layouts: WireLayout[]; shared_visible: boolean }>
+}
+
+export interface BrowserDrawingsImportResult {
+  sessions_imported: string[]
+  sessions_missing: string[]
+  workspace_imported: boolean
 }
 
 export interface CreateSessionRequest {
