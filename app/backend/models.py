@@ -42,6 +42,13 @@ class RunMetaResponse(RunSummary):
     # G7: the instruments the scope's trades are in (a multi-asset session lists
     # both); the analytics instrument filter offers these. Empty for engine runs.
     instruments: List[str] = Field(default_factory=list)
+    # G10: Autopilot (FXR_V2_SPEC.md section 8) traded in this scope. `interrupted`
+    # when a run was switched off and back on (its parity with the offline backtest
+    # only holds for an uninterrupted run), `autopilot_sessions` how many of the
+    # scope's sessions ran it, `autopilot_interruptions` the off->on gaps in total.
+    autopilot_sessions: int = 0
+    autopilot_interrupted: bool = False
+    autopilot_interruptions: int = 0
 
 
 class TradeRecord(BaseModel):
@@ -80,7 +87,10 @@ class TradeRecord(BaseModel):
     bars_held: int
     # FXR_SPEC.md section 2 schema-compat: only populated on manual-run
     # trades (see manual_analytics.py); None/absent on every engine run.
-    source: Optional[str] = None
+    source: Optional[str] = None            # "manual" | "bot"
+    # G10: for a bot trade, which Autopilot on-segment of its session decided it (0 = the
+    # first, uninterrupted run; 1+ follow an off -> on). None for manual trades.
+    bot_segment: Optional[int] = None
     session_id: Optional[str] = None
     # The journal's own trade id inside session_id. Equals trade_id for a
     # single-session scope; a pooled (all-sessions) scope renumbers trade_id
@@ -145,6 +155,8 @@ class StatsResponse(BaseModel):
     by_setup: Dict[str, GroupStats] = Field(default_factory=dict)
     by_tag: Dict[str, GroupStats] = Field(default_factory=dict)
     by_grade: Dict[str, GroupStats] = Field(default_factory=dict)
+    # G10: manual vs bot (Autopilot) trades.
+    by_source: Dict[str, GroupStats] = Field(default_factory=dict)
     by_backtest_session: Dict[str, GroupStats] = Field(default_factory=dict)
     result: Optional[StatsResult] = None
 
@@ -429,6 +441,85 @@ class ScalperConfig(BaseModel):
         return self
 
 
+# --- FXR_V2_SPEC.md section 8 (G10): Autopilot. The propbt strategy trades the replay on
+# the SAME account, stepped by the real engine on the server (propbt.engine.stepper);
+# the browser only renders what is stored here and in the journal.
+
+class AutopilotConfigInfo(BaseModel):
+    """A strategy config Autopilot could run (propbt/config/*.yaml with `legs`)."""
+    id: str
+    label: str
+    symbol: str
+    legs: List[str]                          # the leg(s) the config enables, e.g. ["continuation", "mean_reversion"]
+    summary: List[str] = Field(default_factory=list)   # one human line per enabled leg
+    supported: bool
+    reason: Optional[str] = None             # why it cannot start, when supported is False
+
+
+class AutopilotSegment(BaseModel):
+    """One stretch with the bot deciding, in cursor time (unix seconds)."""
+    on_time: int
+    off_time: Optional[int] = None
+
+
+class AutopilotPosition(BaseModel):
+    instrument: str
+    side: str
+    contracts: int
+    entry_price: float
+    entry_time: int
+    sl_price: Optional[float] = None
+    tp_price: Optional[float] = None
+    leg: Optional[str] = None
+    unrealized_usd: float = 0.0              # at the cursor bar's close, the engine's own mark
+
+
+class AutopilotPending(BaseModel):
+    """A decision that fills at the NEXT bar's open (the engine's t -> t+1 convention)."""
+    instrument: str
+    side: str
+    contracts: int
+    decided_time: int
+    reason: str = ""
+    sl_points: Optional[float] = None
+    tp_points: Optional[float] = None
+
+
+class AutopilotState(BaseModel):
+    enabled: bool
+    config_id: str
+    config_label: str
+    config_hash: str
+    symbol: str
+    legs: List[str] = Field(default_factory=list)
+    # running | off | failed | passed | error. `failed`/`passed`: the engine's own tracker
+    # resolved the account (the run ends there); `error`: the stored run could not be
+    # rebuilt to exactly what was journaled, so it stopped rather than diverge.
+    status: str = "running"
+    status_detail: Optional[str] = None
+    daily_locked: bool = False
+    # Off -> on again leaves the engine's strategy state (what it has already traded this
+    # session open, ...) fresh while the account carries on, so the run no longer equals
+    # an offline backtest: flagged here, in the journal and in analytics.
+    interrupted: bool = False
+    segments: List[AutopilotSegment] = Field(default_factory=list)
+    trading_start: int                      # first bar the bot could decide on (the activation cursor)
+    processed_to: int                       # last bar the engine has consumed (<= the session cursor)
+    bot_balance: float                      # the engine portfolio's own balance (bot trades only)
+    position: Optional[AutopilotPosition] = None
+    pending: List[AutopilotPending] = Field(default_factory=list)
+    trades: int = 0
+    rejections: int = 0
+    slippage_ticks: int = 1
+    commission_per_contract: float = 0.0
+
+
+class SetAutopilotRequest(BaseModel):
+    enabled: bool
+    # Required to turn it on (the first time, or to start a fresh snapshot after a stop).
+    config_id: Optional[str] = None
+
+
 class SessionProgress(BaseModel):
     """How far a session's replay has come (home page cards). Trading days are
     the instrument's own trading days in the data (CME boundary), so holidays
@@ -494,6 +585,8 @@ class BacktestSessionSummary(BaseModel):
     prop_status: Optional[PropStatus] = None
     # Filled only by GET /bt-sessions (the list): the home page's progress bar.
     progress: Optional["SessionProgress"] = None
+    # G10: the Autopilot run on this session (None = never switched on).
+    autopilot: Optional[AutopilotState] = None
 
 
     @computed_field  # type: ignore[prop-decorator]
@@ -638,6 +731,8 @@ class TradeExit(BaseModel):
 
 class ManualTrade(TradeRecord):
     session_id: str
+    # "manual" (the browser's sim broker) or "bot" (Autopilot, written only by the
+    # server: CreateManualTradeRequest has no source, so a client cannot forge it).
     source: str = "manual"
     # Partial exits (3.6): one trade, several exits. The trade-level pnl_usd /
     # commission_usd / exit_price (contract-weighted) / exit_time (latest) /

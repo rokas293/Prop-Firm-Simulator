@@ -35,5 +35,10 @@ export function isPropRewind(isProp: boolean, currentIndex: number, targetIndex:
   return isProp && targetIndex < currentIndex
 }
 
+// G10: once Autopilot has run, the engine has consumed (and may hold a position from) bars
+// up to its cursor; they cannot be un-traded.
+export const AUTOPILOT_REWIND_MESSAGE =
+  "Autopilot has traded these bars: the replay can't go back past where it has run."
+
 export const REWIND_BLOCKED_MESSAGE =
   "Discipline lock is on: the replay can't go back past the bar where you placed your first trade."

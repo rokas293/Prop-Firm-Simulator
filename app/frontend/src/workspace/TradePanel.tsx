@@ -5,6 +5,7 @@
 // height, tabular right-aligned numbers, hover as a background step.
 import { useState } from 'react'
 import type { ManualTrade } from '../api/types'
+import BotChip from '../components/BotChip'
 import { fmtPrice, fmtR, fmtUsd } from '../format'
 import { partialCloseRefusal } from '../chart/orderEntry'
 import { fmtEtDateTime } from '../timeFormat'
@@ -19,6 +20,8 @@ export interface PositionRow {
   tpPrice: number | null
   pnlUsd: number
   rMultiple: number | null
+  // G10: the Autopilot bot's position -- shown, never closed or edited from the panel.
+  bot?: boolean
 }
 
 export interface WorkingOrderRow {
@@ -127,7 +130,7 @@ function PositionsTab({
       <div className="flex items-center gap-4 px-2 pt-1 text-xs text-text-muted">
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={autoBreakeven} onChange={(e) => onAutoBreakevenChange(e.target.checked)} className="accent-accent" />
-          {positions.some((p) => p.instrument === activeInstrument) ? `${activeInstrument} break-even at +1R` : `Next ${activeInstrument} trade: break-even at +1R`}
+          {positions.some((p) => p.instrument === activeInstrument && !p.bot) ? `${activeInstrument} break-even at +1R` : `Next ${activeInstrument} trade: break-even at +1R`}
         </label>
         <label className="flex items-center gap-2">
           {activeInstrument} trail
@@ -177,8 +180,11 @@ function PositionsTab({
           </thead>
           <tbody>
             {positions.map((position) => (
-            <tr key={position.instrument} className="hover:bg-surface-2">
-              <td className={`${TD} ${position.instrument === activeInstrument ? '' : 'text-text-muted'}`}>{position.instrument}</td>
+            <tr key={`${position.bot ? 'bot-' : ''}${position.instrument}`} className="hover:bg-surface-2">
+              <td className={`${TD} ${position.instrument === activeInstrument ? '' : 'text-text-muted'}`}>
+                {position.instrument}
+                {position.bot && <BotChip />}
+              </td>
               <td className={TD}>{position.side === 'long' ? 'Long' : 'Short'}</td>
               <td className={TDN}>{position.contracts}</td>
               <td className={TDN}>{fmtPrice(position.entryPrice, position.instrument)}</td>
@@ -189,19 +195,27 @@ function PositionsTab({
                 {position.rMultiple !== null ? `${position.rMultiple > 0 ? '+' : ''}${fmtR(position.rMultiple)}` : '—'}
               </td>
               <td className="h-7 whitespace-nowrap px-2 text-right">
-                <PartialClose contracts={position.contracts} disabled={closing} onPartialClose={(qty) => onPartialClose(position.instrument, qty)} />
-                <button
-                  type="button"
-                  onClick={() => onBreakeven(position.instrument)}
-                  disabled={closing}
-                  title="Move the stop loss to the entry price (needs the trade in profit)"
-                  className={ROW_ACTION}
-                >
-                  Break-even
-                </button>
-                <button type="button" onClick={() => onClose(position.instrument)} disabled={closing} className={ROW_ACTION}>
-                  {closing ? 'Closing…' : 'Close'}
-                </button>
+                {position.bot ? (
+                  <span className="text-xs text-text-muted" title="Switch Autopilot off to stop it deciding; its open position keeps its stop and target">
+                    Managed by Autopilot
+                  </span>
+                ) : (
+                  <>
+                    <PartialClose contracts={position.contracts} disabled={closing} onPartialClose={(qty) => onPartialClose(position.instrument, qty)} />
+                    <button
+                      type="button"
+                      onClick={() => onBreakeven(position.instrument)}
+                      disabled={closing}
+                      title="Move the stop loss to the entry price (needs the trade in profit)"
+                      className={ROW_ACTION}
+                    >
+                      Break-even
+                    </button>
+                    <button type="button" onClick={() => onClose(position.instrument)} disabled={closing} className={ROW_ACTION}>
+                      {closing ? 'Closing…' : 'Close'}
+                    </button>
+                  </>
+                )}
               </td>
             </tr>
             ))}
@@ -290,7 +304,10 @@ function HistoryTab({ trades, onOpenTrade }: { trades: readonly ManualTrade[]; o
             >
               <td className={`${TDN} text-text-muted`}>{t.trade_id}</td>
               <td className={`${TD} tabular-nums text-text-muted`}>{fmtEtDateTime(t.exit_time)}</td>
-              <td className={TD}>{t.instrument}</td>
+              <td className={TD}>
+                {t.instrument}
+                {t.source === 'bot' && <BotChip interrupted={(t.bot_segment ?? 0) > 0} />}
+              </td>
               <td className={TD}>{t.side === 'long' ? 'Long' : 'Short'}</td>
               <td className={TDN}>{t.size_contracts}</td>
               <td className={TDN}>{fmtPrice(t.entry_price, t.instrument)}</td>

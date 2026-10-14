@@ -124,6 +124,9 @@ export interface OrderLineInfo {
   pnlUsd?: number
   // working order: its type, for "BUY LIMIT 2".
   orderType?: PendingOrderType
+  // G10: the line belongs to the Autopilot bot, not the manual book. Read-only: no
+  // grip, no x, tagged "BOT" (the server's engine owns it).
+  bot?: boolean
 }
 
 function tone(v: number): SegmentTone {
@@ -133,6 +136,12 @@ function tone(v: number): SegmentTone {
 export function labelSegments(info: OrderLineInfo, price: number): LabelSegment[] {
   if (info.role === 'position') {
     const pnl = info.pnlUsd ?? 0
+    if (info.bot) {
+      return [
+        { key: 'tag', text: `BOT ${info.side === 'long' ? 'LONG' : 'SHORT'} ${info.contracts}`, tone: 'neutral' },
+        { key: 'body', text: fmtSignedUsd(pnl), tone: tone(pnl) },
+      ]
+    }
     return [
       { key: 'tag', text: `${info.side === 'long' ? 'LONG' : 'SHORT'} ${info.contracts}`, tone: 'neutral' },
       { key: 'body', text: fmtSignedUsd(pnl), tone: tone(pnl) },
@@ -155,6 +164,8 @@ export function labelSegments(info: OrderLineInfo, price: number): LabelSegment[
   const tag: LabelSegment = { key: 'tag', text: isSl ? 'SL' : 'TP', tone: 'tag' }
   const grip: LabelSegment = { key: 'grip', text: '', tone: 'muted' }
   const close: LabelSegment = { key: 'close', text: '×', tone: 'muted' }
+  // The bot's own stop / target: shown, never edited from here.
+  if (info.bot) return [{ ...tag, text: `BOT ${isSl ? 'SL' : 'TP'}` }, body, { key: 'qty', text: String(info.contracts), tone: 'muted' }]
   if (ghost) return [grip, tag, { key: 'hint', text: 'drag to place', tone: 'muted' }, body, close]
   return [grip, tag, body, { key: 'qty', text: String(info.contracts), tone: 'muted' }, close]
 }

@@ -264,3 +264,31 @@ def test_write_run_bundle_run_id_stable_for_same_config_content(tmp_path):
 
 def test_list_run_ids_empty_when_no_runs_dir(tmp_path):
     assert list_run_ids(tmp_path / "does_not_exist") == []
+
+
+# --- a rule set with no daily loss limit (practice sessions, custom rules) ------------
+
+def test_equity_frame_has_no_daily_floor_when_the_rule_set_has_no_daily_limit():
+    """build_equity_frame used to do arithmetic on a None daily_loss_limit; a
+    session without that rule (Autopilot on a practice account) must still get
+    its per-bar rows, with the floor column empty rather than invented."""
+    import dataclasses
+    import datetime as dt
+
+    from propbt.engine.backtester import EquityLogRow
+
+    ts = pd.Timestamp("2024-02-05 15:00", tz="UTC")
+    log = [
+        EquityLogRow(ts, 50000.0, 50010.0, 48000.0, dt.date(2024, 2, 5), 50000.0, False, False),
+        EquityLogRow(ts + pd.Timedelta(minutes=1), 50000.0, 49990.0, 48000.0, dt.date(2024, 2, 5), 50000.0, False, False),
+    ]
+    topstep = load_prop_rules()
+    no_limit = dataclasses.replace(topstep, daily_loss_limit=None)
+
+    with_limit = build_equity_frame(log, topstep)
+    without = build_equity_frame(log, no_limit)
+
+    assert with_limit["daily_loss_floor"].tolist() == [49000.0, 49000.0]
+    assert without["daily_loss_floor"].isna().all()
+    # every other column is what it was
+    pd.testing.assert_frame_equal(with_limit.drop(columns="daily_loss_floor"), without.drop(columns="daily_loss_floor"))

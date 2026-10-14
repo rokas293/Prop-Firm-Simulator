@@ -33,6 +33,11 @@ export interface RunMeta extends RunSummary {
   session_ids?: string[]
   // G7: the instruments the scope's trades are in (both, for a multi-asset session).
   instruments?: string[]
+  // G10: Autopilot traded in this scope; `interrupted` when a run was switched off and
+  // back on (it no longer equals an offline backtest of the same window).
+  autopilot_sessions?: number
+  autopilot_interrupted?: boolean
+  autopilot_interruptions?: number
 }
 
 export const MANUAL_RUN_PREFIX = 'bt:'
@@ -72,7 +77,11 @@ export interface TradeRecord {
   mfe_r: number | null
   bars_held: number
   // Populated only on manual-run trades (FXR_SPEC section 2 schema compat).
+  // "manual" | "bot" (Autopilot, G10).
   source?: string | null
+  // G10: for a bot trade, which Autopilot on-segment of its session decided it
+  // (0 = the first, uninterrupted run; 1+ follow an off -> on).
+  bot_segment?: number | null
   session_id?: string | null
   // The journal's own trade id within session_id (trade_id itself is
   // renumbered in a pooled all-sessions scope) -- links back to the journal.
@@ -135,6 +144,8 @@ export interface StatsResponse {
   by_tag?: Record<string, GroupStats>
   by_grade?: Record<string, GroupStats>
   by_backtest_session?: Record<string, GroupStats>
+  // G10: manual vs bot (Autopilot) trades.
+  by_source?: Record<string, GroupStats>
   result: StatsResult | null
 }
 
@@ -348,6 +359,79 @@ export interface PropStatus {
   trades_to_result: number | null
 }
 
+// --- FXR_V2_SPEC.md section 8 (G10): Autopilot ---------------------------------
+// The propbt strategy trades the replay on the session's account, stepped by the
+// real engine on the server. The browser only renders what is stored here.
+export interface AutopilotConfigInfo {
+  id: string
+  label: string
+  symbol: string
+  legs: string[]
+  summary: string[]
+  supported: boolean
+  // Why it cannot start, when supported is false (e.g. it enables the news legs).
+  reason: string | null
+}
+
+export interface AutopilotSegment {
+  on_time: number
+  off_time: number | null
+}
+
+export interface AutopilotPosition {
+  instrument: string
+  side: 'long' | 'short'
+  contracts: number
+  entry_price: number
+  entry_time: number
+  sl_price: number | null
+  tp_price: number | null
+  leg: string | null
+  // At the cursor bar's close, the engine's own mark.
+  unrealized_usd: number
+}
+
+export interface AutopilotPending {
+  instrument: string
+  side: 'long' | 'short'
+  contracts: number
+  decided_time: number
+  reason: string
+  sl_points: number | null
+  tp_points: number | null
+}
+
+export type AutopilotStatus = 'running' | 'off' | 'failed' | 'passed' | 'error'
+
+export interface AutopilotState {
+  enabled: boolean
+  config_id: string
+  config_label: string
+  config_hash: string
+  symbol: string
+  legs: string[]
+  status: AutopilotStatus
+  status_detail: string | null
+  daily_locked: boolean
+  // Switched off and on again: the run no longer equals an offline backtest.
+  interrupted: boolean
+  segments: AutopilotSegment[]
+  trading_start: number
+  processed_to: number
+  bot_balance: number
+  position: AutopilotPosition | null
+  pending: AutopilotPending[]
+  trades: number
+  rejections: number
+  slippage_ticks: number
+  commission_per_contract: number
+}
+
+export interface SetAutopilotRequest {
+  enabled: boolean
+  config_id?: string | null
+}
+
 export interface BacktestSessionSummary {
   id: string
   // FXR_V2_SPEC.md section 4 (G1). Display name (null = derive one from the
@@ -393,6 +477,8 @@ export interface BacktestSessionSummary {
   prop_status?: PropStatus | null
   // Only on the sessions LIST (G6): the home page's progress bar.
   progress?: SessionProgress | null
+  // G10: the Autopilot run on this session (null/absent = never switched on).
+  autopilot?: AutopilotState | null
 }
 
 export type BacktestSessionDetail = BacktestSessionSummary
@@ -561,7 +647,8 @@ export interface TradeExit {
 
 export interface ManualTrade extends TradeRecord {
   session_id: string
-  source: 'manual'
+  // "bot" = Autopilot (G10), written only by the server.
+  source: 'manual' | 'bot'
   trade_key?: string | null
   // Empty for a trade journaled before G2 (one implicit exit).
   exits?: TradeExit[]

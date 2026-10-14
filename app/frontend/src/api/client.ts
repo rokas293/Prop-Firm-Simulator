@@ -2,6 +2,7 @@ import type {
   AddScreenshotRequest,
   AiStatusResponse,
   AnalyticsSummary,
+  AutopilotConfigInfo,
   Bar,
   BacktestSessionDetail,
   BacktestSessionSummary,
@@ -24,6 +25,7 @@ import type {
   RrSimulatorResponse,
   RunSummary,
   SessionDrawingsDoc,
+  SetAutopilotRequest,
   SessionSetupOptions,
   SessionWindow,
   StatsResponse,
@@ -164,6 +166,10 @@ export const api = {
       positions,
       working_orders: workingOrders,
     }),
+  // G10: which strategy configs Autopilot can run, and switching it on/off for a session.
+  getAutopilotConfigs: () => request<AutopilotConfigInfo[]>('/autopilot/configs'),
+  setBtSessionAutopilot: (sessionId: string, body: SetAutopilotRequest) =>
+    sendJson<BacktestSessionDetail, SetAutopilotRequest>(`/bt-sessions/${sessionId}/autopilot`, 'POST', body),
   // G8: the Analytics page's aggregates and RR simulator (any manual run id), and
   // the prop-rules modal's live status (`open_pnl` is the sim broker's float).
   getAnalyticsSummary: (runId: string, instrument?: string | null) =>

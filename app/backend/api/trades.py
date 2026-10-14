@@ -26,11 +26,13 @@ def get_trades(
     session_id: Optional[str] = Query(None, description="manual runs: backtest session id (all-sessions scope)"),
     hour_ny: Optional[int] = Query(None, ge=0, le=23, description="entry hour, America/New_York"),
     instrument: Optional[str] = Query(None, description="manual runs: one instrument of a multi-asset session"),
+    source: Optional[str] = Query(None, description="manual runs: manual | bot (Autopilot)"),
 ) -> List[models.TradeRecord]:
     try:
         return bundle_reader.list_trades(
             run_id, leg=leg, session=session, side=side, result=result, exit_type=exit_type,
             ts_from=from_, ts_to=to, tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny, instrument=instrument,
+            source=source,
         )
     except bundle_reader.RunNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))

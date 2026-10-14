@@ -797,7 +797,7 @@ const ChartKL = forwardRef<ChartKLHandle, ChartKLProps>(function ChartKL(
   const loadedSeriesKeyRef = useRef<string | null>(null)
   // A position line on screen draws its own SL/TP (as order lines), so the
   // locked trade-overlay SL/TP for the open-position sentinel are suppressed.
-  const openPositionLineActive = (orderLines ?? []).some((l) => l.info.role === 'position')
+  const openPositionLineActive = (orderLines ?? []).some((l) => l.info.role === 'position' && !l.info.bot)
   const openPositionLineActiveRef = useRef(openPositionLineActive)
   openPositionLineActiveRef.current = openPositionLineActive
 

@@ -152,7 +152,11 @@ def build_equity_frame(equity_log: List[EquityLogRow], prop_rules_config: PropRu
             "open_pnl": row.equity - row.balance,
             "equity": row.equity,
             "mll_floor": row.mll_floor,
-            "daily_loss_floor": row.day_start_balance - prop_rules_config.daily_loss_limit,
+            # No daily limit (a practice account, or a rule set without one): no floor to draw.
+            "daily_loss_floor": (
+                float("nan") if prop_rules_config.daily_loss_limit is None
+                else row.day_start_balance - prop_rules_config.daily_loss_limit
+            ),
             "target_level": target_level,
             "trading_day": row.trading_day.isoformat() if row.trading_day else None,
             "day_start_balance": row.day_start_balance,

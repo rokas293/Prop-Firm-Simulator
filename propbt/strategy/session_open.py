@@ -375,6 +375,12 @@ class SessionOpenRunConfig:
 def load_session_open_config(path: str) -> SessionOpenRunConfig:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
+    return parse_session_open_config(raw)
+
+
+def parse_session_open_config(raw: dict) -> SessionOpenRunConfig:
+    """The `legs.continuation` / `legs.mean_reversion` / `backtest` sections of an
+    already-loaded strategy config (so a stored snapshot can be run as it was)."""
     legs = raw["legs"]
 
     continuation_cfg = None

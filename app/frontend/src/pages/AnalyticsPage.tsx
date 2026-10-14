@@ -8,8 +8,8 @@
 import CsvExportMenu from '../components/CsvExportMenu'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { useAnalyticsSummary, useBtSessions, useRun, useTrades } from '../api/hooks'
-import { MANUAL_ALL_SESSIONS_RUN_ID, manualRunId, type PeriodBucket, type TradeRecord } from '../api/types'
+import { useAnalyticsSummary, useBtSessions, useRun, useStats, useTrades } from '../api/hooks'
+import { MANUAL_ALL_SESSIONS_RUN_ID, manualRunId, type GroupStats, type PeriodBucket, type TradeRecord } from '../api/types'
 import AnalyticsTradesTable from '../analytics/AnalyticsTradesTable'
 import RrSimulatorCard from '../analytics/RrSimulatorCard'
 import { AXIS_LINE_STYLE, AXIS_TICK_STYLE, TOOLTIP_CONTENT_STYLE } from '../chart/rechartsTheme'
@@ -45,6 +45,63 @@ function Section({ id, title, hint, children }: { id: string; title: string; hin
       </div>
       {children}
     </section>
+  )
+}
+
+// G10 (FXR_V2_SPEC.md section 8, "Mixed mode"): the same session's results split by who took the
+// trade. The server's numbers (by_source of the stats endpoint); an interrupted Autopilot run
+// is flagged because it no longer equals an offline backtest of the same window.
+function SourceSplit({ rows, interruptions }: { rows: Record<string, GroupStats>; interruptions: number }) {
+  const order = ['manual', 'bot'].filter((k) => rows[k])
+  const label: Record<string, string> = { manual: 'Manual', bot: 'Autopilot' }
+  const note =
+    interruptions > 0 ? (
+      <p className="text-xs text-text">
+        Autopilot was interrupted {interruptions === 1 ? 'once' : `${interruptions} times`} (switched off and on again):
+        those runs no longer match an offline backtest of the same window.
+      </p>
+    ) : null
+  // One source is the whole scope: the tiles above already are its numbers.
+  if (order.length < 2) {
+    return (
+      <div className="flex flex-col gap-2" data-testid="source-split">
+        <p className="text-xs text-text-muted">All of these trades are {order[0] === 'bot' ? "Autopilot's" : 'manual'}.</p>
+        {note}
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-2" data-testid="source-split">
+      <h3 className="micro-label">Results by source</h3>
+      <table className="w-full max-w-[640px] border-collapse text-xs">
+        <thead>
+          <tr className="text-right">
+            <th className="micro-label h-7 pr-3 text-left font-medium">Source</th>
+            <th className="micro-label h-7 px-3 font-medium">Trades</th>
+            <th className="micro-label h-7 px-3 font-medium">Net P&amp;L</th>
+            <th className="micro-label h-7 px-3 font-medium">Win rate</th>
+            <th className="micro-label h-7 px-3 font-medium">Expectancy</th>
+            <th className="micro-label h-7 pl-3 font-medium">Profit factor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {order.map((k) => {
+            const g = rows[k]
+            return (
+              <tr key={k} className="text-right tabular-nums">
+                <td className="h-7 pr-3 text-left text-text">{label[k]}</td>
+                <td className="h-7 px-3">{g.trades}</td>
+                <td className={`h-7 px-3 ${g.net_pnl_usd > 0 ? 'text-positive-fg' : g.net_pnl_usd < 0 ? 'text-negative-fg' : ''}`}>{fmtUsd(g.net_pnl_usd)}</td>
+                <td className="h-7 px-3">{fmtPct(g.win_rate)}</td>
+                <td className="h-7 px-3">{g.expectancy_usd === null ? '-' : fmtUsd(g.expectancy_usd)}</td>
+                <td className="h-7 pl-3">{g.profit_factor === null ? '-' : g.profit_factor.toFixed(2)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      {note}
+    </div>
   )
 }
 
@@ -91,6 +148,10 @@ export default function AnalyticsPage() {
   const { data: run } = useRun(runId)
   const { data: allSessions } = useBtSessions(true)
   const { data: summary, isLoading } = useAnalyticsSummary(runId, instrument)
+  // G10: manual vs Autopilot results, when a bot has traded in this scope.
+  const { data: statsAll } = useStats(runId, 'all')
+  const bySource = statsAll?.by_source ?? {}
+  const botTraded = (run?.autopilot_sessions ?? 0) > 0 && Object.keys(bySource).length > 0
   const tradeParams = useMemo(() => (instrument ? { instrument } : undefined), [instrument])
   const { data: tradesData } = useTrades(runId, tradeParams)
   const trades = useMemo<TradeRecord[]>(() => tradesData ?? [], [tradesData])
@@ -220,11 +281,12 @@ export default function AnalyticsPage() {
                   sub={periodWord(stats.avg_gain_day.periods, 'day')}
                 />
               </div>
-              <p className="text-[11px] text-text-muted">
+              <p className="text-xs text-text-muted">
                 An active day, week or month is one with at least one trade; days are CME trading days of each trade&apos;s
                 entry. Avg R per trade is the mean realized R; avg planned R:R is target distance over stop distance at entry.
                 Each is shown with the number of trades it is based on.
               </p>
+              {botTraded && <SourceSplit rows={bySource} interruptions={run?.autopilot_interruptions ?? 0} />}
             </div>
           )}
         </Section>

@@ -4,12 +4,14 @@ import { fetchBarsInWorker } from '../workers/barsWorkerClient'
 import type { StatsScope, TradeQueryParams } from '../state/tradeStore'
 import type {
   AddScreenshotRequest,
+  BacktestSessionDetail,
   CreateManualTradeRequest,
   CreateSessionRequest,
   IndicatorName,
   ManualTrade,
   PersistedPosition,
   PersistedWorkingOrder,
+  SetAutopilotRequest,
   UpdateSessionSettingsRequest,
   UpdateTradeJournalRequest,
 } from './types'
@@ -256,7 +258,41 @@ export function useUpdateBtSessionCursor() {
       workingOrders?: PersistedWorkingOrder[]
     }) => api.updateBtSessionCursor(sessionId, cursorTime, positions ?? [], workingOrders ?? []),
     onSuccess: (updated) => {
+      // A save can carry bot trades the engine closed on the bars it just revealed (G10):
+      // the journal, the verdict and the analytics must be re-read when their number moved.
+      const before = queryClient.getQueryData<BacktestSessionDetail>(['bt-session', updated.id])
       queryClient.setQueryData(['bt-session', updated.id], updated)
+      if ((before?.autopilot?.trades ?? 0) !== (updated.autopilot?.trades ?? 0)) {
+        void queryClient.invalidateQueries({ queryKey: ['bt-session-trades', updated.id] })
+        void queryClient.invalidateQueries({ queryKey: ['stats'] })
+        void queryClient.invalidateQueries({ queryKey: ['manual-analytics'] })
+        void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
+      }
+    },
+  })
+}
+
+// G10: the strategy configs Autopilot can run (and why one cannot).
+export function useAutopilotConfigs() {
+  return useQuery({
+    queryKey: ['autopilot-configs'],
+    queryFn: () => api.getAutopilotConfigs(),
+    staleTime: 60_000,
+  })
+}
+
+// Switch Autopilot on/off for a session. Returns the updated session (the run's state).
+export function useSetAutopilot() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sessionId, body }: { sessionId: string; body: SetAutopilotRequest }) =>
+      api.setBtSessionAutopilot(sessionId, body),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['bt-session', updated.id], updated)
+      void queryClient.invalidateQueries({ queryKey: ['bt-session-trades', updated.id] })
+      void queryClient.invalidateQueries({ queryKey: ['stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['manual-analytics'] })
+      void queryClient.invalidateQueries({ queryKey: ['bt-sessions'] })
     },
   })
 }

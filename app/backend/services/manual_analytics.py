@@ -29,6 +29,7 @@ trading_day label, the prop-rule timeline, and aggregates over trades.
 """
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -50,7 +51,7 @@ ALL_RUN_ID = "bt:all"
 
 # `exits` is the trade's exit list (FXR_V2_SPEC.md 3.6): the journal shows ONE trade, but the
 # prop replay and the equity timeline walk its exits (see _legs).
-EXTRA_COLUMNS = ["source", "session_id", "session_trade_id", "tags", "setup_name", "grade", "exits", "entry_sl_price", "entry_tp_price"]
+EXTRA_COLUMNS = ["source", "bot_segment", "session_id", "session_trade_id", "tags", "setup_name", "grade", "exits", "entry_sl_price", "entry_tp_price"]
 FRAME_COLUMNS = rb.TRADE_COLUMNS + EXTRA_COLUMNS
 
 
@@ -119,7 +120,8 @@ def _build_frame(run_id: str, sessions: List[models.BacktestSessionDetail]) -> p
             # a pure function of entry_time, derived here exactly as the
             # engine's run bundle derives it.
             row["trading_day"] = day.isoformat() if day else None
-            row["source"] = "manual"
+            row["source"] = d.get("source") or "manual"      # "manual" | "bot" (Autopilot, server-written)
+            row["bot_segment"] = d.get("bot_segment")
             row["session_id"] = s.id
             row["session_trade_id"] = d["trade_id"]
             row["tags"] = list(d.get("tags") or [])
@@ -418,6 +420,173 @@ def replay_prop_rules(
     return replay
 
 
+def replay_prop_rules_per_bar(
+    df: pd.DataFrame,
+    instrument: str,
+    cfg: PropRulesConfig,
+    bot_rows: List[Tuple[int, float, float, str]],
+    bot_balance: float,
+    mark: Optional[Tuple[pd.Timestamp, float]] = None,
+) -> PropReplay:
+    """The verdict of a session with an Autopilot run on it (G10): ONE account walked bar
+    by bar through the SAME PropRulesTracker, per source.
+
+    Bot exposure is what the engine already marked: `bot_rows` is the engine's own
+    per-bar log (balance, close-marked equity, trading day), observed as it is. Manual
+    exposure is marked the way the journal always has been -- at the bar's extreme
+    against the position (a long's low, a short's high), the MAE convention, with an
+    intraday-trailing floor seeing the favourable extreme first and exits realizing
+    after the bar's low. The account's balance is bot balance + manual realized; its
+    equity is bot equity + manual float. So with no manual trade the observations are
+    exactly the engine's (the same numbers into the same tracker), and a session with
+    no bot keeps `replay_prop_rules`, untouched.
+
+    Minutes on the grid: every bar the engine consumed, plus the bars of each manual
+    trade's life. `bot_balance` is the engine portfolio's final balance (it includes a
+    forced flatten booked after the last logged bar).
+    """
+    specs = load_contracts()
+    sessions_cfg = load_sessions()
+    tracker = PropRulesTracker(cfg)
+    replay = PropReplay(combine=None)  # type: ignore[arg-type]
+    target_level = cfg.start_balance + cfg.profit_target
+
+    def observe(ts: pd.Timestamp, day, bal: float, eq: float, keep_row: bool = True):
+        st = tracker.on_bar(ts, day, bal, eq)
+        row = {
+            "time": ts, "balance": bal, "open_pnl": eq - bal, "equity": eq, "mll_floor": tracker.mll_floor,
+            "daily_loss_floor": (
+                float("nan") if cfg.daily_loss_limit is None else tracker.day_start_balance - cfg.daily_loss_limit
+            ),
+            "target_level": target_level,
+            "trading_day": day.isoformat() if day else None,
+            "day_start_balance": tracker.day_start_balance,
+            "breached": tracker.failed, "daily_locked": tracker.daily_locked,
+        }
+        if keep_row:
+            replay.rows.append(row)
+        replay.samples.append(row)
+        return st
+
+    all_rows = list(df.itertuples(index=False))
+    infos = []
+    for t in all_rows:
+        if getattr(t, "source", "manual") == "bot":
+            continue
+        legs = _legs(t)
+        sym = getattr(t, "instrument", None) or instrument
+        end = max(l.ts for l in legs)
+        infos.append({
+            "t": t, "spec": specs[sym], "legs": legs, "sign": 1 if t.side == "long" else -1,
+            "entry": t.entry_time, "end": end, "size": int(t.size_contracts),
+            "entry_price": float(t.entry_price), "mark": float(t.entry_price),
+            "bars": _minute_marks(sym, t.entry_time, end),
+        })
+
+    bot_by_ts = {pd.Timestamp(r[0], unit="s", tz="UTC"): r for r in bot_rows}
+    grid = set(bot_by_ts)
+    for x in infos:
+        grid.add(x["entry"])
+        grid.update(l.ts for l in x["legs"])
+        if x["bars"] is not None:
+            grid.update(x["bars"].index)
+
+    def open_before(x, m):  # contracts open while minute m trades (exits at m not yet taken)
+        return x["size"] - sum(l.contracts for l in x["legs"] if l.ts < m)
+
+    def open_after(x, m):  # contracts still open once minute m's exits are taken
+        return x["size"] - sum(l.contracts for l in x["legs"] if l.ts <= m)
+
+    def float_at(x, price, contracts):
+        return x["sign"] * (price - x["entry_price"]) * x["spec"].point_value * contracts
+
+    bot_b = bot_e = cfg.start_balance
+    manual_realized = 0.0
+    last_bot_ts = max(bot_by_ts) if bot_by_ts else None
+    resolved_at: Optional[pd.Timestamp] = None
+
+    for m in sorted(grid):
+        r = bot_by_ts.get(m)
+        if r is not None:
+            bot_b, bot_e, day = r[1], r[2], dt.date.fromisoformat(r[3])
+        else:
+            day = trading_day_of(m, sessions_cfg)
+        balance = bot_b + manual_realized
+
+        for x in infos:  # a manual entry: the account's first sight of the position
+            if x["entry"] == m:
+                carried = sum(float_at(y, y["mark"], open_after(y, m)) for y in infos if y is not x and y["entry"] < m < y["end"])
+                observe(m, day, balance, bot_e + carried, keep_row=False)
+
+        worst = best = 0.0
+        for x in infos:
+            if not (x["entry"] < m <= x["end"]):
+                continue
+            n = open_before(x, m)
+            bars = x["bars"]
+            if bars is not None and m in bars.index:
+                bar = bars.loc[m]
+                x["mark"] = float(bar["close"])
+                adverse, favourable = (bar["low"], bar["high"]) if x["sign"] == 1 else (bar["high"], bar["low"])
+                w, b = float_at(x, float(adverse), n), float_at(x, float(favourable), n)
+            elif bars is None:
+                mae = max((l.mae_points for l in x["legs"] if l.ts >= m), default=0.0)
+                w, b = -mae * x["spec"].point_value * n, 0.0
+            else:  # a gap in this instrument's bars: the open P&L where it last was
+                w = b = float_at(x, x["mark"], n)
+            worst += w
+            best += b
+
+        if cfg.mll_type == "intraday_trailing" and best > 0:
+            observe(m, day, balance, bot_e + best, keep_row=False)
+        st = observe(m, day, balance, bot_e + worst)
+        if st.failed or st.passed:
+            resolved_at = m
+            break
+
+        exits = [l for x in infos for l in x["legs"] if l.ts == m]
+        if exits:
+            for l in exits:
+                manual_realized += l.pnl_usd
+            carried = sum(float_at(y, y["mark"], open_after(y, m)) for y in infos if y["entry"] < m and open_after(y, m) > 0)
+            st = observe(m, day, bot_b + manual_realized, bot_e + carried)
+            if st.failed or st.passed:
+                resolved_at = m
+                break
+
+    if resolved_at is not None:
+        order = sorted(all_rows, key=lambda t: (t.exit_time, t.entry_time))
+        live_now = [t for t in all_rows if t.entry_time <= resolved_at <= t.exit_time]
+        pick = max(live_now, key=lambda t: t.entry_time) if live_now else next(
+            (t for t in reversed(order) if t.exit_time <= resolved_at), None)
+        last = replay.rows[-1]
+        replay.resolved_time = _unix(resolved_at)
+        replay.resolved_trade_id = int(pick.trade_id) if pick is not None else None
+        replay.trades_to_result = 1 + sum(1 for t in all_rows if t.exit_time < resolved_at)
+        replay.equity_at_result = float(last["equity"])
+        replay.mll_floor_at_result = float(last["mll_floor"])
+    elif mark is not None and not (tracker.failed or tracker.passed):
+        ts, open_pnl = mark
+        observe(ts, trading_day_of(ts, sessions_cfg), bot_b + manual_realized, bot_b + manual_realized + open_pnl, keep_row=False)
+        if tracker.failed:
+            replay.resolved_time = _unix(ts)
+
+    # The tracker's live state before `finalize` closes the day.
+    replay.live = LiveState(
+        mll_floor=tracker.mll_floor, mll_frozen=tracker.mll_frozen, day_start_balance=tracker.day_start_balance,
+        daily_locked=tracker.daily_locked, daily_pnls=dict(tracker.daily_pnls),
+        in_day=tracker.current_trading_day is not None, target_hit=tracker.target_hit,
+        consistency_passed=tracker.consistency_passed,
+    )
+    # The engine's final balance counts a flatten booked at its last logged bar; a verdict
+    # reached earlier (by the manual side) is the bot's balance as of that bar.
+    use_final_bot = resolved_at is None or (last_bot_ts is not None and resolved_at >= last_bot_ts)
+    final_balance = (bot_balance if use_final_bot else bot_b) + manual_realized
+    replay.combine = tracker.finalize(final_balance)
+    replay.balance = final_balance
+    return replay
+
+
 def _replay_overlap(members, spec_of, cfg, balance, observe, sessions_cfg):
     """Walks trades in different instruments that were open at the same time, one
     1m bar at a time, as ONE account. `members` is [(position in the frame, trade)].
@@ -517,8 +686,54 @@ def _session_replay(run_id: str) -> Tuple[Optional[models.BacktestSessionDetail]
     df = _build_frame(run_id, sessions)
     scope = parse_scope(run_id)
     if scope.kind == "session" and sessions and sessions[0].account.prop_ruleset:
-        return sessions[0], df, replay_prop_rules(df, sessions[0].instrument, session_engine_config(sessions[0]))
+        return sessions[0], df, replay_for_session(sessions[0], df)
     return (sessions[0] if scope.kind == "session" and sessions else None), df, None
+
+
+def replay_for_session(session: models.BacktestSessionDetail, df: pd.DataFrame, mark=None) -> PropReplay:
+    """A prop session's replay: the trade-resolution walk, or -- once Autopilot has run on it --
+    the per-bar walk over the engine's log (see replay_prop_rules_per_bar)."""
+    cfg = session_engine_config(session)
+    ap = session.autopilot
+    if ap is not None:
+        from app.backend.services import autopilot_service
+
+        # The per-bar walk is O(bars): every stats / equity / meta request and the home list's
+        # prop status would repeat it. A live `mark` is a one-off reading and is never cached;
+        # the cached walk is keyed by the three files it is a function of.
+        key = _walk_key(session.id) if mark is None else None
+        if key is not None and key in _WALK_CACHE:
+            return _WALK_CACHE[key]
+        replay = replay_prop_rules_per_bar(
+            df, session.instrument, cfg, autopilot_service.read_equity_rows(session.id), ap.bot_balance, mark=mark,
+        )
+        if key is not None:
+            if len(_WALK_CACHE) >= 16:
+                _WALK_CACHE.pop(next(iter(_WALK_CACHE)))
+            _WALK_CACHE[key] = replay
+        return replay
+    return replay_prop_rules(df, session.instrument, cfg, mark=mark)
+
+
+_WALK_CACHE: Dict[tuple, PropReplay] = {}
+
+
+def _walk_key(session_id: str) -> Optional[tuple]:
+    """(dir, id, and the size + mtime of session.json / trades.json / autopilot_equity.jsonl): any
+    save, journal write or engine step changes it. None if a file cannot be read."""
+    d = bts._session_dir(session_id)
+    try:
+        parts = []
+        for name in ("session.json", "trades.json", "autopilot_equity.jsonl"):
+            f = d / name
+            if f.exists():
+                st = f.stat()
+                parts.append((name, st.st_size, st.st_mtime_ns))
+            else:
+                parts.append((name, 0, 0))
+        return (str(d), *parts)
+    except OSError:
+        return None
 
 
 def prop_status(session_id: str) -> Optional[models.PropStatus]:
@@ -586,6 +801,9 @@ def get_meta(run_id: str) -> models.RunMetaResponse:
             if scope.kind == "session" and sessions
             else ([scope.instrument] if scope.instrument else sorted({a for x in sessions for a in (x.assets or [x.instrument])}))
         ),
+        autopilot_sessions=sum(1 for x in sessions if x.autopilot is not None),
+        autopilot_interrupted=any(x.autopilot is not None and x.autopilot.interrupted for x in sessions),
+        autopilot_interruptions=sum(max(0, len(x.autopilot.segments) - 1) for x in sessions if x.autopilot is not None),
     )
 
 
@@ -692,10 +910,12 @@ def get_stats(
     session_id: Optional[str] = None,
     hour_ny: Optional[int] = None,
     instrument: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> models.StatsResponse:
     _, df_all, replay = _session_replay(run_id)
     df = filter_trades_frame(
-        df_all, session=session, tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny, instrument=instrument,
+        df_all, session=session, tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny,
+        instrument=instrument, source=source,
     )
 
     base = rb.compute_run_stats(df, replay.combine if replay is not None else None)
@@ -729,6 +949,7 @@ def get_stats(
         by_setup=_breakdown(df, df["setup_name"].fillna("(no setup)")) if len(df) else {},
         by_tag=by_tag,
         by_grade=_breakdown(df, df["grade"].fillna("ungraded")) if len(df) else {},
+        by_source=_breakdown(df, df["source"].fillna("manual")) if len(df) else {},
         by_backtest_session=_breakdown(df, df["session_id"]) if multi_session else {},
         result=result,
     )
@@ -884,7 +1105,11 @@ def prop_rules_status(session_id: str, open_pnl: float = 0.0, cursor_time: Optio
     cfg = session_engine_config(session)
     df = load_trades_frame(MANUAL_PREFIX + session_id)
     at = cursor_time if cursor_time is not None else session.cursor_time
-    replay = replay_prop_rules(df, session.instrument, cfg, mark=(pd.Timestamp(at, unit="s", tz="UTC"), float(open_pnl)))
+    # The open float is the manual position's (a sim-broker number the browser sends) plus
+    # the bot's, which the engine marked at its last bar.
+    bot_float = float(session.autopilot.position.unrealized_usd) if session.autopilot and session.autopilot.position else 0.0
+    open_pnl = float(open_pnl) + bot_float
+    replay = replay_for_session(session, df, mark=(pd.Timestamp(at, unit="s", tz="UTC"), float(open_pnl)))
     combine, live = replay.combine, replay.live
     assert live is not None
 

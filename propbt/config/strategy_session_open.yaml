@@ -1,0 +1,100 @@
+# Session-open legs only (continuation + mean reversion): the strategy Autopilot
+# (FXR_V2_SPEC.md section 8) can run on a replay session. Identical to strategy.yaml
+# except `legs.news.enabled: false` -- Autopilot refuses a config that enables a leg
+# it cannot run yet (the news legs), rather than silently running a subset, so the
+# default strategy.yaml is not startable there. Offline equivalent of an Autopilot
+# run: `python run.py backtest --config propbt/config/strategy_session_open.yaml`.
+#
+# Everything below is strategy.yaml's content (see its comments for what each value means).
+symbol: MNQ
+
+# CLAUDE.md section 7 (hard requirement): reserve the most recent ~30-40%
+# of data as an out-of-sample holdout, never used for tuning. MNQ data runs
+# 2021-07-16 -> 2026-07-15 (same range as MES); this end date is the ~65%
+# mark, leaving 2024-10-14 -> 2026-07-15 (~35%) untouched as OOS. Do not
+# extend `end` past this while iterating on parameters -- that's Phase 5's
+# job (walk_forward.py), reported side by side with in-sample, not
+# something to eyeball here.
+#
+# NOTE: sl_points/tp_points below were never tuned for MNQ's price scale
+# (MNQ trades ~3-4x MES's point value and has moved through a much wider
+# absolute price range historically -- ~14,700 to ~31,000 vs MES's
+# ~3,500-7,600). A 10pt MES stop and a 10pt MNQ stop are NOT equivalent
+# risk. Worth checking with `review` before trusting these numbers.
+backtest:
+  start: "2021-07-16"
+  end: "2024-10-13"
+
+legs:
+  continuation:
+    enabled: true
+    sessions: [asia, london, ny]
+    direction:
+      # close_vs_fair_value: sign of (close of the bar at the end of the
+      #   observation window - fair value). With observation_window_minutes=1
+      #   this is exactly "sign of first-bar close vs fair value".
+      # window_displacement: sign of (close at window end - open at window
+      #   start), i.e. net displacement over the window, independent of fair
+      #   value.
+      method: close_vs_fair_value
+      observation_window_minutes: 3   # CLAUDE.md section 4: default 1-5 min
+    risk:
+      contracts: 1
+      sl_points: 10.0
+      rr: 1.5              # must be one of 1.0, 1.5, 2.0 -> tp_points = sl_points * rr
+
+  mean_reversion:
+    enabled: true
+    sessions: [asia, london, ny]
+    max_trades_per_session: 3
+    consolidation:
+      compression_method: range        # range | atr
+      lookback_bars: 15                 # K bars for the range/ATR compression check
+      threshold_points: 8.0             # compression must be <= this to count as "quiet"
+      require_volume_confirmation: true
+      volume_lookback_bars: 15          # recent-volume window
+      volume_baseline_bars: 60          # longer baseline window (must be > volume_lookback_bars)
+      volume_ratio_threshold: 0.7        # recent/baseline must be <= this
+    swing:
+      lookback_bars: 5                  # w bars each side for swing-point confirmation
+    direction_mode: fade_break           # fade_break | join_break -- see session_open.py docstring
+    risk:
+      contracts: 1
+      sl_points: 8.0
+      rr: 1.0
+
+  news:
+    enabled: false
+    events_path: news_events.csv   # relative to project root, like data.yaml's symbol paths
+    high_impact_only: true          # CLAUDE.md: "High-impact only by default"
+    impact_values: [high]           # which (lowercased) impact labels count as high
+    event_window_minutes: 90        # how long after the event these legs stay active
+
+    continuation:
+      enabled: true
+      direction:
+        method: close_vs_fair_value
+        observation_window_minutes: 5   # news spikes can be sharper/noisier than session opens
+      risk:
+        contracts: 1
+        sl_points: 12.0
+        rr: 1.5
+
+    mean_reversion:
+      enabled: true
+      max_trades_per_event: 3
+      consolidation:
+        compression_method: range
+        lookback_bars: 10                # shorter than the session leg -- event windows are shorter
+        threshold_points: 6.0
+        require_volume_confirmation: false  # volume around news is noisy/spiky by nature, not a clean "dry up" signal
+        volume_lookback_bars: 10
+        volume_baseline_bars: 30
+        volume_ratio_threshold: 0.7
+      swing:
+        lookback_bars: 3
+      direction_mode: fade_break
+      risk:
+        contracts: 1
+        sl_points: 10.0
+        rr: 1.0

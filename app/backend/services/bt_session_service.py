@@ -619,10 +619,22 @@ def update_cursor(session_id: str, req: models.UpdateCursorRequest) -> models.Ba
             )
         if floor is None and (req.positions or req.working_orders):
             data["lock_floor_time"] = req.cursor_time
+    # G10: once Autopilot has run, the engine has consumed bars up to `processed_to` and may
+    # hold a position that could not un-fill: the replay cannot go back before it.
+    from app.backend.services import autopilot_service
+
+    floor = autopilot_service.rewind_floor(data)
+    if floor is not None and req.cursor_time < floor:
+        raise InvalidSessionRequest(
+            f"Autopilot has traded up to {floor}: the replay cannot be rewound before it "
+            f"(cursor_time {req.cursor_time})"
+        )
     data["cursor_time"] = req.cursor_time
     primary = data["instrument"]
     data["positions"] = [{**p.model_dump(), "instrument": p.instrument or primary} for p in req.positions]
     data["working_orders"] = [{**o.model_dump(), "instrument": o.instrument or primary} for o in req.working_orders]
+    # The bot trades the same replay: it is fed exactly the bars the cursor has now revealed.
+    autopilot_service.advance(session_id, data, req.cursor_time)
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
     return models.BacktestSessionDetail.model_validate(data)
@@ -785,7 +797,14 @@ def record_trade(session_id: str, req: models.CreateManualTradeRequest) -> model
         out = t
     _write_trades(session_id, existing)
 
-    data["account"]["balance"] += req.pnl_usd
+    if data.get("autopilot"):
+        # One account with a bot on it: the balance is the engine portfolio's plus the manual
+        # trades' (see autopilot_service.recompute_balance), not a running sum of two sources.
+        from app.backend.services import autopilot_service
+
+        data["account"]["balance"] = autopilot_service.recompute_balance(data, existing)
+    else:
+        data["account"]["balance"] += req.pnl_usd
     data["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     _write(session_id, data)
 

@@ -2,6 +2,7 @@
 // a rows-per-page setting and filters by tag, setup, grade, side, time of day and
 // instrument. A row opens that trade in its session's journal. The rows are the
 // server's trade list for the page's scope; this only narrows and pages it.
+import BotChip from '../components/BotChip'
 import { useEffect, useMemo, useState } from 'react'
 import type { TradeRecord } from '../api/types'
 import { fmtPrice, fmtR, fmtUsd } from '../format'
@@ -145,7 +146,10 @@ export default function AnalyticsTradesTable({
                   className="h-7 cursor-pointer text-right text-text transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 >
                   <td className="pr-3 text-left">{fmtEtLongDate(t.entry_time)} {fmtEtTime(t.entry_time)} ET</td>
-                  <td className="px-3 text-left">{t.instrument}</td>
+                  <td className="px-3 text-left">
+                    {t.instrument}
+                    {t.source === 'bot' && <BotChip interrupted={(t.bot_segment ?? 0) > 0} />}
+                  </td>
                   <td className="px-3 text-left">{t.side === 'long' ? 'Long' : 'Short'}</td>
                   <td className="px-3">{t.size_contracts}</td>
                   <td className="px-3">{fmtPrice(t.entry_price, t.instrument)}</td>

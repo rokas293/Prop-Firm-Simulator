@@ -41,7 +41,15 @@ import {
   tradeOpenContracts,
   type LevelKind,
 } from '../chart/orderEntry'
-import { isPropRewind, isRewindBlocked, lockFloorIndex, PROP_REWIND_MESSAGE, REWIND_BLOCKED_MESSAGE } from '../chart/discipline'
+import {
+  AUTOPILOT_REWIND_MESSAGE,
+  isPropRewind,
+  isRewindBlocked,
+  lockFloorIndex,
+  PROP_REWIND_MESSAGE,
+  REWIND_BLOCKED_MESSAGE,
+} from '../chart/discipline'
+
 import { magnifierRange } from '../chart/magnifier'
 import { useSessionHotkeys } from '../keyboard/useSessionHotkeys'
 import { combineBanner } from '../compass/propResult'
@@ -110,6 +118,7 @@ import { dropLegacyScalper, readLegacyScalper, readScalper, useScalperStore } fr
 import {
   useBtSession,
   useBtSessionTrades,
+  useAutopilotConfigs,
   useBars,
   useCreateManualTrade,
   useAddTradeScreenshot,
@@ -117,6 +126,7 @@ import {
   useIndicators,
   useSessions,
   useNewsEvents,
+  useSetAutopilot,
   useStats,
   useUpdateBtSessionCursor,
   useUpdateBtSessionNotes,
@@ -138,6 +148,7 @@ import {
   type UpdateTradeJournalRequest,
 } from '../api/types'
 import EmptyState from '../components/EmptyState'
+import { AUTOPILOT_SAVE_WINDOW_MS, createPersistBatcher, type PersistBatcher } from '../chart/persistBatcher'
 import { fmtEtDateTime, fmtEtLongDate, fmtEtLongDateTime } from '../timeFormat'
 import { fmtPrice } from '../format'
 import { OPEN_ENTRY_ID, type OpenJournalEntry } from '../panels/journalEntry'
@@ -310,6 +321,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const { data: session, isLoading, isError, error } = useBtSession(sessionId)
   const { data: manualTrades } = useBtSessionTrades(sessionId)
   const updateCursor = useUpdateBtSessionCursor()
+  // G10: Autopilot. The run's state is the server's (session.autopilot); the browser renders it.
+  const { data: autopilotConfigs } = useAutopilotConfigs()
+  const setAutopilot = useSetAutopilot()
+  const [autopilotError, setAutopilotError] = useState<string | null>(null)
   const createTrade = useCreateManualTrade()
   const updateSessionNotes = useUpdateBtSessionNotes()
   const updateSessionSettings = useUpdateBtSessionSettings()
@@ -522,6 +537,8 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const lastReanchoredAtBarTimeRef = useRef<number | null>(null)
   const [cursorIndex, setCursorIndexState] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
+  const isPlayingRef = useRef(false)
+  isPlayingRef.current = isPlaying
   // G8: a prop session whose Combine has just passed or failed stops playing -- the
   // outcome screen is what you are meant to look at.
   const resolvedStatus = propStats?.result?.status
@@ -822,6 +839,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // as the saved one. Each queued save reads the refs when it is SENT, so it
   // always carries the latest full state, and they go one at a time.
   const persistQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+  // G10: with Autopilot on, every cursor save makes the server step the engine through the
+  // bars it reveals. Auto-play would be one call per bar; instead steps are merged into one
+  // save per AUTOPILOT_SAVE_WINDOW_MS (the first goes out at once), and a pause or any manual
+  // action flushes at once. Saves already carry the live cursor and the full broker state.
+  const autopilotOnRef = useRef(false)
+  autopilotOnRef.current = session?.autopilot?.enabled === true
+  const batcherRef = useRef<PersistBatcher | null>(null)
   const persist = (cursorTimeOverride?: number) => {
     if (!session) return
     const cursorTime = cursorTimeOverride ?? cursorTimeRef.current
@@ -951,6 +975,13 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setOrderNotice(PROP_REWIND_MESSAGE)
       return
     }
+    // Autopilot: the engine has traded up to processed_to; the replay can't go back past it
+    // (the backend refuses it too).
+    if (session.autopilot && isRewindBlocked(true, session.autopilot.processed_to, bars, newIndex)) {
+      setIsPlaying(false)
+      setOrderNotice(AUTOPILOT_REWIND_MESSAGE)
+      return
+    }
     // Discipline lock: no stepping, scrubbing or start-resetting to before the
     // bar the first trade was placed on (the backend refuses it too).
     if (isRewindBlocked(session.discipline_lock, lockFloorRef.current, bars, newIndex)) {
@@ -1040,7 +1071,17 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     // carrying the correct post-close position/working_orders -- lands
     // last, rather than racing and possibly being silently overwritten.
     for (const trade of result.closedTrades) await journalClosedTrade(trade, trade.instrument)
-    if (t !== undefined) persist(t)
+    if (t !== undefined) {
+      if (autopilotOnRef.current && isPlayingRef.current) {
+        // Remember where the cursor is now; the batcher's save reads the ref when it is sent.
+        cursorTimeRef.current = t
+        if (!batcherRef.current) batcherRef.current = createPersistBatcher(() => persist(), AUTOPILOT_SAVE_WINDOW_MS)
+        batcherRef.current.push()
+      } else {
+        batcherRef.current?.cancel()
+        persist(t)
+      }
+    }
     // Nearing the end of the loaded window -- rebuild it around the cursor
     // (history behind, a small lookahead margin ahead) so continued
     // stepping/playback keeps having bars to advance into, instead of running
@@ -1066,6 +1107,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }
 
   const handleCursorIndexChange = (i: number) => advanceTo(i)
+
+  // Pausing (or leaving) sends the save the batcher is still holding, so the saved cursor and the
+  // bot's trades are exactly what the screen shows.
+  useEffect(() => {
+    if (!isPlaying) batcherRef.current?.flush()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying])
+  useEffect(() => () => batcherRef.current?.flush(), [])
 
   useEffect(() => {
     if (!isPlaying || !bars || bars.length === 0) return
@@ -1690,6 +1739,14 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       if (position.tpPrice !== null) lines.push({ id: 'pos-tp', price: position.tpPrice, draggable: true, info: { ...base, role: 'tp' } })
       else if (position.ghostTp !== null) lines.push({ id: 'ghost-tp', price: position.ghostTp, draggable: true, info: { ...base, role: 'ghost-tp' } })
     }
+    // The bot's position (G10): the engine's own numbers, read-only (no grip, no x).
+    const bot = session.autopilot?.position
+    if (bot && bot.instrument === activeInstrument) {
+      const base = { side: bot.side, entryPrice: bot.entry_price, contracts: bot.contracts, spec, bot: true }
+      lines.push({ id: 'bot-pos', price: bot.entry_price, draggable: false, info: { ...base, role: 'position', pnlUsd: bot.unrealized_usd } })
+      if (bot.sl_price !== null) lines.push({ id: 'bot-sl', price: bot.sl_price, draggable: false, info: { ...base, role: 'sl' } })
+      if (bot.tp_price !== null) lines.push({ id: 'bot-tp', price: bot.tp_price, draggable: false, info: { ...base, role: 'tp' } })
+    }
     for (const o of workingOrders) {
       const base = { side: o.side, entryPrice: o.price, contracts: o.contracts, spec }
       lines.push({ id: `order-${o.id}`, price: o.price, draggable: false, info: { ...base, role: 'order', orderType: o.orderType } })
@@ -1699,7 +1756,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return lines
     // lineNonce forces a fresh list after a refused drag so ChartKL re-syncs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeInstrument, prefs.hideTrades, markPrice, position, workingOrders, lineNonce])
+  }, [activeInstrument, prefs.hideTrades, markPrice, position, workingOrders, lineNonce, session?.autopilot?.position])
 
   // A line's gesture. Pressing one pauses the replay (the market must not run
   // under a drag); releasing places the level -- or refuses it (setLevel).
@@ -1862,6 +1919,21 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
         ]
       : []
   })
+  // The bot's open position as a read-only row (G10), after the manual ones.
+  const botPosition = session?.autopilot?.position ?? null
+  if (botPosition) {
+    positionRows.push({
+      instrument: botPosition.instrument,
+      side: botPosition.side,
+      contracts: botPosition.contracts,
+      entryPrice: botPosition.entry_price,
+      slPrice: botPosition.sl_price,
+      tpPrice: botPosition.tp_price,
+      pnlUsd: botPosition.unrealized_usd,
+      rMultiple: null,
+      bot: true,
+    })
+  }
   const holdingSymbols = symbols.filter((s) => books[s]?.position || (books[s]?.workingOrders.length ?? 0) > 0)
 
   // Switching the chart's symbol touches nothing but the view: the cursor (a time),
@@ -1882,7 +1954,12 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // past it would leave the screen and the saved session disagreeing).
   const startIndex = bars && session ? Math.min(bars.length - 1, lastIndexAtOrBefore(bars, session.start_time - 1) + 1) : 0
   startIndexRef.current = startIndex
-  const minIndex = Math.max(startIndex, session?.discipline_lock && bars ? lockFloorIndex(bars, lockFloorRef.current) : 0)
+  const autopilotFloorIndex = session?.autopilot && bars ? lockFloorIndex(bars, session.autopilot.processed_to) : 0
+  const minIndex = Math.max(
+    startIndex,
+    session?.discipline_lock && bars ? lockFloorIndex(bars, lockFloorRef.current) : 0,
+    autopilotFloorIndex,
+  )
 
   // One pill step forward/back: `stepCount` base bars, clamped to the allowed
   // range (end_date forward, the lock floor back). advanceTo runs every fill
@@ -1901,7 +1978,10 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setOrderNotice(REWIND_BLOCKED_MESSAGE)
       return
     }
-    if (cursorIndexRef.current <= minIndex) return
+    if (cursorIndexRef.current <= minIndex) {
+      if (session?.autopilot && cursorIndexRef.current <= autopilotFloorIndex) setOrderNotice(AUTOPILOT_REWIND_MESSAGE)
+      return
+    }
     handleCursorIndexChange(prevStepIndex(bars, cursorIndexRef.current, stepSeconds, minIndex))
   }
 
@@ -2149,13 +2229,37 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           onStepBack: stepBack,
           onStepForward: stepForward,
           canStepBack: !!bars && bars.length > 0 && cursorIndex > minIndex,
-          stepBackBlockedReason: session.account.prop_ruleset ? PROP_REWIND_MESSAGE : undefined,
+          stepBackBlockedReason: session.account.prop_ruleset
+            ? PROP_REWIND_MESSAGE
+            : session.autopilot && cursorIndex <= autopilotFloorIndex
+              ? AUTOPILOT_REWIND_MESSAGE
+              : undefined,
           canStepForward: !!bars && cursorIndex < lastAllowed,
           stepSize,
           onStepSizeChange: handleStepSizeChange,
           autoPlay: isPlaying,
           onToggleAutoPlay: () => setIsPlaying((v) => !v),
           cursorLabel: cursorBar ? fmtEtLongDateTime(cursorBar.time) : null,
+          autopilot: {
+            state: session.autopilot ?? null,
+            configs: autopilotConfigs ?? [],
+            busy: setAutopilot.isPending,
+            error: autopilotError,
+            blockedReason: session.status === 'archived' ? 'This session is archived.' : undefined,
+            onSwitch: (enabled, configId) => {
+              setAutopilotError(null)
+              setIsPlaying(false)
+              // A pending batched save carries the latest cursor: send it first, so the
+              // server switches the bot at the bar the screen shows.
+              batcherRef.current?.flush()
+              void persistQueueRef.current.then(() =>
+                setAutopilot.mutate(
+                  { sessionId: session.id, body: { enabled, config_id: configId ?? null } },
+                  { onError: (e) => setAutopilotError(e instanceof Error ? e.message : String(e)) },
+                ),
+              )
+            },
+          },
         }}
         actions={{
           onPlaceOrder: () => openOrderDialog(),
@@ -2483,7 +2587,7 @@ export default function SessionWorkspace({ sessionId }: { sessionId: string }) {
           propRules={session.account.prop_ruleset ? { open: propRulesOpen, onOpen: () => setPropRulesOpen((v) => !v) } : null}
           balance={session.account.balance}
           realizedPnl={session.account.balance - session.account.starting_balance}
-          unrealizedPnl={unrealizedPnl}
+          unrealizedPnl={unrealizedPnl + (session.autopilot?.position?.unrealized_usd ?? 0)}
           hideBalances={prefs.hideBalances}
           onToggleHideBalances={() => prefs.setHideBalances(!prefs.hideBalances)}
           onToggleFullscreen={toggleFullscreen}

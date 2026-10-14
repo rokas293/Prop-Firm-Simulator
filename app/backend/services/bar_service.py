@@ -39,6 +39,12 @@ def _load_raw(instrument: str) -> pd.DataFrame:
     return _RAW_CACHE[instrument]
 
 
+def raw_bars(instrument: str) -> pd.DataFrame:
+    """The instrument's whole 1-minute frame (loader schema), cached. Whoever serves a
+    replay with it must cut it at the cursor first: nothing here knows about one."""
+    return _load_raw(instrument)
+
+
 def _to_bar(ts: pd.Timestamp, row: pd.Series) -> models.Bar:
     return models.Bar(
         time=int(ts.value // 1_000_000_000), open=float(row["open"]), high=float(row["high"]),

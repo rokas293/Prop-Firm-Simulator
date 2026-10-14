@@ -70,6 +70,20 @@ class Broker:
     def submit_order(self, order: Order) -> None:
         self._pending.append(order)
 
+    @property
+    def pending_orders(self) -> List[Order]:
+        """Orders decided but not yet filled (a copy): a market order decided on
+        bar t waits here until bar t+1's open."""
+        return list(self._pending)
+
+    def cancel_pending(self, symbol: Optional[str] = None) -> List[Order]:
+        """Drop orders that have not filled yet (all, or one symbol's) and return
+        them. An open position and its SL/TP are untouched. Used when a streaming
+        consumer stops deciding (Autopilot switched off)."""
+        dropped = [o for o in self._pending if symbol is None or o.symbol == symbol]
+        self._pending = [o for o in self._pending if not (symbol is None or o.symbol == symbol)]
+        return dropped
+
     def process_bar(self, bar: Bar) -> List[Fill]:
         """Resolve fills using ONLY this bar's own OHLC. Must be called once
         per bar, in bar-timestamp order, for a given symbol.

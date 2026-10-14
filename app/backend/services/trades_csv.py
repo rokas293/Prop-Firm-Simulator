@@ -48,6 +48,10 @@ COLUMNS = [
     "grade",
     "notes",
     "checklist_ticked",
+    # G10: who took the trade, and for a bot trade which Autopilot on-segment (0 = the first,
+    # uninterrupted run; 1+ follow an off -> on).
+    "source",
+    "autopilot_segment",
 ]
 
 # A cell opening with one of these is read as a formula by spreadsheets; free
@@ -108,6 +112,8 @@ def trade_row(session: models.BacktestSessionSummary, t: models.ManualTrade) -> 
         t.grade or "",
         _text(t.notes),
         _text("; ".join(t.checklist)),
+        t.source,
+        "" if t.bot_segment is None else str(t.bot_segment),
     ]
 
 

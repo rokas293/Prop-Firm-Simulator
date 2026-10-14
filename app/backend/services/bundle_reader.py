@@ -87,6 +87,7 @@ def _trade_row(row: pd.Series) -> models.TradeRecord:
         bars_held=int(row["bars_held"]),
         # Manual-run columns (F6) -- absent from every engine bundle.
         source=_opt_str(row["source"]) if "source" in row.index else None,
+        bot_segment=(int(row["bot_segment"]) if "bot_segment" in row.index and pd.notna(row["bot_segment"]) else None),
         session_id=_opt_str(row["session_id"]) if "session_id" in row.index else None,
         session_trade_id=int(row["session_trade_id"]) if "session_trade_id" in row.index else None,
         tags=list(row["tags"]) if "tags" in row.index else None,
@@ -110,6 +111,7 @@ def filter_trades_frame(
     session_id: Optional[str] = None,
     hour_ny: Optional[int] = None,
     instrument: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> pd.DataFrame:
     """The one trade-filter implementation shared by /trades and (for manual
     runs) /stats and /monte-carlo, so a filter can never mean two things in
@@ -142,6 +144,8 @@ def filter_trades_frame(
         df = df[df["session_id"] == session_id]
     if instrument and "instrument" in df.columns:
         df = df[df["instrument"] == instrument]
+    if source and "source" in df.columns:
+        df = df[df["source"].fillna("manual") == source]
     if hour_ny is not None and len(df):
         df = df[df["entry_time"].dt.tz_convert("America/New_York").dt.hour == hour_ny]
     return df
@@ -162,6 +166,7 @@ def list_trades(
     session_id: Optional[str] = None,
     hour_ny: Optional[int] = None,
     instrument: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> List[models.TradeRecord]:
     from app.backend.services import manual_analytics as ma
 
@@ -176,6 +181,7 @@ def list_trades(
     df = filter_trades_frame(
         df, leg=leg, session=session, side=side, result=result, exit_type=exit_type, ts_from=ts_from, ts_to=ts_to,
         tag=tag, setup=setup, grade=grade, session_id=session_id, hour_ny=hour_ny, instrument=instrument,
+        source=source,
     )
     return [_trade_row(row) for _, row in df.iterrows()]
 

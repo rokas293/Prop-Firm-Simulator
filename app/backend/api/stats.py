@@ -21,10 +21,12 @@ def get_stats(
     session_id: Optional[str] = Query(None, description="manual runs only: backtest session id"),
     hour_ny: Optional[int] = Query(None, ge=0, le=23, description="manual runs only: entry hour, America/New_York"),
     instrument: Optional[str] = Query(None, description="manual runs only: restrict to one instrument (the prop verdict stays account-level)"),
+    source: Optional[str] = Query(None, description="manual runs only: manual | bot (Autopilot)"),
 ) -> models.StatsResponse:
     try:
         return bundle_reader.get_stats(
             run_id, scope=scope, tag=tag, setup=setup, grade=grade, session=session, session_id=session_id, hour_ny=hour_ny, instrument=instrument,
+            source=source,
         )
     except bundle_reader.RunNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
